@@ -449,3 +449,15 @@ body.smd-on .smd-alvo{outline:2px solid var(--pri)!important;outline-offset:-2px
 /* Resumos dentro do botão do dia; controles completos ficam no painel. */
 .sm-cal-meta,.sm-cal-tarefa{display:block;font-size:11px;overflow-wrap:anywhere}
 .sm-cal-meta[data-feito="true"],.sm-cal-tarefa[data-feito="true"]{text-decoration:line-through;opacity:.65}
+/* Sépia (1.40): no escuro, o texto dos eventos do calendário clareia para ler sobre o fundo quente */
+:root[data-theme="dark"] .sm-ev{color:color-mix(in srgb,var(--evc) 55%,#fff)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .sm-ev{color:color-mix(in srgb,var(--evc) 55%,#fff)}}
+/* Sépia (1.40): azul-céu da Nova tarefa vira o âmbar só no escuro; o claro mantém o original */
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .qa-p.on{border-color:var(--pri-tx);color:var(--pri-tx)}:root:not([data-theme="light"]) .qa-op.on{border-color:var(--pri-tx);background:color-mix(in srgb,var(--pri) 16%,transparent)}:root:not([data-theme="light"]) .qa-dia.cur{border-color:var(--pri-tx)}:root:not([data-theme="light"]) .qa-fab{background:var(--pri);color:var(--on-pri)}:root:not([data-theme="light"]) .qa-cd:hover{background:color-mix(in srgb,var(--pri) 16%,transparent)}:root:not([data-theme="light"]) .qa-cd.hoje{color:var(--pri-tx)}:root:not([data-theme="light"]) .qa-cd.cur{border-color:var(--pri-tx);background:color-mix(in srgb,var(--pri) 18%,transparent)}}
+:root[data-theme="dark"] .qa-p.on{border-color:var(--pri-tx);color:var(--pri-tx)}
+:root[data-theme="dark"] .qa-op.on{border-color:var(--pri-tx);background:color-mix(in srgb,var(--pri) 16%,transparent)}
+:root[data-theme="dark"] .qa-dia.cur{border-color:var(--pri-tx)}
+:root[data-theme="dark"] .qa-fab{background:var(--pri);color:var(--on-pri)}
+:root[data-theme="dark"] .qa-cd:hover{background:color-mix(in srgb,var(--pri) 16%,transparent)}
+:root[data-theme="dark"] .qa-cd.hoje{color:var(--pri-tx)}
+:root[data-theme="dark"] .qa-cd.cur{border-color:var(--pri-tx);background:color-mix(in srgb,var(--pri) 18%,transparent)}

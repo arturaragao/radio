@@ -47,7 +47,7 @@ for(let k=inicio;k<linhas.length;k++){
 const gravar=(p,s)=>fs.writeFileSync(path.join(raiz,p),s,'utf8');
 gravar('app.js',`// Banco CBR app ${versao} — gerado por build/montar.py a partir do artefato (não editar à mão)\n`+js);
 const css=[...receita.match(/^css = (.+)$/m)[1].matchAll(/\{R\}\/([^"\n]+)"/g)].map(m=>ler(m[1])).join('');
-const pwa='<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#0f172a"><meta name="apple-mobile-web-app-capable" content="yes">';
+const pwa='<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#3a3632"><meta name="apple-mobile-web-app-capable" content="yes">';
 head=head.replace('<style>',pwa+'<style>').replace('</style>',css+'</style>');
 assert.equal(head.split('</svg>Banco CBR</div>').length-1,1);
 head=head.replace('</svg>Banco CBR</div>',`</svg>Banco CBR<small class="versao">v${versao}</small></div>`);

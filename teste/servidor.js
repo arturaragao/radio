@@ -13,13 +13,30 @@ const PRE = `(()=>{const f=window.fetch;window.fetch=(u,o)=>{u=String(u);if(u.st
 try{localStorage.setItem('bcbr_gh_token','token-falso')}catch(e){}})();`;
 const SW_NULO = `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.registration.unregister()));`;
 let n = 0;
+// BCBR_MEM=1 (só com --simulado): PUT de semana/plano.json e imagens/ fica guardado em MEMÓRIA do servidor e volta no GET (teste de recarregar a página).
+const MEM=process.env.BCBR_MEM==='1',mem=new Map();
+// 1.40: contadores e cota simulada (GET /__stats, /__stats?zera, /__cota?rest=N). ETag = "<sha>"; GET com If-None-Match igual -> 304; PUT com sha velho -> 409.
+const stats={get:0,n304:0,put:0,n409:0};let cota=null;
 http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
-  const j = (o, c = 200) => { res.writeHead(c, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+  const rl = () => cota == null ? {} : { 'x-ratelimit-remaining': String(cota), 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600) };
+  const j = (o, c = 200, h = {}) => { res.writeHead(c, { 'content-type': 'application/json', ...rl(), ...h }); res.end(JSON.stringify(o)); };
+  if (u === '/__stats') { const o = { ...stats }; if (req.url.includes('zera')) Object.assign(stats, { get: 0, n304: 0, put: 0, n409: 0 }); return j(o); }
+  if (u === '/__cota') { const r = new URL(req.url, 'http://x').searchParams.get('rest'); cota = r == null || r === '' ? null : +r; return j({ cota }); }
   if (u.startsWith('/api/')) {
     if(SIMULADO){
-      if(req.method==='PUT'){req.resume();return j({content:{sha:'fake'+(++n)}})}
+      if(req.method==='PUT'){
+        if(!MEM){req.resume();return j({content:{sha:'fake'+(++n)}})}
+        let b='';req.on('data',c=>b+=c);req.on('end',()=>{const o=JSON.parse(b),rel=u.replace(/^.*contents\//,''),atual=mem.get(rel);
+          if(atual&&o.sha!==atual.sha){stats.n409++;return j({message:'sha does not match'},409)}
+          const sha='m'+(++n);stats.put++;mem.set(rel,{sha,b64:o.content});j({content:{sha}})});return;
+      }
       const rel=u.replace(/^.*contents\//,'');
+      if(MEM&&mem.has(rel)){const m=mem.get(rel);
+        if(rel.startsWith('imagens/')){res.writeHead(200,{'content-type':'image/jpeg'});return res.end(Buffer.from(m.b64,'base64'))}
+        stats.get++;const et='"'+m.sha+'"';
+        if(req.headers['if-none-match']===et){stats.n304++;res.writeHead(304,{etag:et,...rl()});return res.end()}
+        return j({sha:m.sha,content:m.b64,encoding:'base64'},200,{etag:et})}
       if(Object.hasOwn(simulado,rel))return j({sha:'sintetico',content:Buffer.from(JSON.stringify(simulado[rel])).toString('base64'),encoding:'base64'});
       if(['dados','progresso','semana'].includes(rel))return j(Object.keys(simulado).filter(k=>k.startsWith(rel+'/')).map(k=>({name:path.basename(k),type:'file',sha:k})));
       const blob=u.split('/git/blobs/')[1];if(blob&&Object.hasOwn(simulado,blob))return j(simulado[blob]);

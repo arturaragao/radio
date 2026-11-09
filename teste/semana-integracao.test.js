@@ -542,124 +542,11 @@ test('toggle recolhe subtema, nota e subtarefas; estado persiste ao reabrir sem 
   b.c.smTg('toggle');assert.doesNotMatch(b.c.smItem(b.lista()[0]),/Nota filha|Etapa filha/);
 });
 
-test('aba Notas cria, edita no lugar, busca, fixa e apaga nota persistida com confirmação',async()=>{
-  const a=await app();a.c.tela='notas';assert.doesNotMatch(a.c.vNotas(),/Criar nota/);
-  a.elementos.set('nt_titulo',{value:''});a.elementos.set('nt_texto',{value:'Anotação rápida'});a.c.ntCriar();await a.c.ntSync();
-  const n=a.salvos.at(-1).notas[0];assert.equal(n.texto,'Anotação rápida');assert.equal(n.titulo,'');
-  a.c.ntEditar(n.id,'titulo','Título novo');a.c.ntEditar(n.id,'texto','Texto revisto <script>');await a.c.ntSync();
-  assert.equal(a.salvos.at(-1).notas[0].titulo,'Título novo');assert.match(a.c.ntGrade(),/Texto revisto &lt;script&gt;/);
-  a.c.ntFixar(n.id);await a.c.ntSync();assert.equal(a.salvos.at(-1).notas[0].fixa,true);
-  a.elementos.set('nt_grade',{innerHTML:''});a.c.ntBuscar('inexistente');assert.equal(a.c.ntLista().length,0);a.c.ntBuscar('REVISTO');assert.equal(a.c.ntLista().length,1);
-  const b=await app([],false,a.mem,false,a.estado.remoto);assert.equal(b.c.ntLista()[0].texto,'Texto revisto <script>');
-  b.c.confirm=()=>false;b.c.ntApagar(n.id);assert.equal(b.c.ntLista().length,1);
-  b.c.confirm=()=>true;b.c.ntApagar(n.id);await b.c.ntSync();assert.equal(b.salvos.at(-1).notas.length,0);
-  assert.equal(JSON.parse(b.mem.get('sm_cache2')).d.notas.length,0);
-});
-
-test('notas offline sobrevivem ao reload, reenviam e conciliam 409 sem perder outra nota/tarefa',async()=>{
-  const a=await app([],false,null,true);a.c.tela='notas';a.elementos.set('nt_titulo',{value:'Offline'});a.elementos.set('nt_texto',{value:'Preservada'});
-  a.c.ntCriar();assert.equal(await a.c.ntSync(),false);assert.equal(vm.runInContext('ntTemPendentes()',a.c),true);
-  const b=await app([],false,a.mem,true);assert.equal(b.c.ntLista()[0].texto,'Preservada');assert.equal(vm.runInContext('ntTemPendentes()',b.c),true);
-  b.estado.remoto.notas=[{id:'outro',texto:'Outro aparelho'}];b.estado.falhar=false;b.estado.conflito=true;
-  await b.c.smPuxar();assert.equal(vm.runInContext('ntTemPendentes()',b.c),false);
-  assert.deepEqual(b.salvos.at(-1).notas.map(n=>n.texto).sort(),['Outro aparelho','Preservada']);
-  assert.ok(b.salvos.at(-1).tarefas.some(t=>t.id==='outro'));
-  const id=b.c.ntLista().find(n=>n.texto==='Preservada').id;b.estado.falhar=true;b.c.ntApagar(id);assert.equal(await b.c.ntSync(),false);
-  const c=await app([],false,b.mem,true);assert.ok(!c.c.ntLista().some(n=>n.id===id));
-});
-
-test('edição longa offline compacta a fila sem perder título, texto ou criação',async()=>{
-  const a=await app([],false,null,true);a.elementos.set('nt_titulo',{value:'Título preservado'});a.elementos.set('nt_texto',{value:'Texto'});a.c.ntCriar();
-  const id=a.c.ntLista()[0].id;
-  for(let i=0;i<100;i++)a.c.ntEditar(id,'texto','Texto '+i);
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
-  const b=await app([],false,a.mem,true);assert.equal(b.c.ntLista()[0].texto,'Texto 99');assert.equal(b.c.ntLista()[0].titulo,'Título preservado');
-  b.estado.falhar=false;await b.c.smPuxar();assert.equal(b.salvos.at(-1).notas[0].texto,'Texto 99');assert.equal(b.salvos.at(-1).notas[0].titulo,'Título preservado');
-});
-
-test('Notas: editar não muda a ordem, nova entra no topo, arrastar reordena e fixadas ficam acima',async()=>{
-  const a=await app();vm.runInContext("SM.d.notas=[{id:'a',texto:'Recente',em:'2026-10-25'},{id:'b',texto:'Antiga',em:'2026-10-24'}]",a.c);
-  assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['a','b']);a.c.ntEditar('b','texto','Atualizada');
-  assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['a','b'],'edição não reordena');
-  a.elementos.set('nt_titulo',{value:''});a.elementos.set('nt_texto',{value:'Nova'});a.c.ntCriar();
-  const ids=copia(a.c.ntLista()).map(n=>n.id);assert.equal(ids.length,3);assert.deepEqual(ids.slice(1),['a','b'],'nova no topo');
-  assert.equal(a.c.ntMover('b',ids[0],true),true);assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['b',ids[0],'a']);
-  a.c.ntEditar('b','titulo','Editada');assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['b',ids[0],'a']);
-  a.c.ntFixar('a');assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['a','b',ids[0]]);
-  await a.c.ntSync();assert.deepEqual(a.salvos.at(-1).notas.filter(n=>!n.fixa).sort((x,y)=>x.ordem-y.ordem).map(n=>n.id),['b',ids[0]],'ordem persistida');
-});
-
-test('Notas 1.38: coluna única (sem colunas), recolher mantém a ordem e realocação do arrasto',async()=>{
-  const a=await app();vm.runInContext("SM.d.notas=[1,2,3,4,5].map(i=>({id:'n'+i,titulo:'T'+i,texto:'x',em:'2026-10-0'+i,ordem:i*10}))",a.c);
-  const html=a.c.ntGrade();assert.doesNotMatch(html,/nt-col/);
-  assert.deepEqual([...html.matchAll(/data-nota="(n\d)"/g)].map(m=>m[1]),['n1','n2','n3','n4','n5'],'uma abaixo da outra, na ordem');
-  vm.runInContext("NT.fechadas.add('n1')",a.c);
-  assert.match(a.c.ntGrade(),/nt-nota fechada" data-nota="n1"/);
-  assert.deepEqual(copia(a.c.ntRealoca(['a','b','c','d'],'a','d')),['b','c','d','a'],'vindo de cima: depois do alvo');
-  assert.deepEqual(copia(a.c.ntRealoca(['a','b','c','d'],'d','b')),['a','d','b','c'],'vindo de baixo: antes do alvo');
-  assert.deepEqual(copia(a.c.ntRealoca(['a','b'],'a','a')),['a','b']);assert.deepEqual(copia(a.c.ntRealoca(['a','b'],'a','z')),['a','b']);
-  a.c.ntOrdem(copia(a.c.ntRealoca(['n1','n2','n3','n4','n5'],'n1','n4')));
-  assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['n2','n3','n4','n1','n5'],'ordem gravada; editar não muda');
-  a.c.ntEditar('n2','texto','y');assert.deepEqual(copia(a.c.ntLista()).map(n=>n.id),['n2','n3','n4','n1','n5']);
-});
-
 test('planejamento não reinsere tarefas na aba Calendário, mesmo com semana/mês abertos',async()=>{
   const a=await app([{id:'a',dia:'2026-10-26',texto:'Item isolado'}]);
   vm.runInContext("SM.plan=true;SM.sem='2026-10-25';SM.diaEditor='2026-10-26'",a.c);
   for(const vis of ['semana','mes','lista']){a.c.smVis(vis);assert.match(a.c.vSemana(),/Item isolado/);assert.doesNotMatch(a.c.vSemana(),/sm_mes_txt/)}
   a.c.tela='tarefas';assert.match(a.c.vTarefas(),/Item isolado/);assert.match(a.c.vTarefas(),/sm_mes_txt/);
-});
-
-test('409: aba atrasada preserva a nota mais recente por ID e envia as demais pendentes',async()=>{
-  const a=await app(),b=await app();
-  const notas=[{id:'comum',titulo:'Título',texto:'Inicial',atualizado:'2026-10-25T12:00:00.000Z'}];
-  for(const aba of [a,b])vm.runInContext('SM.d.notas='+JSON.stringify(notas),aba.c);
-  a.c.ntEditar('comum','texto','Edição atrasada');
-  a.c.ntMudar({id:'offline',texto:'Só nesta aba'});
-  b.c.Date.now=()=>Date.parse('2026-10-27T12:00:00Z');
-  b.c.ntEditar('comum','texto','Edição mais recente');assert.equal(await b.c.ntSync(),true);
-  a.estado.remoto=copia(b.salvos.at(-1));a.estado.conflito=true;
-  assert.equal(await a.c.ntSync(),true);
-  const salvo=a.salvos.at(-1);
-  assert.equal(salvo.notas.find(n=>n.id==='comum').texto,'Edição mais recente');
-  assert.equal(salvo.notas.find(n=>n.id==='offline').texto,'Só nesta aba');
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),0);
-});
-
-test('409: lápide vence edição antiga, e edição nova vence exclusão antiga',async()=>{
-  for(const excluirMaisRecente of [true,false]){
-    const a=await app(),b=await app();
-    for(const aba of [a,b])vm.runInContext("SM.d.notas=[{id:'comum',texto:'Inicial',atualizado:'2026-10-25T12:00:00.000Z'}]",aba.c);
-    if(excluirMaisRecente)a.c.ntEditar('comum','texto','Edição antiga');else a.c.ntApagar('comum');
-    b.c.Date.now=()=>Date.parse('2026-10-27T12:00:00Z');
-    if(excluirMaisRecente)b.c.ntApagar('comum');else b.c.ntEditar('comum','texto','Edição nova');
-    assert.equal(await b.c.ntSync(),true);
-    a.estado.remoto=copia(b.salvos.at(-1));a.estado.conflito=true;
-    assert.equal(await a.c.ntSync(),true);
-    const salvo=a.salvos.at(-1);
-    if(excluirMaisRecente){
-      assert.equal(salvo.notas.length,0);assert.ok(salvo.notasApagadas.comum);
-      const recarregada=await app([],false,a.mem,true,salvo);
-      recarregada.c.ntAplica(salvo,[{nota:{id:'comum',texto:'Antiga',atualizado:'2026-10-26T12:00:00.000Z'},em:1}]);
-      assert.equal(salvo.notas.length,0,'reload e reenvio não ressuscitam a nota');
-    }else assert.equal(salvo.notas.find(n=>n.id==='comum').texto,'Edição nova');
-    assert.equal(vm.runInContext('ntPendentes().length',a.c),0);
-  }
-});
-
-test('notas: edição criada durante PUT e operação não confirmada continuam pendentes',async()=>{
-  const a=await app();a.c.ntMudar({id:'a',texto:'Primeira'});
-  const api=a.c.BCBR.api;let liberar;
-  a.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT')await new Promise(r=>{liberar=r});return api(p,o)};
-  const envio=a.c.ntSync();await new Promise(r=>setImmediate(r));assert.equal(typeof liberar,'function');
-  a.c.ntEditar('a','texto','Durante envio');liberar();assert.equal(await envio,true);
-  assert.equal(a.salvos.at(-1).notas[0].texto,'Primeira');
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
-  a.c.BCBR.api=api;a.estado.falhar=true;assert.equal(await a.c.ntSync(),false);
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);
-  assert.equal(a.salvos.at(-1).notas[0].texto,'Durante envio');
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),0);
 });
 
 test('dia futuro: setas e F ignoram tarefa de hoje ausente e seleção por ID invisível',async()=>{
@@ -677,22 +564,6 @@ test('dia futuro: setas e F ignoram tarefa de hoje ausente e seleção por ID in
   assert.ok(!a.lista().some(t=>t.id==='futuro'),'F age na tarefa visível selecionada');
   vm.runInContext("SMK.on=true;SMK.id='hoje'",a.c);tecla('Enter');tecla('f');await a.fila();
   assert.equal(a.lista().find(t=>t.id==='hoje').feito,undefined);
-});
-
-test('notas: nova edição usa versão mais recente e envio sem aplicar a operação mantém a fila',async()=>{
-  const a=await app();a.c.ntMudar({id:'a',titulo:'Antigo',texto:'Offline'});
-  vm.runInContext("SM.d.notas=[{id:'a',titulo:'Remoto novo',texto:'Remoto',atualizado:'2026-10-27T12:00:00.000Z'}]",a.c);
-  a.c.ntEditar('a','texto','Edição atual');
-  assert.equal(a.c.ntLista()[0].titulo,'Remoto novo');
-  // Uma operação que não entrou no snapshot do PUT não pode ser confirmada só pelo HTTP 200.
-  const aplicar=a.c.ntAplica;a.c.ntAplica=()=>{};
-  a.estado.conflito=true;assert.equal(await a.c.ntSync(),true);
-  assert.equal(a.salvos.at(-1).notas?.length||0,0);
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
-  a.c.ntAplica=aplicar;assert.equal(await a.c.ntSync(),true);
-  assert.equal(a.salvos.at(-1).notas[0].titulo,'Remoto novo');
-  assert.equal(a.salvos.at(-1).notas[0].texto,'Edição atual');
-  assert.equal(vm.runInContext('ntPendentes().length',a.c),0);
 });
 
 test('arrastar para outro tipo/subtema salva pela fila normal e reaplica em conflito sem perder campos',async()=>{
@@ -728,94 +599,176 @@ test('Tarefas: grupos identificam destino e planejamento vem depois das tarefas'
   assert.match(html,/data-drop="2026-10-27" data-area="ferramenta" data-sub=""/);
 });
 
-test('Notas 1.37: "- " vira bolinha, Enter continua a lista, Enter na bolinha vazia encerra; nota nova vazia só fecha',async()=>{
-  const a=await app(),E=(v,i,k)=>copia(a.c.ntListaEdita(v,i,i,k));
-  assert.deepEqual(E('-',1,' '),{de:0,ate:1,txt:'• ',cur:2});
-  assert.deepEqual(E('abc\n  -',7,' '),{de:6,ate:7,txt:'• ',cur:8},'com recuo');
-  assert.equal(E('a-',2,' '),null,'hífen no meio da linha não vira bolinha');
-  assert.deepEqual(E('• item',6,'Enter'),{de:6,ate:6,txt:'\n• ',cur:9});
-  assert.deepEqual(E('x\n  • item',10,'Enter'),{de:10,ate:10,txt:'\n  • ',cur:15},'mantém o recuo');
-  assert.deepEqual(E('• a\n• ',6,'Enter'),{de:4,ate:6,txt:'',cur:4},'bolinha vazia encerra');
-  assert.equal(E('texto comum',11,'Enter'),null);
-  assert.equal(a.c.ntListaEdita('-',0,1,' '),null,'com seleção não mexe');
-  a.elementos.set('nt_titulo',{value:''});a.elementos.set('nt_texto',{value:'  '});
-  const antes=copia(a.c.SM?.d?.notas||vm.runInContext('SM.d.notas||[]',a.c)).length;
-  a.c.ntSalvarPainel();assert.equal(vm.runInContext('(SM.d.notas||[]).length',a.c),antes,'nota vazia não é criada');
+test('Notas 1.39: migração das notas 1.38 vira toggles de topo (ordem, listas, toggles aninhados, imagem), guarda cópia e é idempotente',async()=>{
+  const a=await app();
+  vm.runInContext(`SM.d.notas=${JSON.stringify(NOTAS_138)};delete SM.d.notasDoc;delete SM.d.notas_v138`,a.c);
+  assert.equal(a.c.ntMigra(vm.runInContext('SM.d',a.c)),true);
+  const d=copia(vm.runInContext('SM.d',a.c)),bl=d.notasDoc.blocos;
+  assert.deepEqual(bl.map(b=>b.id),['bxa3','bxa4','bxa2','bxa1','b-fim'],'fixada primeiro; depois a ordem do app (ordem manual; sem ordem = pela data de criação, no topo)');
+  assert.deepEqual(d.notas_v138.map(n=>n.id),['xa1','xa2','xa3','xa4'],'cópia do formato antigo');
+  assert.deepEqual(d.notas.map(n=>n.id),['xa4'],'"tema fraco" da Semana continua em notas');
+  const n1=bl.find(b=>b.id==='bxa1');assert.equal(n1.atualizado,'2026-11-02T10:00:00.000Z');assert.equal(n1.conteudo.attrs.id,'bxa1');
+  assert.equal(n1.conteudo.type,'details');assert.equal(txt(n1.conteudo.content[0]),'Laudos');
+  const f=n1.conteudo.content[1].content;
+  assert.deepEqual(f.map(x=>x.type),['bulletList','details','paragraph','image','paragraph']);
+  assert.deepEqual(f[0].content.map(i=>txt(i.content[0])),['primeira ideia','segunda ideia'],'"- " e "•" viram a mesma lista');
+  assert.equal(f[0].content[1].content[1].type,'bulletList','sub-lista pelo recuo');
+  assert.equal(txt(f[1].content[0]),'Meu toggle');assert.equal(f[1].content[1].content[0].content[0].text,'segredo');
+  assert.equal(f[1].content[1].content[1].type,'details','toggle dentro do toggle');assert.equal(txt(f[1].content[1].content[1].content[1].content[0]),'mais fundo');
+  assert.equal(txt(f[2]),'linha solta');assert.equal(f[3].attrs.src,'./img/nota-xabc.jpg');assert.equal(txt(f[4]),'-5 graus não é lista');
+  const n3=bl.find(b=>b.id==='bxa3');assert.equal(n3.conteudo.content[0].content,undefined,'nota sem título: título vazio, texto preservado');assert.equal(txt(n3.conteudo.content[1].content[0]),'sem título');
+  assert.deepEqual(bl.find(b=>b.id==='bxa2').conteudo.content[1].content,[{type:'paragraph'}],'nota sem texto: um parágrafo vazio');
+  assert.equal(a.c.ntMigra(vm.runInContext('SM.d',a.c)),false,'idempotente');
 });
 
-test('Notas 1.37: clicar fora do painel salva (não descarta) e a dica avisa',()=>{
-  const s=fs.readFileSync(require.resolve('../build/notas.js'),'utf8');
-  assert.match(s,/addEventListener\('pointerdown',e=>\{if\(e\.target===f\)\{e\.preventDefault\(\);ntSalvarPainel\(\)\}\}\)/);
-  assert.match(s,/clique fora ou Ctrl\+Enter salva · Esc cancela/);
+test('Notas 1.39: ntBlocos/ntDocumento — id estável, data de alteração só no bloco mudado, ida e volta sem perda',async()=>{
+  const a=await app(),p=(id,t,extra={})=>({type:'paragraph',attrs:{id,...extra},content:[{type:'text',text:t}]});
+  const doc1={type:'doc',content:[p('x','a'),p('y','b'),p('z','c')]};
+  const bl=copia(a.c.ntBlocos(copia(doc1),[],'2026-11-01T00:00:00.000Z'));
+  assert.deepEqual(bl.map(b=>[b.id,b.atualizado]),[['x','2026-11-01T00:00:00.000Z'],['y','2026-11-01T00:00:00.000Z'],['z','2026-11-01T00:00:00.000Z']]);
+  assert.deepEqual(copia(a.c.ntDocumento(bl)),doc1,'ida e volta');
+  const doc2=copia(doc1);doc2.content[1].content[0].text='b!';
+  const b2=copia(a.c.ntBlocos(doc2,bl,'2026-11-02T00:00:00.000Z'));
+  assert.deepEqual(b2.map(b=>b.atualizado),['2026-11-01T00:00:00.000Z','2026-11-02T00:00:00.000Z','2026-11-01T00:00:00.000Z'],'só o bloco editado ganha data nova');
+  const doc3=copia(doc1);doc3.content[0].attrs.textAlign=null;doc3.content[2].marks=[];
+  assert.deepEqual(copia(a.c.ntBlocos(doc3,bl,'2026-11-03T00:00:00.000Z')),bl,'atributos nulos/padrão não contam como mudança');
+  const doc4={type:'doc',content:[p('x','a'),{type:'paragraph',content:[{type:'text',text:'sem id'}]},p('x','copia')]};
+  const b4=copia(a.c.ntBlocos(doc4,bl,'2026-11-04T00:00:00.000Z'));
+  assert.equal(new Set(b4.map(b=>b.id)).size,3,'sem id e id repetido ganham id novo');assert.equal(b4[0].id,'x');
+  assert.deepEqual(copia(a.c.ntDocumento([])),{type:'doc',content:[{type:'paragraph'}]},'sempre há onde digitar');
 });
 
-test('Notas 1.38: clicar na nota abre a edição; topo (toggle/alça/fixar) e summary de toggle interno não abrem; sem botão Editar',async()=>{
-  const a=await app();vm.runInContext("SM.d.notas=[{id:'n1',titulo:'T',texto:'> Dentro\\n  oculto',em:'2026-10-01',ordem:10}]",a.c);
-  const html=a.c.ntGrade();assert.doesNotMatch(html,/Editar nota|>Editar</);assert.match(html,/<article[^>]*onclick="ntClique\(event,'n1'\)"/);
-  let aberto=null;a.c.ntAbre=id=>{aberto=id};
-  const alvo=(...cls)=>({target:{closest:q=>q.split(',').some(x=>cls.includes(x.trim()))?{}:null}});
-  a.c.ntClique(alvo('.nt-topo'),'n1');assert.equal(aberto,null,'clicar no topo não abre');
-  a.c.ntClique(alvo('summary'),'n1');assert.equal(aberto,null,'clicar no toggle interno não abre');
-  a.c.ntClique(alvo(),'n1');assert.equal(aberto,'n1','clicar no corpo abre o painel');
+test('Notas 1.39: salva pela fila do plano, sobrevive offline/reload, concilia 409 e edição durante o envio fica pendente',async()=>{
+  const doc=t=>`NT.ed={getJSON:()=>({type:'doc',content:[{type:'details',attrs:{id:'b1'},content:[{type:'detailsSummary',content:[{type:'text',text:'${t}'}]},{type:'detailsContent',content:[{type:'paragraph'}]}]}]})}`;
+  const a=await app([],false,null,true);vm.runInContext(doc('Offline'),a.c);
+  a.c.ntSalvaDoc();assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
+  assert.equal(await a.c.ntSync(),false,'sem conexão: continua pendente');assert.equal(vm.runInContext('ntTemPendentes()',a.c),true);
+  // reload offline: o documento pendente volta para a tela
+  const b=await app([],false,a.mem,true);assert.equal(vm.runInContext('SM.d.notasDoc.blocos[0].id',b.c),'b1');
+  assert.equal(vm.runInContext('ntTemPendentes()',b.c),true);
+  // volta a conexão com conflito 409 (outro aparelho mexeu em tarefas): nada se perde
+  b.estado.falhar=false;b.estado.conflito=true;await b.c.smPuxar();
+  assert.equal(vm.runInContext('ntTemPendentes()',b.c),false,'confirmado');
+  const salvo=b.salvos.at(-1);assert.equal(salvo.notasDoc.blocos[0].id,'b1');assert.ok(salvo.tarefas.some(t=>t.id==='outro'),'tarefa do outro aparelho preservada');
+  // edição durante o PUT continua pendente e sobe depois
+  const c=await app();vm.runInContext(doc('Primeira'),c.c);c.c.ntSalvaDoc();
+  const api=c.c.BCBR.api;let liberar;c.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT')await new Promise(r=>{liberar=r});return api(p,o)};
+  const envio=c.c.ntSync();await new Promise(r=>setImmediate(r));assert.equal(typeof liberar,'function');
+  vm.runInContext(doc('Durante o envio'),c.c);c.c.ntSalvaDoc();liberar();assert.equal(await envio,true);
+  assert.equal(c.salvos.at(-1).notasDoc.blocos[0].conteudo.content[0].content[0].text,'Primeira');
+  assert.equal(vm.runInContext('ntPendentes().length',c.c),1,'versão nova segue pendente');
+  c.c.BCBR.api=api;assert.equal(await c.c.ntSync(),true);
+  assert.equal(c.salvos.at(-1).notasDoc.blocos[0].conteudo.content[0].content[0].text,'Durante o envio');
+  assert.equal(vm.runInContext('ntPendentes().length',c.c),0);
 });
 
-test('Notas 1.38: toggle no texto (render, aninhado, recuo) e persistência ao salvar',async()=>{
-  const txt='antes\n> Título A\n  conteúdo A\n  > Interno\n    fundo\n> Vazio\n\ndepois <b>';
-  const a=await app(),H=t=>a.c.ntTexto(t);
-  const h=H(txt);
-  assert.equal((h.match(/<details/g)||[]).length,3,'três toggles (um aninhado)');
-  assert.match(h,/^<div class="nt-txt">antes<\/div><details class="nt-tgl"><summary>Título A<\/summary><div class="nt-tgl-c"><div class="nt-txt">conteúdo A<\/div><details class="nt-tgl"><summary>Interno<\/summary><div class="nt-tgl-c"><div class="nt-txt">fundo<\/div>/);
-  assert.match(h,/<summary>Vazio<\/summary><div class="nt-tgl-c"><\/div><\/details><div class="nt-txt">depois &lt;b&gt;<\/div>$/,'sem conteúdo, e texto sem recuo volta ao nível de fora');
-  assert.doesNotMatch(H('a > b\n>5 mg'),/<details/,'">" fora do começo da linha / sem espaço não é toggle');
-  // Enter: toggle -> próxima linha recuada; linha recuada mantém recuo; linha só de espaços sobe um nível; toggle vazio vira texto
-  const E=(v,i)=>copia(a.c.ntListaEdita(v,i,i,'Enter'));
-  assert.deepEqual(E('> T',3),{de:3,ate:3,txt:'\n  ',cur:6});
-  assert.deepEqual(E('> T\n  abc',9),{de:9,ate:9,txt:'\n  ',cur:12});
-  assert.deepEqual(E('> T\n  ',6),{de:4,ate:6,txt:'',cur:4});
-  assert.deepEqual(E('> T\n    ',8),{de:4,ate:8,txt:'  ',cur:6});
-  assert.deepEqual(E('> ',2),{de:0,ate:2,txt:'',cur:0});
-  assert.equal(E('> T',0),null,'Enter no início de "> título" não aninha');assert.equal(E('> T',1),null);
-  assert.equal(E('  abc',2),null,'Enter no início/meio de linha recuada não muda o recuo');assert.equal(E('  abc',4),null);
-  // persiste ao salvar (painel) e volta a renderizar igual depois de recarregar do remoto
-  a.elementos.set('nt_titulo',{value:'Com toggle'});a.elementos.set('nt_texto',{value:txt});a.c.ntCriar();await a.c.ntSync();
-  assert.equal(a.salvos.at(-1).notas[0].texto,txt);
-  const b=await app([],false,a.mem,false,a.estado.remoto);assert.equal(b.c.ntTexto(b.c.ntLista()[0].texto),h);
-});
+test('Notas 1.39: toggle aberto/fechado fica por aparelho (localStorage), fora do documento',async()=>{
+  const a=await app();
+  assert.equal(a.c.ntAberto('b1'),false);a.c.ntAbertoSalva('b1',true);a.c.ntAbertoSalva('b2',true);assert.equal(a.c.ntAberto('b1'),true);
+  const b=await app([],false,a.mem);assert.equal(b.c.ntAberto('b1'),true,'lembrado depois de recarregar');
+  b.c.ntAbertoSalva('b1',false);assert.equal(b.c.ntAberto('b1'),false);assert.equal(b.c.ntAberto('b2'),true);
+  assert.doesNotMatch(JSON.stringify(vm.runInContext('SM.d',b.c)),/b1|is-open|"open"/,'o plano não guarda o estado');
+});// ===== Notas 1.39: página única (Tiptap). A edição em si é testada no Chrome (notas-browser.test.js); aqui, a parte pura e a fila de salvamento =====
+// Formato idêntico ao plano.json real (v1.38): título + texto com "- ", "•", "> " (recuo = dentro), [img:…]; texto fictício.
+const NOTAS_138=[
+  {id:'xa1',titulo:'Laudos',texto:'- primeira ideia\n• segunda ideia\n  • sub-ideia\n\n> Meu toggle\n  segredo\n  > Interno\n    mais fundo\nlinha solta\n[img:nota-xabc.jpg]\n-5 graus não é lista',em:'2026-10-01T10:00:00.000Z',atualizado:'2026-11-02T10:00:00.000Z',ordem:30},
+  {id:'xa2',titulo:'Vazia',texto:'',em:'2026-10-02T10:00:00.000Z',atualizado:'2026-10-02T10:00:00.000Z',ordem:10,fixa:false},
+  {id:'xa3',titulo:'',texto:'sem título',em:'2026-10-03T10:00:00.000Z',atualizado:'2026-10-03T10:00:00.000Z',ordem:20,fixa:true},
+  {id:'xa4',texto:'tema fraco da Semana',em:'2026-10-04T10:00:00.000Z',fraco:true}];
+const txt=n=>n.content.map(c=>c.text).join('');
 
-test('Notas 1.38: colar imagem (clipboardData simulado) comprime, envia para imagens/ e insere [img:] sem tocar o plano.json',async()=>{
-  const a=await app(),enviados=[];
-  const blob=new Blob(['x'],{type:'image/png'});
-  a.c.ntImgComprime=async b=>{enviados.push(['comprime',b]);return new Blob(['j'],{type:'image/jpeg'})};
-  a.c.ntImgEnvia=async b=>{enviados.push(['envia',b.type]);return 'nota-teste.jpg'};
-  const t={value:'abc def',selectionStart:3,selectionEnd:3,setSelectionRange(){}};a.elementos.set('nt_texto',t);a.elementos.set('nt_titulo',{value:''});
-  let prev=0;
-  await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{items:[{kind:'string',type:'text/plain'},{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
-  assert.equal(prev,1);assert.deepEqual(enviados.map(x=>x[0]),['comprime','envia']);assert.equal(enviados[1][1],'image/jpeg');
-  assert.equal(t.value,'abc\n[img:nota-teste.jpg]\n def');
-  // imagem + texto (Excel/Word): cola o texto normal
-  prev=0;await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{getData:()=>'A1	B1',items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});assert.equal(prev,0);assert.equal(enviados.length,2,'nada foi enviado');
-  // texto comum: não intercepta
-  prev=0;await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{items:[{kind:'string',type:'text/plain'}]}});assert.equal(prev,0);
-  // cursor mudou durante o envio: insere onde ele está ao terminar; nota fechada: não insere
-  a.c.ntImgEnvia=async()=>{t.selectionStart=t.selectionEnd=t.value.length;return 'nota-b.jpg'};const t0=t.value;
-  await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
-  assert.equal(t.value,t0+'\n[img:nota-b.jpg]\n');
-  a.elementos.set('nt_texto',{value:''});const t1=t.value;await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});assert.equal(t.value,t1,'painel fechado: não insere');a.elementos.set('nt_texto',t);
-  // falha de envio: avisa e não altera o texto
-  a.c.ntImgEnvia=async()=>{throw new Error('offline')};const v=t.value;
-  await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
-  assert.equal(t.value,v);assert.match(a.avisos.at(-1),/Não consegui anexar/);
-  // render e persistência
-  assert.match(a.c.ntTexto('x\n[img:nota-teste.jpg]\ny'),/<img class="nt-img" src="\.\/img\/nota-teste\.jpg"/);
-  assert.doesNotMatch(a.c.ntTexto('[img:../../x"onerror=1]'),/<img/,'nome inválido não vira img');
-  a.elementos.set('nt_texto',{value:'foto\n[img:nota-teste.jpg]'});a.c.ntCriar();await a.c.ntSync();
-  assert.match(a.salvos.at(-1).notas[0].texto,/\[img:nota-teste\.jpg\]/);
-  assert.ok(JSON.stringify(a.salvos.at(-1)).length<2000,'só a referência vai para o plano');
-  // arquivo de verdade: JPEG enviado por BCBR.api em imagens/, ntImgEnvia real
-  const real=await app(),chamadas=[];
-  real.c.BCBR.api=async(p,o)=>{chamadas.push([p,o]);return {}};
-  real.c.FileReader=class{readAsDataURL(){this.result='data:image/jpeg;base64,QUJD';setImmediate(()=>this.onload())}};real.c.Response=class{};
-  const nome=await real.c.ntImgEnvia(new Blob(['ABC'],{type:'image/jpeg'}));
-  assert.match(nome,/^nota-x[\w]+\.jpg$/);assert.equal(chamadas[0][0],`/repos/privado/teste/contents/imagens/${nome}`);
-  const corpo=JSON.parse(chamadas[0][1].body);assert.equal(corpo.content,'QUJD');assert.equal(corpo.branch,'main');assert.equal(chamadas[0][1].method,'PUT');
+// ===== 1.40: sincronização rápida (fusão por bloco, ETag/304, cota, uma gravação por rajada) =====
+const bp=(id,t,atualizado)=>({id,atualizado,conteudo:{type:'paragraph',attrs:{id},content:[{type:'text',text:t}]}});
+const lista=r=>r.blocos.map(b=>b.id+':'+b.conteudo.content[0].text);
+test('Notas 1.40: ntFunde — blocos diferentes nos dois lados ficam os dois, sem conflito',async()=>{
+  const a=await app(),T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z';
+  const base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)];
+  const r=copia(a.c.ntFunde(base,[bp('x','x local',T2),base[1],base[2]],[base[0],bp('y','y remoto',T2),base[2]]));
+  assert.deepEqual(lista(r),['x:x local','y:y remoto','z:z']);assert.deepEqual(r.conflitos,[]);
+  // bloco novo de cada lado entra, sem apagar nada; sem base nada é apagado
+  const n=copia(a.c.ntFunde(base,[...base,bp('l','novo local',T2)],[base[0],bp('r','novo remoto',T2),...base.slice(1)]));
+  assert.deepEqual(lista(n),['x:x','r:novo remoto','y:y','z:z','l:novo local']);
+  assert.deepEqual(lista(copia(a.c.ntFunde(null,[bp('a','só local',T1)],[bp('b','só remoto',T1)]))),['a:só local','b:só remoto']);
+});
+test('Notas 1.40: ntFunde — mesmo bloco editado nos dois lados: vence o atualizado maior e o outro vai para os conflitos',async()=>{
+  const a=await app(),base=[bp('x','x','2026-11-01T00:00:00Z')];
+  let r=copia(a.c.ntFunde(base,[bp('x','local','2026-11-03T00:00:00Z')],[bp('x','remoto','2026-11-02T00:00:00Z')],'2026-11-04T00:00:00Z'));
+  assert.deepEqual(lista(r),['x:local']);assert.equal(r.conflitos.length,1);assert.equal(r.conflitos[0].conteudo.content[0].text,'remoto');assert.equal(r.conflitos[0].em,'2026-11-04T00:00:00Z');
+  r=copia(a.c.ntFunde(base,[bp('x','local','2026-11-02T00:00:00Z')],[bp('x','remoto','2026-11-03T00:00:00Z')]));
+  assert.deepEqual(lista(r),['x:remoto']);assert.equal(r.conflitos[0].conteudo.content[0].text,'local');
+  // o mesmo texto dos dois lados não é conflito
+  assert.deepEqual(copia(a.c.ntFunde(base,[bp('x','igual','2026-11-02T00:00:00Z')],[bp('x','igual','2026-11-03T00:00:00Z')])).conflitos,[]);
+  // lista de conflitos: máx. 20, sem repetir
+  const muitos=Array.from({length:25},(_,i)=>({id:'c',em:'e'+i}));
+  assert.equal(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])).length,20);
+});
+test('Notas 1.40: ntFunde — apagado de um lado e intacto do outro apaga; apagado de um e editado do outro fica o editado',async()=>{
+  const a=await app(),T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)];
+  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],base[2]],base))),['x:x','z:z'],'apagado aqui, intacto lá');
+  assert.deepEqual(lista(copia(a.c.ntFunde(base,base,[base[0],base[1]]))),['x:x','y:y'],'apagado lá, intacto aqui');
+  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],base[2]],[base[0],bp('y','y editado',T2),base[2]]))),['x:x','y:y editado','z:z'],'apagado aqui, editado lá');
+  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],bp('y','y editado',T2),base[2]],[base[0],base[2]]))),['x:x','y:y editado','z:z'],'editado aqui, apagado lá');
+});
+test('Notas 1.40: ntFunde — ordem é a do lado que reordenou (a remota, se ambos)',async()=>{
+  const a=await app(),T1='2026-11-01T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)],ids=r=>r.blocos.map(b=>b.id).join('');
+  const zxy=[base[2],base[0],base[1]],yzx=[base[1],base[2],base[0]];
+  assert.equal(ids(copia(a.c.ntFunde(base,zxy,base))),'zxy','só o local reordenou');
+  assert.equal(ids(copia(a.c.ntFunde(base,base,yzx))),'yzx','só o remoto reordenou');
+  assert.equal(ids(copia(a.c.ntFunde(base,zxy,yzx))),'yzx','os dois: vale o remoto');
+  assert.equal(ids(copia(a.c.ntFunde(base,[base[2],base[0],bp('n','n',T1),base[1]],base))),'zxny','reordenou e inseriu aqui: o novo fica depois do vizinho');
+});
+test('Notas 1.40: 409 (sha velho) — puxa, funde por bloco e regrava sem perder o que o outro aparelho mudou',async()=>{
+  const T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1)];
+  const a=await app();
+  vm.runInContext(`SM.d.notasDoc={v:1,blocos:${JSON.stringify(base)}};NT.ed={getJSON:()=>({type:'doc',content:[${JSON.stringify(bp('x','x daqui',T2).conteudo)},${JSON.stringify(base[1].conteudo)}]})}`,a.c);
+  a.c.ntBaseSalva(copia(base));a.estado.remoto.notasDoc={v:1,blocos:copia(base)};
+  const api=a.c.BCBR.api;let falhou=false;
+  a.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT'&&!falhou){falhou=true;a.estado.remoto.notasDoc={v:1,blocos:[base[0],bp('y','y de lá','2026-11-03T00:00:00Z')]};throw Object.assign(new Error('sha'),{status:409})}return api(p,o)};
+  a.c.ntSalvaDoc();assert.equal(await a.c.ntSync(),true);
+  assert.deepEqual(lista(a.salvos.at(-1).notasDoc),['x:x daqui','y:y de lá'],'as duas edições ficaram');
+  assert.equal(a.salvos.at(-1).notas_conflitos,undefined,'sem conflito: blocos diferentes');
+  assert.equal(vm.runInContext('ntTemPendentes()',a.c),false);
+  assert.deepEqual(lista({blocos:copia(a.c.ntBaseLer())}),['x:x daqui','y:y de lá'],'base = o que subiu');
+});
+test('Notas 1.40: puxar com texto ainda não salvo funde por bloco (conflito é guardado) e GET condicional 304 não muda nada',async()=>{
+  const T1='2026-10-01T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1)];
+  const a=await app();
+  vm.runInContext(`SM.d.notasDoc={v:1,blocos:${JSON.stringify(base)}};NT.ed={getJSON:()=>({type:'doc',content:[${JSON.stringify(bp('x','x daqui',T1).conteudo)},${JSON.stringify(base[1].conteudo)}]})};NT.sujo=true;SM.sha='antigo'`,a.c);
+  a.c.ntBaseSalva(copia(base));
+  a.estado.remoto.notasDoc={v:1,blocos:[bp('x','x de lá','2026-10-20T00:00:00Z'),bp('y','y de lá','2026-10-20T00:00:00Z')]};   // o GitHub tem outra versão
+  await a.c.smPuxar();await vm.runInContext('SM.fila',a.c);
+  assert.deepEqual(lista(a.salvos.at(-1).notasDoc),['x:x daqui','y:y de lá'],'o digitado (mais novo) vence em x; y vem de lá');
+  assert.equal(a.salvos.at(-1).notas_conflitos.length,1);assert.equal(a.salvos.at(-1).notas_conflitos[0].conteudo.content[0].text,'x de lá');
+  // 304: nada muda e nada é regravado
+  const antes=vm.runInContext('SM.d',a.c),n=a.salvos.length,opts=[];
+  a.c.BCBR.api=async(p,o)=>{opts.push(o);return {naoMudou:true}};
+  vm.runInContext("SM.etag='\"e1\"'",a.c);await a.c.smPuxar();
+  assert.equal(vm.runInContext('SM.d',a.c),antes,'mesmo objeto: 304 não re-aplica');assert.equal(a.salvos.length,n);
+  assert.equal(opts.find(o=>o&&o.etag).etag,'"e1"','mandou o ETag da última leitura');
+});
+test('Notas 1.40: ciclo de busca — 10 s, cota baixa volta a 90 s; rajada de mudanças vira um único commit',async()=>{
+  const a=await app();
+  assert.equal(a.c.smIntervalo(),10000);
+  vm.runInContext("BCBR.cota={rest:4000,reset:0}",a.c);assert.equal(a.c.smIntervalo(),10000);
+  vm.runInContext("BCBR.cota={rest:100,reset:0}",a.c);assert.equal(a.c.smIntervalo(),90000);
+  vm.runInContext("BCBR.cota={rest:2,reset:0}",a.c);assert.ok(a.c.smIntervalo()>=90000);
+  const antes=a.salvos.length;
+  const ps=['n1','n2','n3'].map(id=>vm.runInContext(`smMudar(d=>{if(!d.tarefas.some(t=>t.id==='${id}'))d.tarefas.push({id:'${id}',dia:'sem',texto:'${id}',area:'tarefas'})},'rajada')`,a.c));
+  assert.deepEqual(await Promise.all(ps),[true,true,true]);
+  assert.equal(a.salvos.length-antes,1,'um commit para as três mudanças');
+  assert.deepEqual(['n1','n2','n3'].filter(id=>a.salvos.at(-1).tarefas.some(t=>t.id===id)),['n1','n2','n3']);
+});
+test('Notas 1.40: ntFunde ignora elemento nulo/não-objeto do plano remoto; busca velha chegando depois de uma gravação é descartada; claro mantém o azul original',async()=>{
+  const a=await app(),T='2026-11-01T00:00:00Z';
+  assert.deepEqual(lista(copia(a.c.ntFunde([bp('x','x',T)],[bp('x','x',T)],[null,7,'s',{conteudo:1},bp('x','x',T)]))),['x:x']);
+  assert.deepEqual(lista(copia(a.c.ntFunde(null,[bp('x','x',T)],'quebrado'))),['x:x']);
+  // GET lento: uma gravação acontece enquanto ele viaja; a resposta (velha) não troca SM.d/SM.sha
+  vm.runInContext("SM.sha='antigo'",a.c);a.estado.remoto.tarefas.push({id:'velha',dia:'sem',texto:'v'});
+  const api=a.c.BCBR.api;let solta;a.c.BCBR.api=async(p,o)=>{const r=await api(p,o);if(!o?.method&&p.endsWith('plano.json'))await new Promise(f=>{solta=f});return r};
+  const busca=a.c.smPuxar();await new Promise(r=>setImmediate(r));
+  vm.runInContext("SM.gravs=(SM.gravs||0)+1",a.c);solta();await busca;
+  assert.equal(vm.runInContext('SM.sha',a.c),'antigo');assert.equal(vm.runInContext("SM.d.tarefas.some(t=>t.id==='velha')",a.c),false);
+  const css=fs.readFileSync(require.resolve('../build/semana.css'),'utf8');
+  assert.match(css,/\.qa-p\.on\{opacity:1;border-color:#38bdf8;color:#38bdf8/);assert.match(css,/\.qa-fab\{[^}]*background:#38bdf8;color:#0f172a/);assert.match(css,/\.qa-cd\.cur\{border-color:#38bdf8;background:rgba\(56,189,248,\.15\)\}/);
+  assert.match(css,/:root\[data-theme="dark"\] \.qa-fab\{background:var\(--pri\)/);
 });

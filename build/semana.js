@@ -7,7 +7,7 @@
 // Dia também tem tema?, foco?, noite? (BR|HSI|''; sem = pela agenda), feriado? (sem = lista fixa). estagios:{"AAAA-MM":"RM MSK"} = estágio do mês.
 // Meta de questões automática só nos dias de estudo (plantão na Ecomax conta como estudo). Descanso e sobreaviso: sem cor, sem meta.
 // A revisão de domingo (tarefa agendada do Claude) preenche a agenda das próximas semanas pelo Google Agenda e põe os itens da semana nova.
-const SM={d:null,sha:null,ok:false,erro:'',ed:null,add:{},dr:{},ab:new Set(),sel:null,sem:null,mes:null,plan:false,semAdd:null,conf:null,fila:Promise.resolve(),auto:new Set(),fr:[]};
+const SM={d:null,sha:null,ok:false,erro:'',ed:null,add:{},dr:{},ab:new Set(),sel:null,sem:null,mes:null,plan:false,semAdd:null,conf:null,fila:Promise.resolve(),lote:[],auto:new Set(),fr:[]};
 const SM_ARQ='semana/plano.json',SM_VELHO='semana/atual.json';
 try{SM.ab=new Set(JSON.parse(localStorage.getItem('sm_abertas')||'[]'))}catch(e){}
 try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
@@ -30,13 +30,23 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
   const dias={};(v.dias||[]).forEach(x=>{dias[x.id]={agenda:x.agenda||''}});
   return {v:2,regras:v.regras||'',subtitulo:v.subtitulo||'',dias,tarefas:v.tarefas||[],notas:v.notas||[]};
 }
+// 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
+  if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
+  try{await smPuxar1()}finally{SM.puxando=0}
+}
+async function smPuxar1(){
   smAgendaPuxar();
   if(SM.d&&typeof ntSync==='function'&&ntTemPendentes()&&!await ntSync())return;
   try{
-    const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);
+    const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
+    const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
     SM.ok=true;SM.erro='';
-    if(f.sha!==SM.sha){SM.d=JSON.parse(smDec(f.content));if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
+    if(f.naoMudou||g!==(SM.gravs||0))return;
+    SM.etag=f.etag;
+    if(f.sha!==SM.sha){
+      if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
+      SM.d=JSON.parse(smDec(f.content));if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
   }catch(e){
     SM.ok=true;
     if(e.status===404){
@@ -48,25 +58,33 @@ async function smPuxar(){
 }
 function smRender(){if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
 // toda mudança é uma função idempotente: aplica na hora e de novo na gravação (se outro aparelho mudou o arquivo, relê e reaplica)
+// 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
 function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
   if(!SM.d)return Promise.resolve(false);fn(SM.d);smGuardaCache();smRender();smNativoTarefas();
+  const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
   const tarefa=async()=>{
+    if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
+    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});return ok};
     for(let t=0;t<6;t++){
       try{
-        fn(SM.d);
+        grupo.forEach(g=>g.fn(SM.d));
         if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
-        const body={message:'semana: '+(msg||'atualização'),content:BCBR.b64(JSON.stringify(SM.d,null,1)),branch:'main'};if(SM.sha)body.sha=SM.sha;
-        const salvo=aoSalvar?JSON.parse(smDec(body.content)):null;
+        const body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(JSON.stringify(SM.d,null,1)),branch:'main'};if(SM.sha)body.sha=SM.sha;
+        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos;
+        SM.gravs=(SM.gravs||0)+1;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
-        if(aoSalvar)aoSalvar(salvo);
-        SM.sha=r.content.sha;SM.erro='';smGuardaCache();smNativoTarefas();return true;
+        grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
+        SM.gravs++;SM.sha=r.content.sha;SM.erro='';smGuardaCache();smNativoTarefas();
+        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos);   // o que subiu é a última versão sincronizada das notas
+        if(typeof ntSincroniza==='function')ntSincroniza();
+        return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);SM.d=JSON.parse(smDec(f.content));SM.sha=f.sha}catch(e2){}continue}
-        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smRender();return false;
+        if(e.status===409||e.status===422){try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);if(typeof ntAntes==='function')ntAntes();SM.d=JSON.parse(smDec(f.content));SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
+        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smRender();return fim(false);
       }
     }
-    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smRender();return false;
+    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smRender();return fim(false);
   };
   SM.fila=SM.fila.then(tarefa);return SM.fila;
 }
@@ -553,8 +571,16 @@ function smCardHoje(){
   return `<div class="card sm-ch"><div class="row" style="justify-content:space-between"><span class="kick">Hoje no calendário · ${todos.filter(t=>t.feito).length}/${todos.length}</span>${smFeitasBotao(hj)}<button class="b s sm-ghost" onclick="go('semana')">Ver calendário</button></div>${smGrupos(its)}${SM.ed&&smTar(SM.ed.id)?smEditor(smTar(SM.ed.id)):''}</div>`;
 }
 const smCarga=Promise.resolve().then(smPuxar);
-setInterval(()=>{if(document.visibilityState==='visible')smPuxar()},90000);
+// 1.40: com o app visível busca a cada 10 s (304 não gasta cota); se a cota do GitHub estiver acabando (BCBR.cota, vinda dos cabeçalhos), volta a 90 s.
+// Também busca ao voltar à tela, ao ganhar foco e (notas.js) ao voltar a conexão. No app Android o mesmo ciclo vale: smNativo só ENVIA o resumo para o widget.
+function smIntervalo(){const c=BCBR.cota;if(!c)return 10000;if(c.rest<=5)return Math.max(90000,c.reset*1000-Date.now()+1000);return c.rest<500?90000:10000}
+function smCiclo(){
+  clearTimeout(SM.tmCiclo);
+  SM.tmCiclo=setTimeout(async()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false)await smPuxar().catch(()=>{});smCiclo()},smIntervalo());
+}
+smCiclo();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){smPuxar();smAuto()}});
+window.addEventListener('focus',()=>smPuxar());
 // anel da meta de hoje + dias até a prova + ritmo (estavam no cartão de hoje da aba Semana; agora no "Meta até a prova" da aba Hoje)
 function smMetaHoje(){
   if(!SM.d)return'';const hj=smHoje(),q=smQ(hj),m=smMetaDe(hj),dd=diasProva(),rit=smRitmo(),r=smRetaIni(),tp=smTipo(hj);
@@ -1156,7 +1182,7 @@ async function smAgendaPuxar(){
   if(SM.agendaLendo)return;SM.agendaLendo=true;
   const aplica=a=>{const n=normalizarAgenda(a);SM.agenda=n.eventos;SM.avisosAgenda=n.avisos;SM.agendaAtualizado=n.atualizado};
   if(!SM.agenda){try{aplica(JSON.parse(localStorage.getItem('sm_agenda')||'[]'))}catch(e){aplica([])}}
-  try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/semana/agenda.json`);if(f.sha!==SM.agendaSha){const a=JSON.parse(smDec(f.content));if(!Array.isArray(a)&&!Array.isArray(a?.eventos))throw new Error('Formato de agenda inválido');aplica(a);SM.agendaSha=f.sha;try{localStorage.setItem('sm_agenda',JSON.stringify(a))}catch(e){}smRender()}}
+  try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/semana/agenda.json`,{etag:SM.agendaSha?SM.agendaEtag||'':undefined});if(f.naoMudou)return;SM.agendaEtag=f.etag;if(f.sha!==SM.agendaSha){const a=JSON.parse(smDec(f.content));if(!Array.isArray(a)&&!Array.isArray(a?.eventos))throw new Error('Formato de agenda inválido');aplica(a);SM.agendaSha=f.sha;try{localStorage.setItem('sm_agenda',JSON.stringify(a))}catch(e){}smRender()}}
   catch(e){if(e.status===404){const tinha=SM.agenda.length||SM.avisosAgenda?.length;aplica([]);SM.agendaSha=null;try{localStorage.removeItem('sm_agenda')}catch(e){}if(tinha)smRender()}}
   finally{SM.agendaLendo=false}
 }

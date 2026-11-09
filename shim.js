@@ -66,10 +66,15 @@
     const chave = tok();
     const r = await fetch(API + path, {
       ...opt, cache: "no-store",
-      headers: { Authorization: "Bearer " + chave, Accept: opt.accept === "raw" ? "application/vnd.github.raw" : opt.accept || "application/vnd.github+json", ...(opt.body ? { "Content-Type": "application/json" } : {}) },
+      headers: { Authorization: "Bearer " + chave, Accept: opt.accept === "raw" ? "application/vnd.github.raw" : opt.accept || "application/vnd.github+json", ...(opt.body ? { "Content-Type": "application/json" } : {}), ...(opt.etag ? { "If-None-Match": opt.etag } : {}) },
     });
+    // 1.40: cota do GitHub (BCBR.cota) para o ciclo rápido da Semana/Notas voltar a 90 s se faltar; opt.etag = GET condicional (304 não gasta cota).
+    const rest = r.headers?.get?.("x-ratelimit-remaining");
+    if (rest != null) window.BCBR.cota = { rest: +rest, reset: +r.headers?.get?.("x-ratelimit-reset") || 0 };
+    if (r.status === 304) return { naoMudou: true };
     if (r.status === 401) { await credencialRecusada(chave); throw Object.assign(new Error("chave"), { chave: true, status: 401 }); }
     if (!r.ok) throw Object.assign(new Error("GitHub " + r.status), { status: r.status, resp: await r.text().catch(() => "") });
+    if (opt.etag !== undefined) { const j = await r.json(); j.etag = r.headers?.get?.("etag") || ""; return j; }
     return opt.accept === "raw" ? r : r.json();
   }
   const raw = (sha) => api(`/repos/${REPO}/git/blobs/${sha}`, { accept: "raw" }).then(r => r.text());

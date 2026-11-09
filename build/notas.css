@@ -3,7 +3,7 @@
 .nt input,.nt textarea{width:100%;box-sizing:border-box;font:inherit;color:var(--tx);min-width:0}
 .nt textarea{resize:vertical;white-space:pre-wrap;line-height:1.5}
 .nt-criar .b{align-self:flex-end}
-.nt-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:14px;align-items:start}
+.nt-grade{display:flex;flex-direction:column;gap:14px}
 .nt-nota:nth-child(3n+2){background:color-mix(in srgb,#e9dff6 20%,var(--card))}
 .nt-nota:nth-child(3n){background:color-mix(in srgb,#ddefe4 20%,var(--card))}
 .nt-nota .row{justify-content:space-between}
@@ -24,16 +24,14 @@
 .nt input[type="search"]{border:1px solid var(--bd);background:var(--card);border-radius:10px;padding:9px 12px}
 .nt input[type="search"]:focus{border-color:var(--pri);box-shadow:none}
 
-/* 1.33.0 — notas com toggle, texto inteiro, no máximo 2 por fileira (1 no celular), arrasto fluido */
-.nt-grade{grid-template-columns:repeat(2,minmax(0,1fr))}
-@media(max-width:700px){.nt-grade{grid-template-columns:1fr}}
+/* 1.33.0 — notas com toggle, texto inteiro, arrasto fluido (1.38.0: coluna única) */
 .nt-topo{display:flex;align-items:center;gap:4px;min-width:0}
 .nt-tg{flex:1;min-width:0;display:flex;align-items:center;gap:6px;border:0;background:none;padding:2px 0;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
 .nt-tg b{font-size:1rem;font-weight:650;overflow-wrap:anywhere}
 .nt-seta{display:inline-block;color:var(--mut);font-size:.8rem;transition:transform .15s}
 .nt-tg[aria-expanded="true"] .nt-seta{transform:rotate(90deg)}
 .nt-nota.fechada .nt-corpo{display:none}
-.nt-corpo{display:flex;flex-direction:column;gap:6px;cursor:text;padding-left:22px}
+.nt-corpo{display:flex;flex-direction:column;gap:6px;cursor:pointer;padding-left:22px}
 .nt-txt{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;font-size:.94rem;color:var(--tx)}
 .nt-acoes{display:flex;gap:6px;flex:none}
 .nt-alca{cursor:grab;padding:8px 6px 8px 0;margin:-8px 0;color:var(--mut);opacity:.45;font-size:20px;line-height:1;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;flex:none}
@@ -46,3 +44,8 @@ body.nt-on,body.nt-on *{cursor:grabbing!important;-webkit-user-select:none;user-
 .nt-caixa .row{gap:6px}
 .nt-caixa #nt_titulo{font-weight:650}
 .nt-caixa #nt_texto{font:inherit;font-size:1rem;flex:1;min-height:30vh;resize:vertical;line-height:1.5;white-space:pre-wrap}
+
+/* 1.38.0 — toggles dentro do texto e imagens coladas */
+.nt-tgl>summary{cursor:pointer;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.nt-tgl-c{display:flex;flex-direction:column;gap:6px;margin:4px 0 4px 6px;padding-left:14px;border-left:2px solid var(--bd)}
+.nt-img{display:block;max-width:100%;height:auto;border-radius:8px}

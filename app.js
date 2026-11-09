@@ -1,4 +1,4 @@
-// Banco CBR app 1.37.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.38.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // ===== INTERPRETAR O TEXTO DE UMA TAREFA (pt-BR, sem API) — 1.17.0 =====
 // interpretarTarefa(texto, hoje) -> [{texto,dia,hora,urg,area,prioridade,etiquetas,repetir}]
 // Pura com hoje explícito; sem hoje usa a data local por compatibilidade com chamadas antigas.
@@ -1497,8 +1497,9 @@ function ntAbre(id=null){
     <div class="row"><b>${n?'Editar nota':'Nova nota'}</b><span style="flex:1"></span>${n?`<button type="button" class="qa-chip" onclick="ntApagar('${esc(n.id)}')">Excluir</button>`:''}<button type="button" class="qa-chip" onclick="ntFechaPainel()">Cancelar</button><button type="button" class="b" onclick="ntSalvarPainel()">Salvar</button></div>
     <input id="nt_titulo" class="qa-in" aria-label="Título" placeholder="Título (opcional)" value="${esc(r.titulo||'')}" oninput="ntRascSalva()">
     <textarea id="nt_texto" class="qa-in" aria-label="Texto da nota" placeholder="Anote uma ideia…" rows="8" oninput="ntRascSalva()">${esc(r.texto||'')}</textarea>
-    <div class="qa-dica">“- ” faz lista com bolinhas · clique fora ou Ctrl+Enter salva · Esc cancela${n?'':' (o rascunho fica guardado)'}</div></div>`;
+    <div class="qa-dica">“- ” faz lista com bolinhas · “> ” faz toggle (o que vem recuado fica dentro) · Ctrl+V cola imagem · clique fora ou Ctrl+Enter salva · Esc cancela${n?'':' (o rascunho fica guardado)'}</div></div>`;
   f.addEventListener('pointerdown',e=>{if(e.target===f){e.preventDefault();ntSalvarPainel()}});   // 1.37.0: clicar fora salva (Esc/Cancelar descartam)
+  f.querySelector('#nt_texto').addEventListener('paste',ntColar);
   f.querySelector('#nt_texto').addEventListener('beforeinput',ntLista_tecla);   // beforeinput: vale também no teclado do celular
   document.body.appendChild(f);
   const t=document.getElementById(n?'nt_texto':'nt_titulo');try{t.focus();if(n)t.setSelectionRange(t.value.length,t.value.length)}catch(e){}
@@ -1520,9 +1521,22 @@ function ntListaEdita(v,ini,fim,tecla){
   if(ini!==fim)return null;
   const NL=String.fromCharCode(10),l0=v.lastIndexOf(NL,ini-1)+1,antes=v.slice(l0,ini);
   if(tecla===' '){const m=/^(\s*)-$/.exec(antes);if(!m)return null;return {de:l0+m[1].length,ate:ini,txt:'• ',cur:l0+m[1].length+2}}
-  if(tecla==='Enter'){const fl=v.indexOf(NL,ini),linha=v.slice(l0,fl<0?v.length:fl),m=/^(\s*)• ?(.*)$/.exec(linha);if(!m)return null;
-    if(!m[2].trim())return {de:l0,ate:fl<0?v.length:fl,txt:'',cur:l0};   // bolinha vazia: encerra a lista
-    const t=NL+m[1]+'• ';return {de:ini,ate:ini,txt:t,cur:ini+t.length}}
+  if(tecla==='Enter'){const fl=v.indexOf(NL,ini),linha=v.slice(l0,fl<0?v.length:fl),ate=fl<0?v.length:fl;
+    let m=/^(\s*)• ?(.*)$/.exec(linha);
+    if(m){
+      if(!m[2].trim())return {de:l0,ate,txt:'',cur:l0};   // bolinha vazia: encerra a lista
+      const t=NL+m[1]+'• ';return {de:ini,ate:ini,txt:t,cur:ini+t.length}}
+    // 1.38.0: "> título" é um toggle; a linha seguinte já nasce recuada (dentro dele). Toggle vazio vira texto comum.
+    m=/^(\s*)>(?: (.*))?$/.exec(linha);
+    if(m&&ini!==ate)return null;   // só com o cursor no fim da linha; no meio/início, Enter normal
+    if(m){if(!(m[2]||'').trim())return {de:l0,ate,txt:m[1],cur:l0+m[1].length};
+      const t=NL+m[1]+'  ';return {de:ini,ate:ini,txt:t,cur:ini+t.length}}
+    // linha recuada continua no mesmo recuo; Enter numa linha só de espaços sobe um nível (sai do toggle)
+    m=/^(\s+)(.*)$/.exec(linha);
+    if(m&&ini!==ate)return null;
+    if(m){if(!m[2].trim()){const r=m[1].slice(2);return {de:l0,ate,txt:r,cur:l0+r.length}}
+      const t=NL+m[1];return {de:ini,ate:ini,txt:t,cur:ini+t.length}}
+    return null}
   return null;
 }
 function ntLista_tecla(e){
@@ -1547,22 +1561,74 @@ window.addEventListener('keydown',e=>{
   else if(e.key==='Tab'||e.altKey)e.stopImmediatePropagation();   // não troca de aba com o painel aberto
 },true);
 
-// 1.34.0: colunas independentes (sem buraco quando uma nota recolhe): a nota i vai para a coluna i%n e cada coluna empilha só as suas.
-const ntNCol=()=>{try{return matchMedia('(max-width:700px)').matches?1:2}catch(e){return 2}};
-function ntDistribui(ids,n){const c=Array.from({length:n},()=>[]);ids.forEach((id,i)=>c[i%n].push(id));return c}
+// 1.38.0: uma coluna só (notas uma abaixo da outra).
 function ntGrade(){
   const l=ntLista();if(!l.length)return '<p class="mut">Nenhuma nota encontrada.</p>';
-  const m=new Map(l.map(n=>[n.id,n]));
-  return ntDistribui(l.map(n=>n.id),ntNCol()).map(c=>`<div class="nt-col">${c.map(id=>ntCartao(m.get(id))).join('')}</div>`).join('');
+  return l.map(ntCartao).join('');
 }
-function ntCartao(n){const f=NT.fechadas?.has(n.id);return `<article class="nt-nota${f?' fechada':''}" data-nota="${esc(n.id)}">
+// 1.38.0: toggles dentro do texto (estilo Notion). "> título" abre um toggle; as linhas seguintes com mais recuo ficam dentro dele
+// (aninha pelo recuo). Uma linha "[img:arquivo]" é uma imagem colada (arquivo em imagens/ do repositório privado).
+const ntRecuo=l=>/^\s*/.exec(l)[0].length;
+function ntArvore(lin){
+  const r=[];
+  for(let i=0;i<lin.length;i++){
+    const m=/^(\s*)>(?: (.*))?$/.exec(lin[i]);if(!m){r.push(lin[i]);continue}
+    let j=i+1;while(j<lin.length&&(!lin[j].trim()||ntRecuo(lin[j])>m[1].length))j++;
+    while(j>i+1&&!lin[j-1].trim())j--;
+    const f=lin.slice(i+1,j),min=Math.min(...f.filter(x=>x.trim()).map(ntRecuo));
+    r.push({t:m[2]||'',f:ntArvore(f.map(x=>x.slice(Math.min(min,ntRecuo(x)))))});i=j-1;
+  }return r;
+}
+function ntHtml(nos){
+  let h='',run=[];
+  const fim=()=>{const t=run.join('\n').replace(/^\n+|\n+$/g,'');if(t.trim())h+=`<div class="nt-txt">${esc(t)}</div>`;run=[]};
+  for(const n of nos){
+    if(typeof n==='string'){const im=/^\s*\[img:([\w.-]+)\]\s*$/.exec(n);
+      if(im){fim();h+=`<img class="nt-img" src="./img/${encodeURIComponent(im[1])}" alt="Imagem da nota" loading="lazy">`}else run.push(n)}
+    else{fim();h+=`<details class="nt-tgl"><summary>${esc(n.t)||'<span class="mut">Toggle</span>'}</summary><div class="nt-tgl-c">${ntHtml(n.f)}</div></details>`}
+  }fim();return h;
+}
+function ntTexto(t){return ntHtml(ntArvore(String(t||'').split(/\r?\n/)))}
+// Clicar na nota abre a edição, menos no topo (abrir/fechar, alça, fixar), no summary de um toggle e com texto selecionado.
+function ntClique(e,id){
+  if(e.target?.closest?.('.nt-topo,summary')||globalThis.getSelection?.()?.toString())return;
+  ntAbre(id);
+}
+// 1.38.0: Ctrl+V com imagem: reduz (máx. 1600 px, JPEG 0,82) e guarda como arquivo em imagens/ do repositório privado (não no plano.json,
+// para não inflar a sincronização nem o localStorage); o texto leva só a linha "[img:nota-….jpg]".
+const NT_IMG_MAX=1600;
+async function ntImgComprime(blob){
+  const b=await createImageBitmap(blob),k=Math.min(1,NT_IMG_MAX/Math.max(b.width,b.height));
+  const c=document.createElement('canvas');c.width=Math.max(1,Math.round(b.width*k));c.height=Math.max(1,Math.round(b.height*k));
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(b,0,0,c.width,c.height);b.close?.();
+  return new Promise((ok,no)=>c.toBlob(r=>r?ok(r):no(new Error('imagem')),'image/jpeg',0.82));
+}
+async function ntImgEnvia(blob){
+  const nome='nota-'+smId()+'.jpg';
+  const b64=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=no;r.readAsDataURL(blob)});
+  await BCBR.api(`/repos/${BCBR.REPO}/contents/imagens/${nome}`,{method:'PUT',body:JSON.stringify({message:'nota: imagem',content:b64,branch:'main'})});
+  try{(await caches.open('bcbr-img')).put('./img/'+nome,new Response(blob,{headers:{'Content-Type':'image/jpeg'}}))}catch(e){}   // aparece já, sem baixar de novo
+  return nome;
+}
+async function ntColar(e){
+  if(e.clipboardData?.getData?.('text/plain'))return;   // Excel/Word trazem imagem + texto: cola o texto normal
+  const f=[...(e.clipboardData?.items||[])].find(i=>i.kind==='file'&&/^image\//.test(i.type))?.getAsFile();
+  if(!f)return;   // texto comum: cola normal
+  e.preventDefault();const t=e.target;toast('Enviando imagem…');
+  try{
+    const nome=await ntImgEnvia(await ntImgComprime(f));
+    if(document.getElementById('nt_texto')!==t){toast('A nota foi fechada antes de a imagem subir.');return}
+    const v=t.value,p=t.selectionStart,antes=v.slice(0,p),ins=(antes&&!antes.endsWith('\n')?'\n':'')+`[img:${nome}]\n`;
+    t.value=antes+ins+v.slice(t.selectionEnd);t.setSelectionRange?.(p+ins.length,p+ins.length);ntRascSalva();toast('Imagem anexada.');
+  }catch(x){toast('Não consegui anexar a imagem (precisa de conexão).')}
+}
+function ntCartao(n){const f=NT.fechadas?.has(n.id);return `<article class="nt-nota${f?' fechada':''}" data-nota="${esc(n.id)}" onclick="ntClique(event,'${esc(n.id)}')">
   <div class="nt-topo"><span class="nt-alca" title="Arrastar para mudar a ordem" aria-hidden="true">⠿</span>
     <button type="button" class="nt-tg" aria-expanded="${!f}" onclick="ntTg('${esc(n.id)}')"><span class="nt-seta">▸</span><b>${esc(n.titulo||'')||'<span class="mut">Sem título</span>'}</b></button>
-    <span class="nt-acoes"><button class="sm-tagb" aria-label="Fixar nota" aria-pressed="${!!n.fixa}" onclick="ntFixar('${esc(n.id)}')">${n.fixa?'● Fixada':'○ Fixar'}</button><button class="sm-tagb" aria-label="Editar nota" onclick="ntAbre('${esc(n.id)}')">Editar</button></span></div>
-  <div class="nt-corpo" title="Clique para editar" onclick="if(!getSelection().toString())ntAbre('${esc(n.id)}')"><div class="nt-txt">${esc(n.texto||'')||'<span class="mut">Sem texto</span>'}</div>
+    <span class="nt-acoes"><button class="sm-tagb" aria-label="Fixar nota" aria-pressed="${!!n.fixa}" onclick="ntFixar('${esc(n.id)}')">${n.fixa?'● Fixada':'○ Fixar'}</button></span></div>
+  <div class="nt-corpo" title="Clique para editar">${ntTexto(n.texto)||'<div class="nt-txt"><span class="mut">Sem texto</span></div>'}
   <small class="mut">${esc((n.em||n.atualizado||'').slice(0,10))}</small></div></article>`}
 function ntBuscar(valor){NT.busca=valor;document.getElementById('nt_grade').innerHTML=ntGrade()}
-try{matchMedia('(max-width:700px)').addEventListener('change',()=>ntReordenar())}catch(e){}
 function ntReordenar(){if(tela==='notas'&&!NTD){const g=document.getElementById('nt_grade');if(g)g.innerHTML=ntGrade()}}
 function vNotas(){
   if(!SM.d)return '<div class="card"><p class="mut">As notas ainda não estão disponíveis neste aparelho. Tente novamente com conexão.</p></div>';
@@ -1575,15 +1641,13 @@ window.addEventListener('storage',e=>{if(e.key?.startsWith(NT_PREFIX)){if(SM.d)n
 
 // Arrasto fluido (mouse e toque), estilo Notion/Trello (1.34.0): segurar a alça ⠿ (toque) ou o título (mouse, após 5 px) e arrastar.
 // Um "fantasma" com sombra segue o ponteiro, o lugar vazio mostra onde vai cair e as outras notas deslizam (FLIP).
-// Soltar grava a ordem que está na tela; Esc ou cancelamento do sistema restauram. Funciona em 1 e 2 colunas.
+// Soltar grava a ordem que está na tela; Esc ou cancelamento do sistema restauram. Coluna única.
 let NTD=null,NTP=null;
 // Nova ordem ao soltar `id` sobre `alvo`: ele assume a posição do alvo (antes dele se vinha de baixo, depois se vinha de cima).
 function ntRealoca(ids,id,alvo){
   const j=ids.indexOf(alvo);if(j<0||!ids.includes(id)||id===alvo)return ids;
   const r=ids.filter(x=>x!==id);r.splice(j,0,id);return r;
 }
-// Ordem de leitura (esquerda→direita, linha a linha) a partir das colunas: inverso de ntDistribui.
-function ntLeitura(cols){const r=[],m=Math.max(0,...cols.map(c=>c.length));for(let i=0;i<m;i++)for(const c of cols)if(i<c.length)r.push(c[i]);return r}
 function ntdFlip(g,muda){
   const els=[...g.querySelectorAll('.nt-nota')],antes=new Map(els.map(e=>[e,e.getBoundingClientRect()]));muda();
   for(const e of els){const a=antes.get(e),b=e.getBoundingClientRect(),dx=a.left-b.left,dy=a.top-b.top;if(!dx&&!dy)continue;
@@ -1592,15 +1656,15 @@ function ntdFlip(g,muda){
 }
 // Reencaixa os mesmos nós nas colunas conforme `ids` (os nós são movidos, não recriados, para a animação funcionar).
 function ntdEncaixa(grade,ids){
-  const cols=[...grade.querySelectorAll('.nt-col')],nos=new Map([...grade.querySelectorAll('.nt-nota')].map(e=>[e.dataset.nota,e]));
-  ntDistribui(ids,cols.length).forEach((c,k)=>c.forEach((id,i)=>{const no=nos.get(id);if(cols[k].children[i]!==no)cols[k].insertBefore(no,cols[k].children[i]||null)}));
+  const nos=new Map([...grade.querySelectorAll('.nt-nota')].map(e=>[e.dataset.nota,e]));
+  ids.forEach((id,i)=>{const no=nos.get(id);if(grade.children[i]!==no)grade.insertBefore(no,grade.children[i]||null)});
 }
 function ntdMove(){
   const d=NTD;if(!d)return;d.g.style.transform=`translate(${d.cx-d.dx}px,${d.cy-d.dy}px)`;
   if(performance.now()-d.t<140)return;   // deixa a animação anterior terminar: evita vaivém
   const el=document.elementFromPoint(d.cx,d.cy);let alvo=el?.closest?.('.nt-nota[data-nota]');
-  if(!alvo){   // abaixo da última nota de uma coluna: assume o fim dela
-    const col=el?.closest?.('.nt-col'),ns=col?[...col.querySelectorAll('.nt-nota')].filter(x=>x!==d.a):[],u=ns[ns.length-1];
+  if(!alvo){   // abaixo da última nota: assume o fim
+    const ns=[...d.grade.querySelectorAll('.nt-nota')].filter(x=>x!==d.a),u=ns[ns.length-1];
     if(u&&d.cy>u.getBoundingClientRect().bottom)alvo=u;
   }
   if(!alvo||alvo===d.a)return;
@@ -1610,7 +1674,7 @@ function ntdMove(){
 function ntdIni(a,cx,cy,pid,h){
   const b=a.getBoundingClientRect(),grade=a.closest('.nt-grade');if(!grade)return;
   const g=a.cloneNode(true);g.classList.add('nt-fantasma');g.style.cssText=`width:${b.width}px;height:${b.height}px`;document.body.appendChild(g);
-  const ids=ntLeitura([...grade.querySelectorAll('.nt-col')].map(c=>[...c.querySelectorAll('.nt-nota')].map(x=>x.dataset.nota)));
+  const ids=[...grade.querySelectorAll('.nt-nota')].map(x=>x.dataset.nota);
   NTD={a,g,grade,pid,cx,cy,dx:cx-b.left,dy:cy-b.top,ids,inicio:[...ids],t:0};
   a.classList.add('nt-lugar');document.body.classList.add('nt-on');
   try{getSelection().removeAllRanges()}catch(_){}

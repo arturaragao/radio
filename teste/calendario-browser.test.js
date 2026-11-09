@@ -250,7 +250,7 @@ test('Calendário, Tarefas e Notas 1.30: aceite no Chrome, desktop e celular', {
     await click('#qa_fab');await click('#nt_texto');await call('Input.insertText',{text:'Nota fictícia offline'});await click('.nt-caixa .b');
     assert.equal(await ev("!document.getElementById('nt_painel')"),true,'painel fecha ao salvar');
     const id=await ev("SM.d.notas.find(n=>n.texto==='Nota fictícia offline').id");
-    await click('[aria-label="Editar nota"]');assert.equal(await ev("document.activeElement.id"),'nt_texto');
+    assert.equal(await ev("document.querySelector('[aria-label=\"Editar nota\"]')"),null,'sem botão Editar');await click('.nt-corpo');assert.equal(await ev("document.activeElement.id"),'nt_texto');
     await call('Input.insertText',{text:' revisada adicional'});await tecla('Enter',{modifiers:2});await espera(300);
     assert.match(await ev(`SM.d.notas.find(n=>n.id==='${id}').texto`),/revisada adicional/);
     await click('.nt-tg');assert.equal(await ev("document.querySelector('.nt-nota').classList.contains('fechada')"),true,'toggle fecha');
@@ -264,16 +264,16 @@ test('Calendário, Tarefas e Notas 1.30: aceite no Chrome, desktop e celular', {
     await ev(`window.confirm=()=>false;ntApagar('${id}')`);assert.equal(await ev('SM.d.notas.length'),1);
     await ev(`window.confirm=()=>true;ntApagar('${id}');ntSync()`);assert.equal(await ev('SM.d.notas.length'),0);
   });
-  await t.test('Notas 1.34: recolher não deixa buraco (colunas independentes) e arrasto reordena, com Esc cancelando',async()=>{
-    await call('Emulation.setDeviceMetricsOverride',{width:1000,height:800,deviceScaleFactor:1,mobile:false});
+  await t.test('Notas 1.38: coluna única, recolher sobe as de baixo e arrasto reordena, com Esc cancelando',async()=>{
+    await call('Emulation.setDeviceMetricsOverride',{width:1000,height:1600,deviceScaleFactor:1,mobile:false});
     await ev("go('notas');NT.busca='';SM.d.notas=[{id:'a',titulo:'A',texto:'linha\\n'.repeat(12),em:'2026-10-04',ordem:10},{id:'b',titulo:'B',texto:'b1\\nb2\\nb3\\nb4',em:'2026-10-03',ordem:20},{id:'c',titulo:'C',texto:'c',em:'2026-10-02',ordem:30},{id:'d',titulo:'D',texto:'d1\\nd2',em:'2026-10-01',ordem:40}];render()");
     const R=id=>ev(`(()=>{const r=document.querySelector('.nt-nota[data-nota="${id}"]').getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom}})()`);
-    const ids=()=>ev("ntLeitura([...document.querySelectorAll('.nt-col')].map(c=>[...c.querySelectorAll('.nt-nota')].map(e=>e.dataset.nota))).join('')");
-    assert.equal(await ev("document.querySelectorAll('.nt-col').length"),2);
+    const ids=()=>ev("[...document.querySelectorAll('.nt-nota')].map(e=>e.dataset.nota).join('')");
+    const xs=await ev("[...new Set([...document.querySelectorAll('.nt-nota')].map(e=>Math.round(e.getBoundingClientRect().x)))].length");
+    assert.equal(xs,1,'uma coluna só: todas as notas no mesmo x');
     await ev("ntTg('b')");await espera(50);
-    const b=await R('b'),d=await R('d'),c=await R('c'),a=await R('a');
-    assert.ok(d.y-b.b<=14,'d sobe e ocupa o espaço da nota recolhida: '+(d.y-b.b));
-    assert.ok(c.y-a.b<=14,'a outra coluna não depende da altura da vizinha: '+(c.y-a.b));
+    const b=await R('b'),c=await R('c'),a=await R('a');
+    assert.ok(c.y>=a.b&&c.y-b.b<=14,'c sobe para logo abaixo da recolhida: '+(c.y-b.b));
     await ev("ntTg('b')");
     const alca=async id=>ev(`(()=>{const r=document.querySelector('.nt-nota[data-nota="${id}"] .nt-alca').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     const mouse=(type,x,y)=>call('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',buttons:type==='mouseReleased'?0:1,clickCount:1});
@@ -291,6 +291,34 @@ test('Calendário, Tarefas e Notas 1.30: aceite no Chrome, desktop e celular', {
     assert.equal(await ids(),'bcda','a assume o lugar de d');
     assert.equal(await ev("ntOrdenadas().map(n=>n.id).join('')"),'bcda','ordem persistida');
     await call('Emulation.clearDeviceMetricsOverride');
+  });
+  await t.test('Notas 1.38: toggle no texto abre/fecha sem abrir a edição, clique no corpo edita e Ctrl+V de imagem comprime e envia',async()=>{
+    await call('Emulation.setDeviceMetricsOverride',{width:1000,height:800,deviceScaleFactor:1,mobile:false});
+    await ev("go('notas');NT.busca='';SM.d.notas=[{id:'t1',titulo:'Com toggle',texto:'antes\\n> Meu toggle\\n  segredo\\n  > Interno\\n    mais fundo',em:'2026-10-01',ordem:10}];render()");
+    assert.equal(await ev("document.querySelectorAll('.nt-tgl').length"),2,'toggle e interno renderizados');
+    assert.equal(await ev("document.querySelector('.nt-tgl').open"),false,'recolhido por padrão');
+    await click('.nt-tgl>summary');assert.equal(await ev("document.querySelector('.nt-tgl').open"),true,'abre');
+    assert.equal(await ev("!!document.getElementById('nt_painel')"),false,'clicar no toggle interno não abre a edição');
+    await click('.nt-tg');assert.equal(await ev("!!document.getElementById('nt_painel')"),false,'toggle da nota não abre a edição');
+    await click('.nt-tg');
+    await click('[aria-label="Fixar nota"]');assert.equal(await ev("!!document.getElementById('nt_painel')"),false,'fixar não abre a edição');
+    await ev("SM.d.notas[0].fixa=false");
+    await click('.nt-txt');assert.equal(await ev("!!document.getElementById('nt_painel')"),true,'clicar no texto abre a edição');
+    // Ctrl+V de imagem grande: sai JPEG <= 1600 px, enviada para imagens/ do repo; só a referência entra no texto
+    const r=await ev(`(async()=>{
+      const env=[];BCBR.api=async(p,o)=>{env.push({p,o});return {}};
+      const c=document.createElement('canvas');c.width=3200;c.height=2000;const x=c.getContext('2d');x.fillStyle='#c33';x.fillRect(0,0,3200,2000);
+      const png=await new Promise(ok=>c.toBlob(ok,'image/png'));const dt=new DataTransfer();dt.items.add(new File([png],'p.png',{type:'image/png'}));
+      const ta=document.getElementById('nt_texto');ta.focus();
+      ta.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));
+      const img=()=>env.find(e=>e.p.includes('/imagens/'));for(let i=0;i<50&&!img();i++)await new Promise(r=>setTimeout(r,100));
+      const b=JSON.parse(img().o.body),bin=Uint8Array.from(atob(b.content),ch=>ch.charCodeAt(0)),bm=await createImageBitmap(new Blob([bin],{type:'image/jpeg'}));
+      await new Promise(r=>setTimeout(r,100));
+      return {p:img().p,w:bm.width,h:bm.height,kb:Math.round(bin.length/1024),jpeg:bin[0]===0xFF&&bin[1]===0xD8,txt:ta.value};
+    })()`);
+    assert.match(r.p,/^\/repos\/.+\/contents\/imagens\/nota-x\w+\.jpg$/);assert.ok(r.jpeg,'JPEG');assert.equal(Math.max(r.w,r.h),1600);assert.ok(r.kb<500,'tamanho: '+r.kb+' KB');
+    assert.match(r.txt,/\[img:nota-x\w+\.jpg\]/);
+    await ev("ntFechaPainel(true)");await call('Emulation.clearDeviceMetricsOverride');
   });
   assert.deepEqual(erros,[],'nenhuma exceção JavaScript no navegador');assert.deepEqual(consoleErros,[],'nenhum console.error');
 });

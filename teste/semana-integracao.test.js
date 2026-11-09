@@ -589,15 +589,11 @@ test('Notas: editar não muda a ordem, nova entra no topo, arrastar reordena e f
   await a.c.ntSync();assert.deepEqual(a.salvos.at(-1).notas.filter(n=>!n.fixa).sort((x,y)=>x.ordem-y.ordem).map(n=>n.id),['b',ids[0]],'ordem persistida');
 });
 
-test('Notas 1.34: colunas independentes sem buraco, ordem de leitura previsível e realocação do arrasto',async()=>{
+test('Notas 1.38: coluna única (sem colunas), recolher mantém a ordem e realocação do arrasto',async()=>{
   const a=await app();vm.runInContext("SM.d.notas=[1,2,3,4,5].map(i=>({id:'n'+i,titulo:'T'+i,texto:'x',em:'2026-10-0'+i,ordem:i*10}))",a.c);
-  assert.deepEqual(copia(a.c.ntDistribui(['n1','n2','n3','n4','n5'],2)),[['n1','n3','n5'],['n2','n4']]);
-  assert.deepEqual(copia(a.c.ntDistribui(['n1','n2','n3'],1)),[['n1','n2','n3']]);
-  assert.deepEqual(copia(a.c.ntLeitura(a.c.ntDistribui(['n1','n2','n3','n4','n5'],2))),['n1','n2','n3','n4','n5'],'leitura é o inverso da distribuição');
-  const html=a.c.ntGrade(),cols=html.split('class="nt-col"').slice(1).map(c=>[...c.matchAll(/data-nota="(n\d)"/g)].map(m=>m[1]));
-  assert.deepEqual(cols,[['n1','n3','n5'],['n2','n4']],'duas colunas empilhadas separadamente');
-  vm.runInContext("NT.fechadas.add('n1')",a.c);   // recolher não muda a distribuição: cada coluna empilha só as suas notas (sem linhas compartilhadas)
-  assert.deepEqual(copia(a.c.ntGrade().split('class="nt-col"').slice(1).map(c=>[...c.matchAll(/data-nota="(n\d)"/g)].map(m=>m[1]))),cols);
+  const html=a.c.ntGrade();assert.doesNotMatch(html,/nt-col/);
+  assert.deepEqual([...html.matchAll(/data-nota="(n\d)"/g)].map(m=>m[1]),['n1','n2','n3','n4','n5'],'uma abaixo da outra, na ordem');
+  vm.runInContext("NT.fechadas.add('n1')",a.c);
   assert.match(a.c.ntGrade(),/nt-nota fechada" data-nota="n1"/);
   assert.deepEqual(copia(a.c.ntRealoca(['a','b','c','d'],'a','d')),['b','c','d','a'],'vindo de cima: depois do alvo');
   assert.deepEqual(copia(a.c.ntRealoca(['a','b','c','d'],'d','b')),['a','d','b','c'],'vindo de baixo: antes do alvo');
@@ -751,4 +747,75 @@ test('Notas 1.37: clicar fora do painel salva (não descarta) e a dica avisa',()
   const s=fs.readFileSync(require.resolve('../build/notas.js'),'utf8');
   assert.match(s,/addEventListener\('pointerdown',e=>\{if\(e\.target===f\)\{e\.preventDefault\(\);ntSalvarPainel\(\)\}\}\)/);
   assert.match(s,/clique fora ou Ctrl\+Enter salva · Esc cancela/);
+});
+
+test('Notas 1.38: clicar na nota abre a edição; topo (toggle/alça/fixar) e summary de toggle interno não abrem; sem botão Editar',async()=>{
+  const a=await app();vm.runInContext("SM.d.notas=[{id:'n1',titulo:'T',texto:'> Dentro\\n  oculto',em:'2026-10-01',ordem:10}]",a.c);
+  const html=a.c.ntGrade();assert.doesNotMatch(html,/Editar nota|>Editar</);assert.match(html,/<article[^>]*onclick="ntClique\(event,'n1'\)"/);
+  let aberto=null;a.c.ntAbre=id=>{aberto=id};
+  const alvo=(...cls)=>({target:{closest:q=>q.split(',').some(x=>cls.includes(x.trim()))?{}:null}});
+  a.c.ntClique(alvo('.nt-topo'),'n1');assert.equal(aberto,null,'clicar no topo não abre');
+  a.c.ntClique(alvo('summary'),'n1');assert.equal(aberto,null,'clicar no toggle interno não abre');
+  a.c.ntClique(alvo(),'n1');assert.equal(aberto,'n1','clicar no corpo abre o painel');
+});
+
+test('Notas 1.38: toggle no texto (render, aninhado, recuo) e persistência ao salvar',async()=>{
+  const txt='antes\n> Título A\n  conteúdo A\n  > Interno\n    fundo\n> Vazio\n\ndepois <b>';
+  const a=await app(),H=t=>a.c.ntTexto(t);
+  const h=H(txt);
+  assert.equal((h.match(/<details/g)||[]).length,3,'três toggles (um aninhado)');
+  assert.match(h,/^<div class="nt-txt">antes<\/div><details class="nt-tgl"><summary>Título A<\/summary><div class="nt-tgl-c"><div class="nt-txt">conteúdo A<\/div><details class="nt-tgl"><summary>Interno<\/summary><div class="nt-tgl-c"><div class="nt-txt">fundo<\/div>/);
+  assert.match(h,/<summary>Vazio<\/summary><div class="nt-tgl-c"><\/div><\/details><div class="nt-txt">depois &lt;b&gt;<\/div>$/,'sem conteúdo, e texto sem recuo volta ao nível de fora');
+  assert.doesNotMatch(H('a > b\n>5 mg'),/<details/,'">" fora do começo da linha / sem espaço não é toggle');
+  // Enter: toggle -> próxima linha recuada; linha recuada mantém recuo; linha só de espaços sobe um nível; toggle vazio vira texto
+  const E=(v,i)=>copia(a.c.ntListaEdita(v,i,i,'Enter'));
+  assert.deepEqual(E('> T',3),{de:3,ate:3,txt:'\n  ',cur:6});
+  assert.deepEqual(E('> T\n  abc',9),{de:9,ate:9,txt:'\n  ',cur:12});
+  assert.deepEqual(E('> T\n  ',6),{de:4,ate:6,txt:'',cur:4});
+  assert.deepEqual(E('> T\n    ',8),{de:4,ate:8,txt:'  ',cur:6});
+  assert.deepEqual(E('> ',2),{de:0,ate:2,txt:'',cur:0});
+  assert.equal(E('> T',0),null,'Enter no início de "> título" não aninha');assert.equal(E('> T',1),null);
+  assert.equal(E('  abc',2),null,'Enter no início/meio de linha recuada não muda o recuo');assert.equal(E('  abc',4),null);
+  // persiste ao salvar (painel) e volta a renderizar igual depois de recarregar do remoto
+  a.elementos.set('nt_titulo',{value:'Com toggle'});a.elementos.set('nt_texto',{value:txt});a.c.ntCriar();await a.c.ntSync();
+  assert.equal(a.salvos.at(-1).notas[0].texto,txt);
+  const b=await app([],false,a.mem,false,a.estado.remoto);assert.equal(b.c.ntTexto(b.c.ntLista()[0].texto),h);
+});
+
+test('Notas 1.38: colar imagem (clipboardData simulado) comprime, envia para imagens/ e insere [img:] sem tocar o plano.json',async()=>{
+  const a=await app(),enviados=[];
+  const blob=new Blob(['x'],{type:'image/png'});
+  a.c.ntImgComprime=async b=>{enviados.push(['comprime',b]);return new Blob(['j'],{type:'image/jpeg'})};
+  a.c.ntImgEnvia=async b=>{enviados.push(['envia',b.type]);return 'nota-teste.jpg'};
+  const t={value:'abc def',selectionStart:3,selectionEnd:3,setSelectionRange(){}};a.elementos.set('nt_texto',t);a.elementos.set('nt_titulo',{value:''});
+  let prev=0;
+  await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{items:[{kind:'string',type:'text/plain'},{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
+  assert.equal(prev,1);assert.deepEqual(enviados.map(x=>x[0]),['comprime','envia']);assert.equal(enviados[1][1],'image/jpeg');
+  assert.equal(t.value,'abc\n[img:nota-teste.jpg]\n def');
+  // imagem + texto (Excel/Word): cola o texto normal
+  prev=0;await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{getData:()=>'A1	B1',items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});assert.equal(prev,0);assert.equal(enviados.length,2,'nada foi enviado');
+  // texto comum: não intercepta
+  prev=0;await a.c.ntColar({target:t,preventDefault(){prev++},clipboardData:{items:[{kind:'string',type:'text/plain'}]}});assert.equal(prev,0);
+  // cursor mudou durante o envio: insere onde ele está ao terminar; nota fechada: não insere
+  a.c.ntImgEnvia=async()=>{t.selectionStart=t.selectionEnd=t.value.length;return 'nota-b.jpg'};const t0=t.value;
+  await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
+  assert.equal(t.value,t0+'\n[img:nota-b.jpg]\n');
+  a.elementos.set('nt_texto',{value:''});const t1=t.value;await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});assert.equal(t.value,t1,'painel fechado: não insere');a.elementos.set('nt_texto',t);
+  // falha de envio: avisa e não altera o texto
+  a.c.ntImgEnvia=async()=>{throw new Error('offline')};const v=t.value;
+  await a.c.ntColar({target:t,preventDefault(){},clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]}});
+  assert.equal(t.value,v);assert.match(a.avisos.at(-1),/Não consegui anexar/);
+  // render e persistência
+  assert.match(a.c.ntTexto('x\n[img:nota-teste.jpg]\ny'),/<img class="nt-img" src="\.\/img\/nota-teste\.jpg"/);
+  assert.doesNotMatch(a.c.ntTexto('[img:../../x"onerror=1]'),/<img/,'nome inválido não vira img');
+  a.elementos.set('nt_texto',{value:'foto\n[img:nota-teste.jpg]'});a.c.ntCriar();await a.c.ntSync();
+  assert.match(a.salvos.at(-1).notas[0].texto,/\[img:nota-teste\.jpg\]/);
+  assert.ok(JSON.stringify(a.salvos.at(-1)).length<2000,'só a referência vai para o plano');
+  // arquivo de verdade: JPEG enviado por BCBR.api em imagens/, ntImgEnvia real
+  const real=await app(),chamadas=[];
+  real.c.BCBR.api=async(p,o)=>{chamadas.push([p,o]);return {}};
+  real.c.FileReader=class{readAsDataURL(){this.result='data:image/jpeg;base64,QUJD';setImmediate(()=>this.onload())}};real.c.Response=class{};
+  const nome=await real.c.ntImgEnvia(new Blob(['ABC'],{type:'image/jpeg'}));
+  assert.match(nome,/^nota-x[\w]+\.jpg$/);assert.equal(chamadas[0][0],`/repos/privado/teste/contents/imagens/${nome}`);
+  const corpo=JSON.parse(chamadas[0][1].body);assert.equal(corpo.content,'QUJD');assert.equal(corpo.branch,'main');assert.equal(chamadas[0][1].method,'PUT');
 });

@@ -1,2 +1,4 @@
 .claude/
 build/vendor-src/node_modules/
+teste/*.log
+teste/*validacao*.md

@@ -1,8 +1,8 @@
 # Radio (ex-Banco CBR) — app
 
-Código do app (PWA) do Banco CBR. **Sem nenhuma questão aqui** — as questões e o progresso ficam no repositório privado `banco-cbr-app`; o app as lê com a chave do GitHub de cada aparelho.
+Código do app (PWA) do Banco CBR. **Sem nenhuma questão aqui** — as questões e o progresso ficam no repositório privado de dados; o app as lê com a chave do GitHub de cada aparelho.
 
-Documentação do projeto: `CLAUDE.md` do repositório privado `banco-cbr-app`.
+Documentação do projeto: `CLAUDE.md` do repositório privado de dados.
 
 ## Como funciona
 - `index.html` + `app.js` são **gerados** por `python build/montar.py` a partir do código do artefato (`fonte/`) com as trocas do app (`build/montar.py`, `build/banco.js`, `build/extra.css`). Não editar `app.js` à mão.

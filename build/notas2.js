@@ -1,0 +1,470 @@
+// Notas 1.42 (depois de notas.js, mesmo escopo): busca na página (Ctrl+F), seleção de blocos por retângulo, lembretes "@", histórico de versões
+// pelo GitHub e frases-padrão. Tudo que é só de tela (retângulo, busca, janelas) fica fora do documento, do histórico do editor e do sync.
+
+// ===== Janela simples (histórico, frases, busca global): Esc ou clique fora fecha, foco volta para quem estava =====
+function ntModal(classe,html){
+  const ov=document.createElement('div'),ant=document.activeElement;ov.className='nt-modal '+classe;ov.setAttribute('role','dialog');ov.setAttribute('aria-modal','true');
+  ov.innerHTML=`<div class="nt-modal-c">${html}</div>`;ov._ant=ant;
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)ntModalFecha(ov)});
+  ov.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();ntModalFecha(ov)}});
+  document.body.appendChild(ov);return ov;
+}
+function ntModalFecha(ov){if(!ov||!ov.isConnected)return;ov.remove();ov.aoFechar?.();try{ov._ant?.focus?.()}catch(e){}}
+
+// ===== Ctrl+F nas Notas: busca própria. Destaque por Decoration.inline, contador n/total, Enter/Shift+Enter, ocorrência em toggle fechado o abre =====
+const NT_BUSCA_PK=()=>NT.buscaPK||(NT.buscaPK=new TT.pm.state.PluginKey('ntBusca'));
+// Sem acento e minúsculas, sempre com o MESMO comprimento do texto (cada caractere vira um só): os índices valem no original.
+const ntNorma=s=>String(s).split('').map(ch=>{const r=ch.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();return r.length===1?r:ch.toLowerCase().length===1?ch.toLowerCase():ch}).join('');
+// Ocorrências de q no documento: [{from,to}] (posições do ProseMirror), por bloco de texto; átomos inline contam como 1 caractere.
+function ntAchaTexto(doc,q){
+  const nq=ntNorma(q),out=[];if(!nq)return out;
+  doc.descendants((n,pos)=>{
+    if(!n.isTextblock)return;
+    let txt='';const mapa=[];
+    n.forEach((ch,off)=>{const base=pos+1+off;if(ch.isText){for(let i=0;i<ch.text.length;i++)mapa.push(base+i);txt+=ch.text}else{mapa.push(base);txt+='￼'}});
+    const h=ntNorma(txt);let i=h.indexOf(nq);
+    while(i>=0){out.push({from:mapa[i],to:mapa[i+nq.length-1]+1});i=h.indexOf(nq,i+nq.length)}
+    return false;
+  });
+  return out;
+}
+function ntBuscaExt(){
+  return TT.Extension.create({name:'buscaNotas',addProseMirrorPlugins(){
+    const {Plugin}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view,K=NT_BUSCA_PK();
+    return [new Plugin({key:K,
+      state:{init:()=>({q:'',sel:0,ms:[],deco:DecorationSet.empty}),apply(tr,v,_a,nw){
+        const m=tr.getMeta(K);if(!m&&!tr.docChanged)return v;
+        const q=m&&m.q!=null?m.q:v.q;let sel=m&&m.sel!=null?m.sel:v.sel;
+        if(!q)return v.q?{q:'',sel:0,ms:[],deco:DecorationSet.empty}:v;
+        const ms=ntAchaTexto(nw.doc,q);if(sel>=ms.length||sel<0)sel=0;
+        return {q,sel,ms,deco:DecorationSet.create(nw.doc,ms.map((x,i)=>Decoration.inline(x.from,x.to,{class:i===sel?'nt-busca-hit atual':'nt-busca-hit'})))};
+      }},
+      props:{decorations:s=>K.getState(s).deco}})];
+  }});
+}
+const ntBuscaEstado=c=>c.ed?NT_BUSCA_PK().getState(c.ed.state):null;
+function ntBuscaSet(c,q,sel){c.ed.view.dispatch(c.ed.state.tr.setMeta(NT_BUSCA_PK(),{q,sel}))}
+function ntBuscaPinta(c){
+  const e=ntBuscaEstado(c),n=c.buscaEl?.querySelector('.nt-busca-n');if(!e||!n)return;
+  n.textContent=e.q?(e.ms.length?`${e.sel+1}/${e.ms.length}`:'0/0'):'';
+}
+// Abre os toggles fechados em volta da ocorrência atual (só estado de tela) e rola até ela.
+function ntBuscaMostra(c){
+  const e=ntBuscaEstado(c),m=e?.ms[e.sel];if(!m)return;
+  const $=c.ed.state.doc.resolve(m.from);
+  for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'){
+    const dom=c.ed.view.nodeDOM($.before(d));
+    if(dom instanceof Element&&!dom.classList.contains('is-open')){ntPoeAberto(dom,true);ntAbertoSalva($.node(d).attrs.id,true)}
+  }
+  const el=c.el.querySelector('.nt-busca-hit.atual');if(el)el.scrollIntoView({block:'center',inline:'nearest'});
+}
+function ntBuscaVai(c,dir){
+  const e=ntBuscaEstado(c);if(!e||!e.ms.length)return;
+  ntBuscaSet(c,e.q,(e.sel+dir+e.ms.length)%e.ms.length);ntBuscaPinta(c);ntBuscaMostra(c);
+}
+function ntBuscaAbre(c){
+  if(!c?.ed)return;
+  if(!c.buscaEl){
+    const b=document.createElement('div');b.className='nt-busca';b.setAttribute('role','search');
+    b.innerHTML=`<div class="nt-busca-c"><input type="text" class="nt-busca-in" placeholder="Buscar na página" aria-label="Buscar nas notas" autocomplete="off" spellcheck="false"><span class="nt-busca-n" aria-live="polite"></span><button type="button" data-b="-1" title="Anterior (Shift+Enter)" aria-label="Ocorrência anterior">↑</button><button type="button" data-b="1" title="Próxima (Enter)" aria-label="Próxima ocorrência">↓</button><button type="button" data-b="x" title="Fechar (Esc)" aria-label="Fechar busca">✕</button></div>`;
+    const i=b.querySelector('input');
+    i.addEventListener('input',()=>{ntBuscaSet(c,i.value,0);ntBuscaPinta(c);ntBuscaMostra(c)});
+    i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();ntBuscaVai(c,e.shiftKey?-1:1)}});
+    b.addEventListener('click',e=>{const bt=e.target.closest('[data-b]');if(!bt)return;if(bt.dataset.b==='x')ntBuscaFecha(c);else ntBuscaVai(c,+bt.dataset.b);if(bt.dataset.b!=='x')i.focus()});
+    c.el.insertBefore(b,c.el.firstChild);c.buscaEl=b;
+  }
+  const i=c.buscaEl.querySelector('input'),s=c.ed.state.selection;
+  if(!s.empty&&s.to-s.from<=80){const t=c.ed.state.doc.textBetween(s.from,s.to,' ');if(t.trim()){i.value=t;ntBuscaSet(c,t,0);ntBuscaPinta(c);ntBuscaMostra(c)}}
+  i.focus();i.select();
+}
+function ntBuscaFecha(c){
+  if(!c?.buscaEl)return;
+  const b=c.buscaEl;c.buscaEl=null;b.remove();
+  if(c.ed){try{ntBuscaSet(c,'',0);c.ed.commands.focus(null,{scrollIntoView:false})}catch(e){}}
+}
+document.addEventListener('keydown',e=>{
+  if(!((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==='f'))return;
+  const c=NP?.ed?NP:(tela==='notas'&&NT.ed&&NT.el?.isConnected?NT:null);if(!c)return;   // fora da aba Notas o Ctrl+F continua do navegador
+  e.preventDefault();e.stopPropagation();ntBuscaAbre(c);
+},true);
+
+// ===== Seleção de blocos arrastando por fora do texto (como no Notion) =====
+// Plugin com estado próprio (posições dos blocos de UM nível: o topo ou o conteúdo de um toggle) + Decoration.node `nt-bsel`. Não usa NodeSelection.
+// Editar o documento limpa a seleção (a menos que a própria ação a refaça). Só mouse: no toque não há retângulo (não atrapalha a rolagem).
+const NT_BSEL_PK=()=>NT.bselPK||(NT.bselPK=new TT.pm.state.PluginKey('ntBsel'));
+const ntBselPos=s=>NT_BSEL_PK().getState(s).pos;
+const ntBselMeta=(tr,pos)=>tr.setMeta(NT_BSEL_PK(),{pos});
+const ntBselIntervalos=(doc,pos)=>pos.slice().sort((a,b)=>a-b).map(p=>{const node=doc.nodeAt(p);return {from:p,to:p+node.nodeSize,node}});
+function ntBselExt(c){
+  return TT.Extension.create({name:'selBlocos',addProseMirrorPlugins(){
+    const {Plugin}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view,K=NT_BSEL_PK();
+    const limpa=v=>{if(K.getState(v.state).pos.length)v.dispatch(ntBselMeta(v.state.tr,[]))};
+    return [new Plugin({key:K,
+      state:{init:()=>({pos:[]}),apply(tr,v){const m=tr.getMeta(K);if(m)return {pos:m.pos};if(!tr.docChanged||!v.pos.length)return v;return tr.getMeta('appendedTransaction')?{pos:v.pos.map(p=>tr.mapping.map(p))}:{pos:[]}}},   // (ids e nó final entram como transações anexadas: só acompanham)
+      props:{
+        decorations(s){const p=K.getState(s).pos;return p.length?DecorationSet.create(s.doc,p.map(x=>Decoration.node(x,x+s.doc.nodeAt(x).nodeSize,{class:'nt-bsel'}))):null},
+        handleKeyDown(v,e){
+          const p=K.getState(v.state).pos;if(!p.length)return false;
+          if(e.key==='Escape'){limpa(v);return true}
+          if(e.key==='Delete'||e.key==='Backspace'){ntBselApaga(v,p);return true}
+          if(e.key==='Tab'){ntBselTab(v,p,e.shiftKey);return true}
+          if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&e.key.length===1)limpa(v);   // digitar volta ao texto normal
+          return false;
+        },
+        handleDOMEvents:{
+          copy(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);return true},
+          cut(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);ntBselApaga(v,p);return true},
+          mousedown(v){limpa(v);return false},
+        },
+        handleDrop(v,e,_s,moved){
+          if(!c.grupoArrasto||!moved)return false;
+          const g=c.grupoArrasto;c.grupoArrasto=null;ntBselSolta(v,e,g);return true;
+        },
+      }})];
+  }});
+}
+function ntBselCopia(v,pos,e){
+  const {Slice,Fragment}=TT.pm.model,nodes=ntBselIntervalos(v.state.doc,pos).map(r=>r.node);
+  const {dom,text}=v.serializeForClipboard(new Slice(Fragment.from(nodes),0,0));
+  e.clipboardData.setData('text/html',dom.innerHTML);e.clipboardData.setData('text/plain',text);e.preventDefault();
+}
+// Apaga o grupo numa transação só; se o pai ficaria sem filhos, sobra um parágrafo vazio.
+function ntBselApaga(v,pos){
+  const {state}=v,rs=ntBselIntervalos(state.doc,pos),tr=state.tr,pai=state.doc.resolve(rs[0].from).parent;
+  if(rs.length===pai.childCount)tr.replaceWith(rs[0].from,rs[rs.length-1].to,state.schema.nodes.paragraph.create());
+  else for(const r of rs.slice().reverse())tr.delete(r.from,r.to);
+  try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(Math.min(rs[0].from,tr.doc.content.size)),-1))}catch(e){}
+  v.dispatch(ntBselMeta(tr,[]).scrollIntoView());
+}
+const ntBselPosicoes=(ini,nodes)=>{let p=ini;return nodes.map(n=>{const x=p;p+=n.nodeSize;return x})};
+// Tab: o grupo entra no toggle logo acima (vira os últimos filhos dele). Shift+Tab: sai do toggle em que está (vira irmão logo depois dele).
+function ntBselTab(v,pos,sai){
+  const {state}=v,doc=state.doc,rs=ntBselIntervalos(doc,pos),$=doc.resolve(rs[0].from),pai=$.parent,idx=$.index(),tr=state.tr;
+  const ini=rs[0].from,fim=rs[rs.length-1].to,nodes=rs.map(r=>r.node);let novo,abre=null;
+  if(!sai){
+    const ant=idx>0?pai.child(idx-1):null;if(!ant||ant.type.name!=='details')return;
+    const antPos=ini-ant.nodeSize,cont=ant.lastChild,fimC=antPos+ant.nodeSize-2,vazio=cont.childCount===1&&cont.firstChild.type.name==='paragraph'&&!cont.firstChild.content.size;
+    tr.delete(ini,fim);   // (depois do ponto de entrada: não o desloca)
+    novo=vazio?fimC-cont.firstChild.nodeSize:fimC;
+    if(vazio)tr.replaceWith(novo,fimC,nodes);else tr.insert(novo,nodes);
+    ntAbertoSalva(ant.attrs.id,true);abre=antPos;
+  }else{
+    if(pai.type.name!=='detailsContent')return;
+    const d1=$.depth-1,detPos=$.before(d1),destino=detPos+$.node(d1).nodeSize,todos=rs.length===pai.childCount;
+    tr.insert(destino,nodes);
+    if(todos)tr.replaceWith(ini,fim,state.schema.nodes.paragraph.create());else tr.delete(ini,fim);
+    novo=destino-(fim-ini)+(todos?2:0);
+  }
+  try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(novo+1)))}catch(e){}
+  v.dispatch(ntBselMeta(tr,ntBselPosicoes(novo,nodes)).scrollIntoView());
+  if(abre!=null){const dom=v.nodeDOM(abre);if(dom instanceof Element)ntPoeAberto(dom,true)}
+}
+// Soltar o grupo arrastado pela alça: vai para a fronteira entre blocos do nível onde caiu (topo ou conteúdo de toggle).
+function ntBselSolta(v,e,pos){
+  const r=v.posAtCoords({left:e.clientX,top:e.clientY});if(!r)return;
+  const {state}=v,doc=state.doc,rs=ntBselIntervalos(doc,pos),$=doc.resolve(r.pos);
+  let d=$.depth;while(d>0&&$.node(d).type.name!=='detailsContent')d--;
+  const cont=$.node(d),inicio=d?$.start(d):0;let dest=inicio+cont.content.size,achou=false;
+  cont.forEach((n,off)=>{
+    if(achou)return;const dom=v.nodeDOM(inicio+off);if(!(dom instanceof Element))return;
+    const b=dom.getBoundingClientRect();if(e.clientY<b.top+b.height/2){dest=inicio+off;achou=true}
+  });
+  const ini=rs[0].from,fim=rs[rs.length-1].to;if(dest>=ini&&dest<=fim)return;   // soltou em cima de si mesmo
+  for(const x of rs)if(dest>x.from&&dest<x.to)return;
+  const tr=state.tr,nodes=rs.map(x=>x.node);
+  for(const x of rs.slice().reverse())tr.delete(x.from,x.to);
+  const at=tr.mapping.map(dest);tr.insert(at,nodes);
+  try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(at+1)))}catch(x){}
+  v.dispatch(ntBselMeta(tr,ntBselPosicoes(at,nodes)).scrollIntoView());
+}
+// Retângulo de arrasto. mousedown em margem/fundo (fora de qualquer bloco de texto) começa; os blocos do nível onde começou que ele cruza ficam selecionados.
+let ntUltPonteiro='mouse',NTR=null;
+document.addEventListener('pointerdown',e=>{ntUltPonteiro=e.pointerType},true);
+const NT_TEXTO_SEL='p,h1,h2,h3,li,summary,blockquote,hr,img,a,button,input,select,textarea,label,[data-type="detailsSummary"],.nt-plink,.nt-callout-c,.nt-lemb,.nt-alca,.nt-menu-bloco,.nt-barra,.nt-slash,.nt-pop,.nt-busca,.nt-bolha,.nt-modal,.nt-topo,.nt-lat,.nt-pan-topo,.nt-pan-titulo,.nt-atalhos,.nt-seta';
+function ntBselCtx(t){
+  if(!(t instanceof Element))return null;
+  if(NP?.ed)return t.closest('#nt_pan')?NP:null;
+  if(tela==='notas'&&NT.ed&&NT.el?.isConnected&&t.closest('main'))return NT;
+  return null;
+}
+document.addEventListener('mousedown',e=>{
+  if(e.button!==0||ntUltPonteiro!=='mouse'||NTR)return;
+  const t=e.target,c=ntBselCtx(t);if(!c||t.closest(NT_TEXTO_SEL))return;
+  const pm=c.el.querySelector('.ProseMirror');if(!pm||t.closest('.nt-ed')&&!pm.contains(t)&&t!==pm&&t.closest('.nt-ed')!==c.el)return;
+  const v=c.ed.view,det=t.closest('[data-type="detailsContent"]');   // nível: conteúdo do toggle onde começou, ou o topo
+  let cont;
+  if(det&&pm.contains(det)){const ini=v.posAtDOM(det,0);cont={ini,node:v.state.doc.resolve(ini).parent}}else cont={ini:0,node:v.state.doc};
+  e.preventDefault();
+  const sc=()=>c===NP?c.el.closest('.nt-pan-corpo'):null,off=()=>({x:sc()?sc().scrollLeft:scrollX,y:sc()?sc().scrollTop:scrollY});
+  NTR={c,cont,x0:e.clientX+off().x,y0:e.clientY+off().y,x:e.clientX,y:e.clientY,ativo:false,box:null,raf:0,pos:null,off,sc};
+},true);
+document.addEventListener('mousemove',e=>{
+  const r=NTR;if(!r)return;r.x=e.clientX;r.y=e.clientY;
+  if(!r.ativo){const o=r.off();if(Math.hypot(e.clientX-(r.x0-o.x),e.clientY-(r.y0-o.y))<4)return;
+    r.ativo=true;r.box=document.createElement('div');r.box.className='nt-rubber';document.body.appendChild(r.box);try{getSelection().removeAllRanges()}catch(x){}}
+  e.preventDefault();ntRubberQuadro();
+},true);
+function ntRubberQuadro(){
+  const r=NTR;if(!r||r.raf)return;
+  r.raf=requestAnimationFrame(()=>{
+    r.raf=0;if(NTR!==r||!r.box)return;
+    const s=r.sc(),o=r.off();
+    if(r.y<50)(s||window).scrollBy(0,-14);else if(r.y>innerHeight-50)(s||window).scrollBy(0,14);   // rolagem automática perto das bordas
+    const o2=r.off(),x0=r.x0-o2.x,y0=r.y0-o2.y,L=Math.min(x0,r.x),T=Math.min(y0,r.y),R=Math.max(x0,r.x),B=Math.max(y0,r.y);
+    Object.assign(r.box.style,{left:L+'px',top:T+'px',width:(R-L)+'px',height:(B-T)+'px'});
+    const v=r.c.ed.view,pos=[];
+    r.cont.node.forEach((n,off)=>{   // getBoundingClientRect só dos filhos do nível
+      const p=r.cont.ini+off,dom=v.nodeDOM(p);if(!(dom instanceof Element))return;
+      const b=dom.getBoundingClientRect();if(b.bottom>=T&&b.top<=B&&b.right>=L&&b.left<=R)pos.push(p);
+    });
+    if(JSON.stringify(pos)!==JSON.stringify(r.pos)){r.pos=pos;v.dispatch(ntBselMeta(v.state.tr,pos))}
+    if(r.y<50||r.y>innerHeight-50)ntRubberQuadro();
+  });
+}
+document.addEventListener('mouseup',()=>{
+  const r=NTR;if(!r)return;NTR=null;cancelAnimationFrame(r.raf);r.box?.remove();
+  if(r.c.ed){if(!r.ativo)r.c.ed.view.dispatch(ntBselMeta(r.c.ed.view.state.tr,[]));r.c.ed.view.focus()}   // foco no editor: Delete, Ctrl+C e Tab chegam ao plugin
+},true);
+// Alça ⋮⋮ de um bloco do grupo arrasta o grupo inteiro (chamado pelo dragstart da alça).
+function ntBselArrasta(c,e,bloco){
+  const p=ntBselPos(c.ed.state);if(!p.length||!bloco||!p.includes(bloco.pos))return false;
+  const {Slice,Fragment}=TT.pm.model,v=c.ed.view,nodes=ntBselIntervalos(v.state.doc,p).map(r=>r.node);
+  c.grupoArrasto=p.slice();v.dragging={slice:new Slice(Fragment.from(nodes),0,0),move:true};
+  const dom=v.nodeDOM(p[0]);if(dom instanceof Element)e.dataTransfer.setDragImage(dom,0,0);
+  e.dataTransfer.effectAllowed='copyMove';e.dataTransfer.setData('text/plain','');return true;
+}
+
+// ===== @lembrete: "@" abre sugestões; o nó inline dataLembrete {iso,hora,tarefaId} é um chip e vira uma tarefa do plano (mesmo id do nó) =====
+const NT_DIAS_SEM=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+const ntLembRot=a=>{
+  const h=typeof smHoje==='function'?smHoje():'',am=h?smMais(h,1):'';
+  const d=!a.iso?'':a.iso===h?'Hoje':a.iso===am?'Amanhã':a.iso.slice(8,10)+'/'+a.iso.slice(5,7);
+  return '🔔 '+d+(a.hora?' '+a.hora:'');
+};
+// Itens do menu para o que foi digitado depois do "@": [rótulo, subtítulo, iso, hora]. Puro (hoje = AAAA-MM-DD).
+function ntLembreteItens(query,hoje){
+  let q=ntSemAcento(query).trim(),hora=null;
+  const mh=/(?:^|\s)(\d{1,2})(?::(\d{2})|h(\d{2})?)\s*$/.exec(q);
+  if(mh){const h=+mh[1],m=+(mh[2]||mh[3]||0);if(h<24&&m<60){hora=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');q=q.slice(0,mh.index).trim()}}
+  const com=(rot,sub,iso)=>[rot+(hora?' '+hora:''),sub,iso,hora];
+  const md=/^(\d{1,2})\/(\d{1,2})$/.exec(q);
+  if(md){
+    const dia=+md[1],mes=+md[2];let ano=+hoje.slice(0,4);
+    const iso=a=>String(a).padStart(4,'0')+'-'+String(mes).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
+    const valido=a=>{const x=new Date(a,mes-1,dia);return x.getMonth()===mes-1&&x.getDate()===dia};
+    if(mes>=1&&mes<=12&&dia>=1&&valido(ano)){if(iso(ano)<hoje&&valido(ano+1))ano++;return [com(String(dia).padStart(2,'0')+'/'+String(mes).padStart(2,'0'),'Data',iso(ano))]}
+    return [];
+  }
+  const out=[];
+  if(!q||'hoje'.startsWith(q))out.push(com('Hoje','Hoje',hoje));
+  if(!q||'amanha'.startsWith(q))out.push(com('Amanhã','Amanhã',smMais(hoje,1)));
+  for(let i=1;i<=7;i++){
+    const iso=smMais(hoje,i),nome=NT_DIAS_SEM[smDt(iso).getDay()],n=ntSemAcento(nome);
+    if(!q||n.startsWith(q)||(q.length>1&&n.includes(q)))out.push(com(nome[0].toUpperCase()+nome.slice(1),iso.slice(8,10)+'/'+iso.slice(5,7),iso));
+  }
+  return out;
+}
+function ntLembrete(){
+  const atr=(k,def=null)=>({default:def,parseHTML:el=>el.getAttribute('data-'+k),renderHTML:a=>a[k]?{['data-'+k]:a[k]}:{}});
+  return TT.Node.create({name:'dataLembrete',group:'inline',inline:true,atom:true,selectable:true,
+    addAttributes(){return {iso:atr('iso'),hora:atr('hora'),tarefaId:atr('tarefaId')}},
+    parseHTML(){return [{tag:'span[data-type="data-lembrete"]'}]},
+    renderHTML({node,HTMLAttributes}){return ['span',TT.mergeAttributes(HTMLAttributes,{'data-type':'data-lembrete',class:'nt-lemb',role:'button',title:'Mudar a data do lembrete'}),ntLembRot(node.attrs)]},
+  });
+}
+// Chips {tarefaId:'iso|hora'} de uma lista de blocos (JSON do ProseMirror).
+function ntLembDe(blocos){
+  const m={},v=n=>{if(!n||typeof n!=='object')return;if(n.type==='dataLembrete'&&n.attrs?.tarefaId)m[n.attrs.tarefaId]=(n.attrs.iso||'')+'|'+(n.attrs.hora||'');(n.content||[]).forEach(v)};
+  (blocos||[]).forEach(b=>v(b.conteudo));return m;
+}
+// Ao salvar o documento: chip cuja data/hora mudou desde a versão anterior (inclusive por Ctrl+Z/Ctrl+Y) leva a tarefa junto. Só tarefa que ainda existe; chip sem mudança não mexe (outro aparelho pode ter mudado a tarefa).
+function ntLembSincroniza(antes,depois){
+  if(!SM.d)return;const a=ntLembDe(antes),d=ntLembDe(depois);
+  for(const [id,v] of Object.entries(d)){
+    if(a[id]===undefined||a[id]===v)continue;
+    const [iso,hora]=v.split('|'),t=SM.d.tarefas.find(x=>x.id===id);
+    if(t&&((t.dia!==iso)||((t.hora||'')!==hora)))ntLembTarefa({tarefaId:id,iso,hora:hora||null},'');
+  }
+}
+// Cria ou atualiza a tarefa do lembrete (idempotente: smMudar reaplica no 409). Apagar o chip nunca chama isto.
+function ntLembTarefa(a,texto){
+  smMudar(d=>{
+    let t=d.tarefas.find(x=>x.id===a.tarefaId);
+    if(!t){t={id:a.tarefaId,dia:a.iso,texto:texto||'Lembrete',area:'tarefas',feito:false,ordem:100+d.tarefas.filter(x=>x.dia===a.iso).length};d.tarefas.push(t)}
+    t.dia=a.iso;
+    if(a.hora){t.hora=a.hora;t.lembrete=0}   // mesmo campo "Lembrete: na hora" da aba Tarefas (o app Android lê daí)
+    else{delete t.hora;if(t.lembrete===0)t.lembrete=null}
+  },'lembrete da nota');
+}
+function ntLembretePlugin(c){
+  return ntSugestao(c,{nome:'lembreteNotas',char:'@',allowSpaces:true,semVazio:true,
+    itens:q=>ntLembreteItens(q,smHoje()),
+    comando:(editor,range,it)=>{
+      const a={iso:it[2],hora:it[3],tarefaId:smId()};
+      editor.chain().focus().deleteRange(range).insertContent([{type:'dataLembrete',attrs:a},{type:'text',text:' '}]).run();
+      ntLembTarefa(a,editor.state.selection.$from.parent.textContent.trim());   // texto = a linha da nota (sem o chip)
+    }});
+}
+function ntLembreteEdita(c,dom,pos){
+  const no=c.ed.state.doc.nodeAt(pos);if(no?.type.name!=='dataLembrete')return;
+  document.querySelector('.nt-lemb-pop')?.remove();
+  const pop=document.createElement('div');pop.className='nt-pop nt-lemb-pop';
+  pop.innerHTML=`<input type="date" aria-label="Data do lembrete" value="${esc(no.attrs.iso||'')}"><input type="time" aria-label="Hora (opcional)" value="${esc(no.attrs.hora||'')}"><button type="button" data-l="ok">OK</button><button type="button" data-l="x" aria-label="Cancelar">✕</button>`;
+  document.body.appendChild(pop);const r=dom.getBoundingClientRect();
+  pop.style.top=Math.min(r.bottom+6,innerHeight-pop.offsetHeight-8)+'px';pop.style.left=Math.max(8,Math.min(r.left,innerWidth-pop.offsetWidth-8))+'px';
+  const fecha=()=>pop.remove(),[di,hi]=pop.querySelectorAll('input');
+  pop.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();fecha();c.ed.commands.focus()}if(e.key==='Enter')pop.querySelector('[data-l="ok"]').click()});
+  pop.addEventListener('click',e=>{
+    const b=e.target.closest('[data-l]');if(!b)return;
+    if(b.dataset.l==='ok'&&/^\d{4}-\d{2}-\d{2}$/.test(di.value)){
+      const a={...no.attrs,iso:di.value,hora:hi.value||null};
+      c.ed.view.dispatch(c.ed.state.tr.setNodeMarkup(pos,undefined,a));
+      ntLembTarefa(a,c.ed.state.doc.resolve(pos).parent.textContent.trim());
+    }
+    fecha();c.ed.commands.focus();
+  });
+  di.focus();
+}
+document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop,.nt-lemb'))document.querySelector('.nt-lemb-pop')?.remove()});
+
+// ===== Histórico de versões: o plano já é versionado no GitHub (commits do arquivo). Só leitura; restaurar = NOVA edição =====
+const NT_HIST_POR=30;
+const ntHistApi=(p)=>BCBR.api(`/repos/${BCBR.REPO}/${p}`);
+async function ntHistCommits(pagina){return ntHistApi(`commits?path=${encodeURIComponent(SM_ARQ)}&per_page=${NT_HIST_POR}&page=${pagina}`)}
+async function ntHistVersao(sha){const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}?ref=${encodeURIComponent(sha)}`,{accept:'raw'});return JSON.parse(await r.text())}
+// Blocos da versão `d` (documento principal) ou da página `id`.
+const ntHistBlocos=(d,pg)=>pg?(d?.notasPaginas?.paginas||[]).find(p=>p.id===pg)?.doc?.blocos||[]:d?.notasDoc?.blocos||[];
+function ntHistAbre(c){
+  if(navigator.onLine===false){toast('O histórico precisa de internet.');return}
+  const ov=ntModal('nt-hist',`<div class="nt-modal-t"><b>Histórico das notas</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div>
+    <div class="nt-hist-g"><div class="nt-hist-l"><div class="nt-hist-lista"></div><button type="button" class="b s nt-hist-mais" hidden>Carregar mais</button></div>
+    <div class="nt-hist-v"><div class="nt-hist-bar"><select class="nt-hist-pg" aria-label="O que ver" disabled></select><button type="button" class="b s" data-r="bloco" disabled>Restaurar este bloco</button><button type="button" class="b" data-r="pagina" disabled>Restaurar esta página</button></div>
+    <p class="mut nt-hist-msg">Escolha uma versão à esquerda. Clique num bloco para escolher só ele.</p><div class="nt-hist-prev"></div></div></div>`);
+  const $=s=>ov.querySelector(s),lista=$('.nt-hist-lista'),msg=$('.nt-hist-msg'),mais=$('.nt-hist-mais'),sel=$('.nt-hist-pg'),prev=$('.nt-hist-prev');
+  let pagina=0,versao=null,bloco=null,ed=null,alvoPg=c.pagina||'';
+  const fim=()=>{try{ed?.destroy()}catch(e){}ed=null};ov.aoFechar=fim;
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
+  const mostra=()=>{
+    fim();prev.innerHTML='';bloco=null;$('[data-r="bloco"]').disabled=true;
+    const bl=ntHistBlocos(versao,alvoPg);
+    $('[data-r="pagina"]').disabled=!(alvoPg?(versao.notasPaginas?.paginas||[]).some(p=>p.id===alvoPg):true);
+    if(!bl.length){msg.textContent='Nada nesta versão.';return}
+    msg.textContent='Versão só para leitura. Clique num bloco para escolher só ele.';
+    const el=document.createElement('div');el.className='nt-ed nt-hist-ed';prev.appendChild(el);
+    ed=new TT.Editor({element:el,extensions:ntExtensoes({pagina:!!alvoPg,el}),content:ntDocumento(bl),editable:false});
+    el.querySelectorAll('[data-type="details"]').forEach(d=>d.classList.add('is-open'));
+    el.addEventListener('click',e=>{
+      const pm=el.querySelector('.ProseMirror'),b=e.target.closest('.ProseMirror>*'),i=b&&pm?[...pm.children].indexOf(b):-1;
+      pm?.querySelectorAll('.nt-hist-sel').forEach(x=>x.classList.remove('nt-hist-sel'));
+      if(i>=0&&i<bl.length){bloco=bl[i];b.classList.add('nt-hist-sel');$('[data-r="bloco"]').disabled=false}
+    });
+  };
+  const carrega=async lst=>{
+    versao=null;msg.textContent='Baixando a versão…';
+    try{
+      versao=await ntHistVersao(lst.dataset.sha);
+      const ps=versao.notasPaginas?.paginas||[];
+      sel.innerHTML=`<option value="">Notas (página principal)</option>`+ps.map(p=>`<option value="${esc(p.id)}">📄 ${esc(p.titulo||'Sem título')}</option>`).join('');
+      if(alvoPg&&!ps.some(p=>p.id===alvoPg))alvoPg='';
+      sel.value=alvoPg;sel.disabled=false;mostra();
+    }catch(e){msg.textContent=e?.status?`Não consegui baixar esta versão (GitHub ${e.status}).`:'Não consegui baixar esta versão (precisa de conexão).'}
+  };
+  sel.onchange=()=>{alvoPg=sel.value;mostra()};
+  const lote=async()=>{
+    mais.hidden=true;
+    try{
+      const cs=await ntHistCommits(++pagina);
+      lista.insertAdjacentHTML('beforeend',cs.map(x=>`<button type="button" class="nt-hist-it" data-sha="${esc(x.sha)}"><b>${esc(new Date(x.commit?.author?.date||x.commit?.committer?.date||0).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}))}</b><small>${esc(String(x.commit?.message||'').split('\n')[0])}</small></button>`).join(''));
+      mais.hidden=cs.length<NT_HIST_POR;
+      if(pagina===1&&!cs.length)lista.innerHTML='<p class="mut">Nenhuma versão encontrada.</p>';
+    }catch(e){msg.textContent=navigator.onLine===false||!e?.status?'O histórico precisa de internet.':`Não consegui listar as versões (GitHub ${e.status}).`}
+  };
+  mais.onclick=lote;
+  lista.addEventListener('click',e=>{const b=e.target.closest('.nt-hist-it');if(!b)return;lista.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));b.classList.add('on');carrega(b)});
+  ov.querySelector('.nt-hist-bar').addEventListener('click',e=>{
+    const b=e.target.closest('[data-r]');if(!b||b.disabled||!versao)return;
+    if(ntHistRestaura(c,versao,alvoPg,b.dataset.r==='bloco'?bloco:null))ntModalFecha(ov);
+  });
+  lote();
+}
+// Aplica a versão como edição NOVA no editor aberto (ntAplicaNoEditor local: entra no Ctrl+Z e é salva pela fila normal); sem editor aberto, pela fila das páginas (pgMuda).
+function ntHistRestaura(c,versao,pg,bloco){
+  const agora=ntAgora(),vb=ntHistBlocos(versao,pg).map(b=>({...b,atualizado:agora}));
+  const ctx=pg?(NP?.ed&&NP.pagina===pg?NP:null):(NT.ed?NT:null);
+  if(bloco){
+    const b={...bloco,atualizado:agora};
+    if(ctx){
+      const atual=ntBlocos(ctx.ed.getJSON(),ctx.shown),i=atual.findIndex(x=>x.id===b.id);
+      if(i>=0)atual[i]=b;
+      else{const j=vb.findIndex(x=>x.id===b.id),pre=j>0?atual.findIndex(x=>x.id===vb[j-1].id):-1;atual.splice(pre>=0?pre+1:atual.length,0,b)}   // apagado depois: volta logo depois do vizinho que tinha
+      ntAplicaNoEditor(ctx,atual,true);
+    }else if(pg){
+      pgMuda(l=>{const x=l.find(y=>y.id===pg);if(!x)return;const bl=x.doc?.blocos||[],i=bl.findIndex(y=>y.id===b.id);if(i>=0)bl[i]=b;else bl.push(b);x.doc={v:1,blocos:bl};x.atualizado=agora});
+    }else return false;
+    toast('Bloco restaurado como uma edição nova.');return true;
+  }
+  if(ctx){
+    ntAplicaNoEditor(ctx,vb,true);
+    if(pg){const p=(versao.notasPaginas?.paginas||[]).find(x=>x.id===pg);if(p&&ctx.titulo){ctx.titulo.value=p.titulo||'';pgTituloSalva()}}
+  }else if(pg){
+    const p=(versao.notasPaginas?.paginas||[]).find(x=>x.id===pg);if(!p)return false;
+    pgMuda(l=>{const x=l.find(y=>y.id===pg),nova={...p,doc:{v:1,blocos:vb},atualizado:agora};if(x)Object.assign(x,nova);else l.push({...nova,ordem:Math.max(0,...l.map(y=>Number(y.ordem)||0))+10})});
+  }else return false;
+  toast('Versão restaurada como uma edição nova.');return true;
+}
+
+// ===== Frases-padrão: SM.d.notasFrases = [{id,titulo,texto,atualizado}] (fusão por `atualizado`, aparelho antigo não apaga) =====
+const ntFrases=()=>Array.isArray(SM.d?.notasFrases)?SM.d.notasFrases:[];
+function frGrava(l){
+  const p=ntPendentes()[0];
+  try{localStorage.setItem(NT_PEND,JSON.stringify({...p,blocos:p?.blocos||SM.d.notasDoc?.blocos||[],frases:l,em:Date.now(),conflitos:p?.conflitos||[]}))}catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  SM.d.notasFrases=l;smGuardaCache();ntSync();return true;
+}
+const frMuda=fn=>{if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntFrases()));fn(l);return frGrava(l)};
+function frSalva(titulo,texto){
+  const t=String(texto||'').trim();if(!t){toast('Selecione o texto da frase.');return false}
+  const id=ntNovoId().replace(/^b/,'f');
+  return frMuda(l=>l.push({id,titulo:String(titulo||'').trim()||t.slice(0,40),texto:t,atualizado:ntAgora()}));
+}
+// Texto da frase no cursor: uma linha entra como texto; várias viram parágrafos.
+function frInsere(c,f){
+  const linhas=String(f.texto).split('\n');
+  c.ed.chain().focus().insertContent(linhas.length===1?{type:'text',text:linhas[0]}:linhas.map(l=>({type:'paragraph',...(l?{content:[{type:'text',text:l}]}:{})}))).run();
+}
+function ntFrasesEscolhe(c){
+  const ov=ntModal('nt-frases',`<div class="nt-modal-t"><b>Frases-padrão</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><input type="text" class="nt-fr-q" placeholder="Filtrar frases" aria-label="Filtrar frases" autocomplete="off"><div class="nt-fr-l" role="listbox"></div>`);
+  const q=ov.querySelector('.nt-fr-q'),l=ov.querySelector('.nt-fr-l');let sel=0,it=[];
+  const pinta=()=>{
+    const n=ntSemAcento(q.value);it=ntFrases().filter(f=>!n||ntSemAcento(f.titulo+' '+f.texto).includes(n));sel=Math.min(sel,Math.max(0,it.length-1));
+    l.innerHTML=it.length?it.map((f,i)=>`<button type="button" role="option" class="nt-fr-it${i===sel?' sel':''}" data-i="${i}"><b>${esc(f.titulo)}</b><small>${esc(f.texto.slice(0,120))}</small></button>`).join(''):'<p class="mut">Nenhuma frase. Selecione um texto e use "Frase" na barra para salvar.</p>';
+  };
+  const poe=f=>{ntModalFecha(ov);frInsere(c,f)};
+  q.addEventListener('input',()=>{sel=0;pinta()});
+  q.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(it.length){sel=(sel+(e.key==='ArrowDown'?1:-1)+it.length)%it.length;pinta()}}
+    else if(e.key==='Enter'&&it[sel]){e.preventDefault();poe(it[sel])}
+  });
+  l.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b)poe(it[+b.dataset.i])});
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();q.focus();
+}
+// Selecionou texto e clicou "Frase" na barra: pede o título e salva.
+function ntFraseSalvaSel(c){
+  const s=c.ed.state.selection,texto=s.empty?'':c.ed.state.doc.textBetween(s.from,s.to,'\n','\n').trim();
+  if(!texto){toast('Selecione o texto que vai virar frase.');return}
+  const ov=ntModal('nt-frases',`<div class="nt-modal-t"><b>Salvar como frase</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><input type="text" class="nt-fr-q" placeholder="Título da frase" aria-label="Título da frase" maxlength="80" autocomplete="off" value="${esc(texto.slice(0,40))}"><p class="mut nt-fr-prev">${esc(texto.slice(0,300))}</p><div class="row"><button type="button" class="b" data-f="ok">Salvar</button><button type="button" class="b s" data-f="x">Cancelar</button></div>`);
+  const q=ov.querySelector('input'),ok=()=>{if(frSalva(q.value,texto)){ntModalFecha(ov);toast('Frase salva. Insira com /Frase.')}};
+  q.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();ok()}});
+  ov.addEventListener('click',e=>{const b=e.target.closest('[data-f]');if(b)b.dataset.f==='ok'?ok():ntModalFecha(ov)});
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);q.focus();q.select();
+}
+function ntFrasesGerencia(){
+  const ov=ntModal('nt-frases',`<div class="nt-modal-t"><b>Gerenciar frases</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-fr-l"></div>`),l=ov.querySelector('.nt-fr-l');
+  const pinta=()=>{l.innerHTML=ntFrases().length?ntFrases().map(f=>`<div class="nt-fr-g" data-id="${esc(f.id)}"><input type="text" value="${esc(f.titulo)}" maxlength="80" aria-label="Título"><small>${esc(f.texto.slice(0,100))}</small><button type="button" class="b s" data-f="apaga" aria-label="Apagar frase ${esc(f.titulo)}">🗑</button></div>`).join(''):'<p class="mut">Nenhuma frase salva ainda.</p>'};
+  l.addEventListener('change',e=>{const g=e.target.closest('.nt-fr-g');if(!g||e.target.tagName!=='INPUT')return;const t=e.target.value.trim();if(!t){pinta();return}frMuda(a=>{const f=a.find(x=>x.id===g.dataset.id);if(f){f.titulo=t;f.atualizado=ntAgora()}})});
+  l.addEventListener('click',e=>{const b=e.target.closest('[data-f="apaga"]');if(!b)return;const id=b.closest('.nt-fr-g').dataset.id;frMuda(a=>{const i=a.findIndex(x=>x.id===id);if(i>=0)a.splice(i,1)});pinta()});
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();
+}
+
+// ===== Recentes: últimas 5 páginas abertas neste aparelho =====
+function ntRecentes(){try{const l=JSON.parse(localStorage.getItem(NT_REC)||'[]');return Array.isArray(l)?l.filter(x=>typeof x==='string'):[]}catch(e){return []}}
+function ntRecentePoe(id){try{localStorage.setItem(NT_REC,JSON.stringify([id,...ntRecentes().filter(x=>x!==id)].slice(0,5)))}catch(e){}}

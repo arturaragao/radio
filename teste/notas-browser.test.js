@@ -1,4 +1,5 @@
 // Aba Notas 1.39 (página única, Tiptap) no Chrome headless: digitação, atalhos, menu "/", imagem, migração e recarga.
+// 1.41: barra fixa (sem bolha), painel de atalhos, Tab/Shift+Tab lista<->toggle, páginas (painel, "/Página", barra lateral, arrastar, excluir, celular 375 px).
 // Só usa o servidor local com dados fictícios (--simulado + BCBR_MEM=1: PUT guardado em memória do servidor, nada vai ao GitHub).
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
@@ -111,7 +112,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     const marcas=async()=>((await topo())[0].content[0].marks||[]).map(m=>m.type+(m.attrs?.backgroundColor?':'+m.attrs.backgroundColor:'')+(m.attrs?.color?':'+m.attrs.color:'')).sort();
     await ctrl('b');await ctrl('i');await ctrl('u');await ctrl('s',true);
     assert.deepEqual(await marcas(),['bold','italic','strike','underline']);
-    await espera(150);assert.equal(await ev("!document.querySelector('.nt-bolha').hidden"),true,'barrinha aparece ao selecionar');
+    await espera(150);assert.equal(await ev("getComputedStyle(NT.bolha).display"),'none','1.41: sem bolha ao selecionar texto');
     await ev("localStorage.removeItem('bcbr_nt_cor')");
     await reset(par('cor'));await ev("NT.ed.commands.selectAll()");
     await ctrl('h',true);assert.ok((await marcas()).some(m=>/textStyle:var\(--ntb-amarelo\)/.test(m)),'padrão: fundo amarelo '+await marcas());
@@ -119,8 +120,8 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await reset(par('outra'));await ev("NT.ed.commands.selectAll()");await ctrl('h',true);
     assert.ok((await marcas()).some(m=>/var\(--ntc-azul\)/.test(m)),'aplica a última cor usada: '+await marcas());
     // pela barrinha: paleta
-    await ev("NT.bolha.querySelector('[data-m=\"cor\"]').click()");
-    assert.equal(await ev("!NT.bolha.querySelector('.nt-paleta').hidden&&NT.bolha.querySelectorAll('.nt-sw').length"),18,'9 cores de texto + 9 de fundo');
+    await ev("NT.barra.querySelector('[data-m=\"cor\"]').click()");
+    assert.equal(await ev("!NT.barra.querySelector('.nt-paleta').hidden&&NT.barra.querySelectorAll('.nt-sw').length"),18,'9 cores de texto + 9 de fundo (paleta da barra fixa)');
   });
 
   await t.test('menu "/": filtra, setas + Enter, Esc fecha; Título, Checklist, Toggle, Destaque, Divisória',async()=>{
@@ -165,15 +166,11 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await ctrl('y');assert.equal(await ev("NT.ed.getText()"),'um dois');
   });
 
-  await t.test('alça ⋮⋮, menu do bloco (toque) e Abrir todos / Fechar todos',async()=>{
+  await t.test('alça ⋮⋮, menu do bloco (toque); o botão Abrir/Fechar todos saiu (1.42: Ctrl+Alt+T)',async()=>{
     await reset(tg('Um',par('u1')),tg('Dois',par('d1')),par('fim'));
-    await ev("document.querySelectorAll('.nt-seta').forEach(b=>b.getAttribute('aria-expanded')==='true'&&b.click());ntRotuloTodos()");
-    assert.equal(await ev("document.getElementById('nt_todos').textContent"),'Abrir todos');
-    await click('#nt_todos');
-    assert.equal(await ev("[...document.querySelectorAll('[data-type=\"details\"]')].every(d=>d.classList.contains('is-open'))"),true);
-    assert.equal(await ev("document.getElementById('nt_todos').textContent"),'Fechar todos');
-    await click('#nt_todos');
-    assert.equal(await ev("[...document.querySelectorAll('[data-type=\"details\"]')].some(d=>d.classList.contains('is-open'))"),false);
+    assert.equal(await ev("document.getElementById('nt_todos')"),null,'sem o botão Abrir/Fechar todos');
+    await tecla('Escape');   // (fecha a paleta de cores que o teste anterior deixou aberta)
+    await ev("document.querySelectorAll('.nt-seta').forEach(b=>b.getAttribute('aria-expanded')==='true'&&b.click())");
     // mouse sobre o segundo toggle mostra a alça; clicar abre o menu; Subir troca a ordem
     const p=await ev("(()=>{const r=document.querySelectorAll('.nt-pm [data-type=\"details\"] summary')[1].getBoundingClientRect();return {x:r.x+20,y:r.y+r.height/2}})()");
     await call('Input.dispatchMouseEvent',{type:'mouseMoved',...p});await espera(100);
@@ -271,6 +268,243 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.match(await ev("document.querySelector('.nt-pm').textContent"),/sem título.*Vazia.*Laudos/s,'ordem na tela');
     // idempotente
     assert.equal(await ev("ntMigra(SM.d)"),false);
+  });
+
+
+  // ===== 1.41 =====
+  const barra=(ctx,m)=>`${ctx} [data-m="${m}"]`;
+  const mouse=async(type,x,y)=>call('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',clickCount:1,buttons:type==='mouseReleased'?0:1});
+  const aguarda=async(expr,ms=6000)=>{const t0=Date.now();while(Date.now()-t0<ms){if(await ev(expr).catch(()=>false))return true;await espera(80)}throw Error('não ocorreu: '+expr)};
+  const item=(t,...filhos)=>({type:'listItem',content:[par(t),...filhos]});
+  const lista=(tipo,...itens)=>({type:tipo,content:itens});
+  const tarefa=t=>({type:'taskItem',attrs:{checked:false},content:[par(t)]});
+  const irItem=async texto=>{await ev(`(()=>{let p=null;NT.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.isText&&n.text===${JSON.stringify(texto)})p=pos+n.nodeSize});if(p==null)throw Error('texto ausente');NT.ed.chain().focus().setTextSelection(p).run()})()`)};
+  const slashCtrl=()=>tecla('/',{code:'Slash',windowsVirtualKeyCode:191,modifiers:2});
+  const esc=()=>tecla('Escape',{code:'Escape',windowsVirtualKeyCode:27});
+  const ids=n=>(n.content||[]).map(c=>c.type);
+
+  await t.test('1.41 sem bolha ao selecionar texto: a formatação fica na barra fixa do topo, ao lado do título',async()=>{
+    await reset(par('selecionar isto'));await ev("NT.ed.commands.selectAll()");await espera(250);
+    assert.equal(await ev("getComputedStyle(NT.bolha).display"),'none','a bolha não aparece');
+    assert.equal(await ev("document.querySelectorAll('.nt-bolha-texto').length"),0,'a bolha de texto foi removida');
+    const g=await ev("(()=>{const h=document.querySelector('.nt-topo h2').getBoundingClientRect(),b=document.querySelector('.nt-barra').getBoundingClientRect(),t=document.querySelector('.nt-topo').getBoundingClientRect();return {hx:h.right,hy:h.top+h.height/2,bx:b.left,by:b.top,bh:b.height,tt:t.top,esq:h.left}})()");
+    assert.ok(g.bx>=g.hx-1&&g.by<g.hy&&g.by+g.bh>g.hy,'a barra está na mesma fileira do título "Notas", à direita dele: '+JSON.stringify(g));
+    assert.ok(g.esq<80,'no canto superior esquerdo');
+    for(const m of ['bold','italic','underline','strike','link','cor','h1','h2','h3','bullet','ordered','task','tgl','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
+  });
+
+  await t.test('1.41 a barra formata a seleção sem tirar o foco nem a seleção do editor; botões acesos mostram o estado',async()=>{
+    await reset(par('formatar isto'));await ev("NT.ed.commands.selectAll()");
+    await click(barra('.nt-barra','bold'));
+    const marcas=async()=>((await topo())[0].content[0].marks||[]).map(m=>m.type+(m.attrs?.backgroundColor?':'+m.attrs.backgroundColor:'')).sort();
+    assert.deepEqual(await marcas(),['bold']);
+    assert.equal(await ev("NT.ed.isFocused&&document.activeElement.classList.contains('nt-pm')"),true,'o foco continua no editor');
+    assert.equal(await ev("!NT.ed.state.selection.empty"),true,'a seleção continua');
+    assert.equal(await ev("document.querySelector('.nt-barra [data-m=\"bold\"]').classList.contains('on')"),true,'botão negrito aceso');
+    await click(barra('.nt-barra','italic'));await click(barra('.nt-barra','underline'));await click(barra('.nt-barra','strike'));
+    assert.deepEqual(await marcas(),['bold','italic','strike','underline']);
+    await click(barra('.nt-barra','bold'));assert.ok(!(await marcas()).includes('bold'),'clicar de novo tira');
+    assert.equal(await ev("document.querySelector('.nt-barra [data-m=\"bold\"]').classList.contains('on')"),false);
+    // cor/realce pela paleta da barra
+    await click(barra('.nt-barra','cor'));
+    assert.equal(await ev("!document.querySelector('.nt-paleta').hidden"),true,'paleta aberta');
+    await click('.nt-paleta [data-cor="fundo:amarelo"]');
+    assert.ok((await marcas()).includes('textStyle:var(--ntb-amarelo)'),'realce aplicado: '+await marcas());
+    assert.equal(await ev("document.querySelector('.nt-paleta').hidden&&NT.ed.isFocused"),true,'paleta fecha e o foco fica no editor');
+    // títulos, listas, checklist, toggle
+    await reset(par('titulo'));await irFim('titulo');await click(barra('.nt-barra','h2'));
+    assert.equal((await topo())[0].type,'heading');assert.equal((await topo())[0].attrs.level,2);
+    assert.equal(await ev("document.querySelector('.nt-barra [data-m=\"h2\"]').classList.contains('on')&&!document.querySelector('.nt-barra [data-m=\"h1\"]').classList.contains('on')"),true,'H2 aceso e H1 apagado');
+    await click(barra('.nt-barra','h2'));assert.equal((await topo())[0].type,'paragraph','de novo volta a texto');
+    for(const [m,tipo] of [['bullet','bulletList'],['ordered','orderedList'],['task','taskList'],['tgl','details']]){
+      await reset(par('x'));await irFim('x');await click(barra('.nt-barra',m));
+      assert.equal((await tipos())[0],tipo,m);
+      assert.equal(await ev(`document.querySelector('.nt-barra [data-m="${m}"]').classList.contains('on')`),true,m+' aceso');
+      assert.equal(await ev("NT.ed.isFocused"),true,m+': foco no editor');
+    }
+    // link: campo ao lado do botão (sem prompt)
+    await reset(par('texto do link'));await ev("NT.ed.commands.selectAll()");await click(barra('.nt-barra','link'));
+    assert.equal(await ev("!document.querySelector('.nt-link').hidden&&document.activeElement===document.querySelector('.nt-link-in')"),true,'campo do link com foco');
+    await digita('exemplo.com');await enter();await aguarda("NT.ed.isFocused");
+    assert.equal((await topo())[0].content[0].marks[0].attrs.href,'https://exemplo.com');assert.equal(await ev("NT.ed.isFocused"),true,'foco volta ao editor depois do link');
+    // botão sem seleção: nada quebra, e o foco volta
+    await reset(par('cursor'));await irFim('cursor');await click(barra('.nt-barra','bold'));await digita('N');
+    assert.equal((await topo())[0].content.map(c=>c.text+':'+(c.marks||[]).length).join('|'),'cursor:0|N:1','digita em negrito depois do clique');
+  });
+
+  await t.test('1.41 painel de atalhos: Ctrl+/ abre, Ctrl+/ ou Esc fecham, botão abre; lista só o que existe',async()=>{
+    await reset(par('x'));await irFim('x');
+    await slashCtrl();assert.equal(await ev("!!document.getElementById('nt_atalhos')"),true,'Ctrl+/ abre');
+    assert.equal(await ev("NT.ed.getText()"),'x','a barra não foi digitada');
+    const txt=await ev("document.getElementById('nt_atalhos').textContent");
+    for(const k of ['Ctrl+B','Ctrl+I','Ctrl+U','Ctrl+Shift+S','Ctrl+K','Ctrl+Shift+H','Tab','Shift+Tab','Alt+A','Ctrl+V','Ctrl+/','Ctrl+Z','> ','Toggle','Lista numerada','Checklist','Nova página'])assert.ok(txt.includes(k),'lista '+k);
+    await esc();assert.equal(await ev("!document.getElementById('nt_atalhos')"),true,'Esc fecha');
+    assert.equal(await ev("NT.ed.isFocused"),true,'o foco volta ao editor');
+    await click(barra('.nt-barra','atalhos'));assert.equal(await ev("!!document.getElementById('nt_atalhos')"),true,'botão abre');
+    await slashCtrl();assert.equal(await ev("!document.getElementById('nt_atalhos')"),true,'Ctrl+/ fecha');
+    await click(barra('.nt-barra','atalhos'));await click('.nt-atalhos-t button');assert.equal(await ev("!document.getElementById('nt_atalhos')"),true,'✕ fecha');
+  });
+
+  await t.test('1.41 Tab em item de lista logo depois de um toggle entra no toggle; Shift+Tab sai (lista, numerada e checklist)',async()=>{
+    // o caso da foto: toggle e, logo abaixo, uma lista com um item vazio
+    await reset(tg('Corretor de Laudos',par('conteudo')),lista('bulletList',item('')));
+    await ev("(()=>{let p=null;NT.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.type.name==='listItem')p=pos+2});NT.ed.chain().focus().setTextSelection(p).run()})()");
+    await tab();
+    let c=await topo();assert.equal(c[0].type,'details');assert.notEqual(c[1]?.type,'bulletList','a lista saiu do topo');
+    assert.deepEqual(ids(c[0].content[1]),['paragraph','bulletList'],'o item é o último filho do toggle, ainda item de lista');
+    assert.equal(await ev("document.querySelector('[data-type=\"details\"]').classList.contains('is-open')"),true,'o toggle abre para mostrar o item');
+    await digita('novo');
+    assert.equal(await ev("document.querySelector('.nt-pm [data-type=\"detailsContent\"] li').textContent"),'novo','o cursor ficou no item');
+    await tab(true);
+    c=await topo();assert.equal(c[1].type,'bulletList','Shift+Tab leva o item para logo depois do toggle');assert.equal(resumo(c[1]),'novo');
+    assert.deepEqual(ids(c[0].content[1]),['paragraph'],'o toggle ficou só com o parágrafo');
+    assert.equal(await ev("NT.ed.state.selection.$from.parent.textContent"),'novo','cursor no item');
+    // numerada e checklist
+    for(const [tipo,mk] of [['orderedList',item],['taskList',tarefa]]){
+      await reset(tg('T',par('c')),lista(tipo,mk('um')));await irItem('um');await tab();
+      c=await topo();assert.deepEqual(ids(c[0].content[1]),['paragraph',tipo],tipo+' entra no toggle');
+      await tab(true);c=await topo();assert.equal(c[1].type,tipo,tipo+' sai do toggle');
+    }
+    // item com filhos leva os filhos; os irmãos de baixo ficam fora do toggle; o 2º item aninha normalmente
+    await reset(tg('T',par('c')),lista('bulletList',item('a',lista('bulletList',item('a1'))),item('b')));
+    await irItem('a');await tab();
+    c=await topo();assert.deepEqual(c.slice(0,2).map(n=>n.type),['details','bulletList'],'o resto da lista (b) fica depois do toggle');
+    assert.equal(resumo(c[1]),'b');assert.match(resumo(c[0].content[1]),/c\|a\|a1/,'a e o filho a1 foram juntos');
+    await irItem('b');await tab();  // b é o 1º (único) item da lista que ainda vem logo após o toggle: entra na MESMA lista do toggle
+    c=await topo();assert.equal(c[1]?.type==='bulletList',false);assert.deepEqual(ids(c[0].content[1]),['paragraph','bulletList']);
+    assert.equal(c[0].content[1].content[1].content.length,2,'a e b na mesma lista');
+    await irItem('b');await tab();   // agora b não é o 1º: aninha dentro de a
+    assert.equal(await ev("document.querySelectorAll('.nt-pm [data-type=\"detailsContent\"] li li').length"),2,'b aninhou (a1 e b)');
+    await tab(true);   // desaninha: continua DENTRO do toggle
+    c=await topo();assert.equal(c[0].type,'details');assert.equal(c[1]?.type==='bulletList',false,'Shift+Tab em item aninhado só desaninha');
+    await tab(true);   // item de nível mais alto dentro do toggle: sai
+    c=await topo();assert.equal(c[1].type,'bulletList');assert.equal(resumo(c[1]),'b');
+    // 1º item de uma lista que NÃO vem depois de um toggle: Tab não faz nada
+    await reset(par('antes'),lista('bulletList',item('só')));await irItem('só');await tab();
+    assert.deepEqual((await tipos()).slice(0,2),['paragraph','bulletList']);
+    // dentro da lista (sem toggle) Tab/Shift+Tab seguem aninhando/desaninhando (teste anterior) e o toggle sem lista continua entrando no anterior
+    await reset(tg('A',par('a1')),tg('B',par('b1')),par('fim'));await ev("document.querySelectorAll('.nt-seta').forEach(b=>b.getAttribute('aria-expanded')==='false'&&b.click())");await irFim('B');await tab();
+    assert.deepEqual((await tipos()).slice(0,2),['details','paragraph'],'toggle em toggle segue igual');
+  });
+
+  await t.test('1.41 páginas: criar pelo botão da barra lateral, abrir no painel grande, editar com a barra, fechar (Esc, ✕, clique fora) e reabrir',async()=>{
+    await ev("pgMuda(l=>{l.length=0})");await ev("localStorage.removeItem('bcbr_nt_lat')");await ev("ntLateralPinta()");
+    assert.equal(await ev("!document.querySelector('.nt-corpo').classList.contains('lat-off')&&getComputedStyle(document.getElementById('nt_lat')).display!=='none'"),true,'barra lateral visível no PC');
+    await click('.nt-pg-novo');await aguarda("!!document.getElementById('nt_pan')");
+    const g=await ev("(()=>{const r=document.querySelector('.nt-pan-c').getBoundingClientRect();return {w:r.width,h:r.height,cx:r.left+r.width/2,cy:r.top+r.height/2}})()");
+    assert.ok(g.w>=850&&g.w<=920&&g.h>=760&&g.h<=830,'painel grande (~90% de 1000x900): '+JSON.stringify(g));
+    assert.ok(Math.abs(g.cx-500)<4&&Math.abs(g.cy-450)<4,'centralizado');
+    assert.equal(await ev("document.activeElement.classList.contains('nt-pan-titulo')"),true,'cursor no título da página nova');
+    await digita('Página fictícia');await enter();
+    await aguarda("NP.ed.isFocused");
+    assert.equal(await ev("NP.ed.isFocused"),true,'Enter leva ao texto');
+    await digita('> ');await digita('Titulo T');
+    assert.equal(await ev("document.querySelectorAll('#nt_pan [data-type=\"details\"]').length"),1,'toggle dentro do painel (mesmo editor)');
+    await ev("NP.ed.commands.selectAll()");await click(barra('#nt_pan','bold'));
+    assert.match(JSON.stringify(await ev("NP.ed.getJSON()")),/"type":"bold"/,'a barra do painel formata o editor do painel');
+    assert.equal(await ev("NP.ed.isFocused"),true);
+    assert.equal(await ev("NT.ed.getText().includes('Titulo T')"),false,'o texto não vazou para a página principal');
+    await esc();assert.equal(await ev("!document.getElementById('nt_pan')"),true,'Esc fecha');
+    assert.ok(await confirmado(),'salvou');
+    const pg=await ev("SM.d.notasPaginas.paginas");assert.equal(pg.length,1);assert.equal(pg[0].titulo,'Página fictícia');assert.equal(pg[0].fixada,false);
+    assert.match(JSON.stringify(pg[0].doc.blocos),/Titulo T/);assert.ok(pg[0].doc.blocos.every(b=>b.id&&b.atualizado));
+    assert.match(await ev("document.getElementById('nt_lat').textContent"),/Página fictícia/,'aparece na barra lateral');
+    assert.equal(await ev("NT.ed.getText().includes('Titulo T')"),false);
+    // reabrir pela barra lateral; fechar pelo ✕; reabrir; fechar clicando fora
+    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
+    assert.equal(await ev("document.querySelector('.nt-pan-titulo').value"),'Página fictícia');assert.match(await ev("NP.ed.getText()"),/Titulo T/);
+    await click('#nt_pan [data-a="fecha"]');assert.equal(await ev("!document.getElementById('nt_pan')"),true,'✕ fecha');
+    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
+    await mouse('mousePressed',5,5);await mouse('mouseReleased',5,5);assert.equal(await ev("!document.getElementById('nt_pan')"),true,'clique fora fecha');
+    // editar o título e o texto e fechar: salva
+    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");await aguarda("NP.ed.isFocused");
+    await ev("(()=>{const i=document.querySelector('.nt-pan-titulo');i.focus();i.select();0})()");await digita('Outro nome');
+    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await enter();await digita('linha nova');await esc();assert.ok(await confirmado());
+    const p2=await ev("SM.d.notasPaginas.paginas[0]");assert.equal(p2.titulo,'Outro nome');assert.match(JSON.stringify(p2.doc.blocos),/linha nova/);
+    assert.match(await ev("document.getElementById('nt_lat').textContent"),/Outro nome/);
+  });
+
+  await t.test('1.41 "/Página" cria a página, põe o bloco-link no cursor e abre; clicar no bloco abre; dentro de uma página não há "/Página"',async()=>{
+        await reset(par(''));await ev("NT.ed.commands.focus()");await aguarda("NT.ed.isFocused");const antes=await ev("SM.d.notasPaginas.paginas.length");
+    await digita('/pag');assert.equal(await ev("document.querySelector('.nt-slash-it b').textContent"),'Página');await enter();
+    await aguarda("!!document.getElementById('nt_pan')");
+    assert.equal(await ev("SM.d.notasPaginas.paginas.length"),antes+1,'página criada');
+    const id=await ev("NP.pagina");assert.equal((await tipos()).includes('paginaLink'),true,'bloco-link no ponto do cursor');
+    assert.equal(await ev("document.activeElement.classList.contains('nt-pan-titulo')"),true);
+    await digita('Filha');assert.equal(await ev("document.querySelector('.nt-pan-titulo').value"),'Filha','digitou no título');await esc();assert.ok(await confirmado());
+    assert.equal(await ev("document.querySelector('.nt-plink').textContent"),'📄 Filha','o bloco mostra o título');
+    await click('.nt-plink');await aguarda("!!document.getElementById('nt_pan')");assert.equal(await ev("NP.pagina"),id,'clicar no bloco abre a mesma página');
+    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await digita('/pag');await espera(150);
+    assert.equal(await ev("!!document.querySelector('.nt-slash-vazio')"),true,'sem "Página" dentro de uma página');
+    await esc();assert.equal(await ev("!!document.getElementById('nt_pan')"),true,'Esc fecha só o menu "/"');
+    await esc();assert.equal(await ev("!document.getElementById('nt_pan')"),true);
+    // apagar o bloco-link não apaga a página
+    await ev("(()=>{let p=null;NT.ed.state.doc.forEach((n,o)=>{if(n.type.name==='paginaLink')p=o});NT.ed.view.dispatch(NT.ed.state.tr.delete(p,p+1))})()");
+    assert.equal(await ev("SM.d.notasPaginas.paginas.length"),antes+1);
+  });
+
+  await t.test('1.41 fixar, desafixar e reordenar na barra lateral (arrastando com o mouse); fixadas em cima',async()=>{
+    await ev("pgMuda(l=>{l.length=0})");
+    const nomes=['Alfa','Beta','Gama'],id={};
+    for(const n of nomes){id[n]=await ev("ntPaginaCria()");await ev(`pgMuda(l=>{l.find(p=>p.id===${JSON.stringify(id[n])}).titulo=${JSON.stringify(n)}})`)}
+    const secao=async s=>ev(`[...document.querySelectorAll('.nt-pg-lista[data-sec="${s}"] .nt-pg-nome')].map(b=>b.textContent.replace('📄 ',''))`);
+    assert.deepEqual(await secao('pg'),nomes,'ordem de criação');assert.equal(await ev("!document.querySelector('.nt-pg-lista[data-sec=\"fix\"]')"),true,'sem fixadas, sem seção');
+    await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-pin`);
+    assert.deepEqual(await secao('fix'),['Beta'],'Beta foi para Fixadas');assert.deepEqual(await secao('pg'),['Alfa','Gama']);
+    assert.ok(await ev("document.querySelector('.nt-lat-s').textContent")==='Fixadas'&&await ev("document.querySelector('.nt-pg-lista').dataset.sec")==='fix','Fixadas vem em cima');
+    // arrastar Gama para cima de Alfa
+    const centro=async sel=>ev(`(()=>{const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,t:r.top,h:r.height}})()`);
+    const g=await centro(`.nt-pg-it[data-pg="${id.Gama}"] .nt-pg-nome`),a=await centro(`.nt-pg-it[data-pg="${id.Alfa}"] .nt-pg-nome`);
+    await mouse('mouseMoved',g.x,g.y);await mouse('mousePressed',g.x,g.y);
+    for(let k=1;k<=6;k++)await mouse('mouseMoved',g.x,g.y+(a.t+3-g.y)*k/6);
+    assert.equal(await ev("!!document.querySelector('.nt-pg-it.arrastando')&&!!document.querySelector('.alvo-antes')"),true,'indicador de destino durante o arrasto');
+    await mouse('mouseReleased',g.x,a.t+3);
+    assert.deepEqual(await secao('pg'),['Gama','Alfa'],'Gama passou para antes de Alfa');
+    assert.equal(await ev("!document.getElementById('nt_pan')"),true,'arrastar não abre a página');
+    assert.deepEqual(await secao('fix'),['Beta'],'a seção de fixadas não mudou');
+    assert.ok(await confirmado());
+    const ord=await ev("Object.fromEntries(SM.d.notasPaginas.paginas.map(p=>[p.titulo,p.ordem]))");assert.ok(ord.Gama<ord.Alfa,'a ordem foi gravada: '+JSON.stringify(ord));
+    // desafixar pelo painel (alfinete) volta para a lista de baixo
+    await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-nome`);await aguarda("!!document.getElementById('nt_pan')");
+    assert.equal(await ev("document.querySelector('#nt_pan [data-a=\"pin\"]').classList.contains('on')"),true,'alfinete aceso no painel');
+    await click('#nt_pan [data-a="pin"]');await esc();
+    assert.deepEqual(await secao('pg'),['Gama','Alfa','Beta'],'desafixada vai para o fim de Páginas');assert.equal(await ev("!document.querySelector('.nt-pg-lista[data-sec=\"fix\"]')"),true);
+    // recolher e expandir (estado por aparelho)
+    await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display"),'none');assert.equal(await ev("localStorage.getItem('bcbr_nt_lat')"),'0');
+    const larg=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(larg>=930,'com a barra lateral recolhida o texto usa quase toda a largura (1000 px): '+larg);
+    await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display!=='none'&&localStorage.getItem('bcbr_nt_lat')"),'1');
+  });
+
+  await t.test('1.41 excluir página pede confirmação (Cancelar mantém, Excluir apaga e fecha o painel)',async()=>{
+    const n=await ev("SM.d.notasPaginas.paginas.length");
+    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
+    await click('#nt_pan [data-a="exc"]');assert.equal(await ev("!document.querySelector('.nt-pan-conf').hidden"),true,'pergunta antes de excluir');
+    await click('#nt_pan [data-a="exc-nao"]');assert.equal(await ev("SM.d.notasPaginas.paginas.length"),n);assert.equal(await ev("document.querySelector('.nt-pan-conf').hidden"),true);
+    await click('#nt_pan [data-a="exc"]');await click('#nt_pan [data-a="exc-sim"]');
+    assert.equal(await ev("!document.getElementById('nt_pan')"),true,'painel fechou');assert.equal(await ev("SM.d.notasPaginas.paginas.length"),n-1,'página excluída');
+    assert.ok(await confirmado());
+  });
+
+  await t.test('1.41 celular de 375 px: sem rolagem horizontal, barra lateral recolhida abre por cima, painel em tela cheia',async()=>{
+    if(!await ev("SM.d.notasPaginas.paginas.length"))await ev("ntPaginaCria()");assert.ok(await confirmado());
+    await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
+    await abre();
+    assert.equal(await ev("document.documentElement.scrollWidth<=375&&document.body.scrollWidth<=375"),true,'sem rolagem horizontal');
+    assert.equal(await ev("document.querySelector('.nt-corpo').classList.contains('lat-off')&&getComputedStyle(document.getElementById('nt_lat')).display==='none'"),true,'barra lateral começa recolhida');
+    const w=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(w>=330,'texto usa a largura do celular: '+w);
+    assert.equal(await ev("(()=>{const l=document.querySelector('.nt-barra-l');return l.scrollWidth>l.clientWidth&&getComputedStyle(l).overflowX==='auto'})()"),true,'a barra rola dentro de si mesma');
+    assert.equal(await ev("document.querySelector('.nt-barra').getBoundingClientRect().right<=375"),true);
+    await click('#nt_lat_bt');
+    assert.equal(await ev("(()=>{const r=document.getElementById('nt_lat').getBoundingClientRect();return getComputedStyle(document.getElementById('nt_lat')).position==='fixed'&&r.left>=0&&r.right<=375&&r.height>=700})()"),true,'abre por cima');
+    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
+    const r=await ev("(()=>{const r=document.querySelector('.nt-pan-c').getBoundingClientRect();return [r.left,r.top,r.width,r.height]})()");
+    assert.deepEqual(r,[0,0,375,812],'painel em tela cheia');
+    assert.equal(await ev("document.querySelector('#nt_pan .nt-barra').getBoundingClientRect().right<=375&&document.getElementById('nt_pan').scrollWidth<=375"),true);
+    assert.equal(await ev("document.querySelector('.nt-corpo').classList.contains('lat-off')"),true,'a barra lateral fechou ao abrir a página');
+    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await digita('texto');await ev("NP.ed.commands.selectAll()");await click(barra('#nt_pan','italic'));
+    assert.match(JSON.stringify(await ev("NP.ed.getJSON()")),/"type":"italic"/,'barra funciona no celular');
+    await click('#nt_pan [data-a="fecha"]');assert.ok(await confirmado());
+    await call('Emulation.setDeviceMetricsOverride',{width:1000,height:900,deviceScaleFactor:1,mobile:false});await abre();
   });
 
   assert.deepEqual(erros,[],'nenhuma exceção JavaScript no navegador');

@@ -9,6 +9,7 @@ Se o ambiente negar processos filhos, rode os testes Node com `--test-isolation=
 Resultados e limites desta entrega: [calendario-validacao.md](calendario-validacao.md).
 **Notas 1.39 (Chrome):** `node --test teste/notas-browser.test.js` (porta 8767) sobe o servidor com `BCBR_MEM=1` (só com `--simulado`): PUT de `semana/plano.json` e `imagens/` fica em memória do servidor e volta no GET, para provar que a nota e a imagem sobrevivem ao recarregar.
 **Sincronização 1.40 (Chrome):** `node --test teste/sync-browser.test.js` (porta 8768) usa DUAS janelas = dois aparelhos (origens `127.0.0.1` e `localhost`, localStorage separado) contra o mesmo `servidor.js --simulado` com `BCBR_MEM=1`; nesse modo o servidor devolve ETag e 304, responde 409 a PUT com sha velho e expõe `/__stats` (contadores) e `/__cota?rest=N` (cabeçalhos X-RateLimit simulados). `BCBR_CAPTURAS=<pasta>` grava capturas do tema Sépia.
+**Notas 1.41 (Chrome):** `notas-browser` cobre a barra fixa, Ctrl+/, Tab/Shift+Tab lista<->toggle, páginas (painel, "/Página", barra lateral, arrastar, excluir) e o celular de 375 px; `sync-browser` ganhou o teste de páginas em dois aparelhos.
 **Abrir (Browser pane):** navegar para `http://localhost:8765/`. O servidor injeta (só na resposta) um fetch que desvia `api.github.com` para `/api` e grava token falso em `bcbr_gh_token`. O app não precisa de linha nenhuma.
 **Prova/meta:** prova fixa em 12/12/2026; `cfg.prova` salvo/sincronizado não altera o prazo. RI fixa em 50 questões nos dois modos. Nota: `requestAnimationFrame` fica travado no Browser pane; para testar `qRola` use `window.requestAnimationFrame=f=>setTimeout(()=>f(performance.now()),16)`.
 **Dica:** esperar ~4 s após carregar; eventos de teclado: `document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'g',bubbles:true,cancelable:true}))`.
@@ -20,3 +21,5 @@ Resultados e limites desta entrega: [calendario-validacao.md](calendario-validac
 4. Abas: `go('questoes')` abre bloco/tela "Nenhum bloco"; Tab/Shift+Tab trocam aba (de Questões: Estudar / Semana).
 5. RI: `metaHoje() === tamanhoRI() === ALVO.ri() === 50`; `riHoje().length === 50` com banco suficiente. `smMetaDe` continua sendo a estimativa de cobertura do calendário, até a prova fixa, com reta final em 28/11.
 6. Semana: `.sm-hoje1.kbsel`, ↓/↑ marcam `.sm-row.kbsel`, Enter alterna, F apaga (só em memória), Esc solta, Alt+A abre Nova tarefa.
+
+- 1.42: `radio.test.js` (tema/contraste/nome), `radio-browser.test.js` (Notas no Chrome), `offline-browser.test.js` (SW real, servidor desligado); auxiliar `chrome-util.js`.

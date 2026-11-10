@@ -6,6 +6,8 @@ const RAIZ = path.resolve(__dirname, '..');
 const D = path.resolve(process.argv[2] || process.env.BCBR_DADOS || path.join(RAIZ, '..', 'banco-cbr-app'));
 const PORT = +(process.argv[3] || process.env.PORT || 8765);
 const SIMULADO=process.argv[2]==='--simulado',simulado=SIMULADO?require('./calendario-dados.js'):null;
+// 1.42: BCBR_QS=N gera N questões fictícias (só com --simulado) para testar busca, Banco e abertura com banco grande.
+if (SIMULADO && +process.env.BCBR_QS) simulado['dados/questoes.json'] = Array.from({ length: +process.env.BCBR_QS }, (_, i) => ({ id: 'q' + i, n: i + 1, enunciado: `Paciente ${i + 1} com dor ${['abdominal', 'torácica', 'lombar'][i % 3]} e achados de ${['tomografia', 'ressonância', 'ultrassonografia'][i % 3]} número ${i + 1}. ` + 'Texto repetido da questão fictícia. '.repeat(8), alts: { A: 'Opção A', B: 'Opção B', C: 'Opção C', D: 'Opção D' }, gab: 'ABCD'[i % 4], tags: [], cl: [] }));
 if (!SIMULADO&&!fs.existsSync(D + '/dados/questoes.json')) { console.error('Dados não encontrados em ' + D + ' (passe a pasta como 1º argumento)'); process.exit(1); }
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/json' };
 // interceptor injetado no index.html (só na resposta; o arquivo do app não muda): desvia api.github.com para /api e põe token falso
@@ -15,6 +17,9 @@ const SW_NULO = `self.addEventListener('install',()=>self.skipWaiting());self.ad
 let n = 0;
 // BCBR_MEM=1 (só com --simulado): PUT de semana/plano.json e imagens/ fica guardado em MEMÓRIA do servidor e volta no GET (teste de recarregar a página).
 const MEM=process.env.BCBR_MEM==='1',mem=new Map();
+// 1.42: com BCBR_MEM=1 cada PUT vira um "commit" (GET .../commits?path=&page=&per_page= e GET contents/<arq>?ref=<sha>, com Accept raw): serve o teste do histórico.
+// BCBR_SW=1 serve o sw.js de verdade (menos /api/, que no app real é outra origem): serve o teste do app offline.
+const hist=[];   // mais novo primeiro: {sha,rel,b64,message,date}
 // 1.40: contadores e cota simulada (GET /__stats, /__stats?zera, /__cota?rest=N). ETag = "<sha>"; GET com If-None-Match igual -> 304; PUT com sha velho -> 409.
 const stats={get:0,n304:0,put:0,n409:0};let cota=null;
 http.createServer((req, res) => {
@@ -29,9 +34,12 @@ http.createServer((req, res) => {
         if(!MEM){req.resume();return j({content:{sha:'fake'+(++n)}})}
         let b='';req.on('data',c=>b+=c);req.on('end',()=>{const o=JSON.parse(b),rel=u.replace(/^.*contents\//,''),atual=mem.get(rel);
           if(atual&&o.sha!==atual.sha){stats.n409++;return j({message:'sha does not match'},409)}
-          const sha='m'+(++n);stats.put++;mem.set(rel,{sha,b64:o.content});j({content:{sha}})});return;
+          const sha='m'+(++n);stats.put++;mem.set(rel,{sha,b64:o.content});hist.unshift({sha,rel,b64:o.content,message:o.message||'',date:new Date().toISOString()});j({content:{sha}})});return;
       }
       const rel=u.replace(/^.*contents\//,'');
+      const qs=new URL(req.url,'http://x').searchParams;
+      if(MEM&&u.endsWith('/commits')){const p=+qs.get('page')||1,pp=+qs.get('per_page')||30,l=hist.filter(h=>h.rel===qs.get('path'));return j(l.slice((p-1)*pp,p*pp).map(h=>({sha:h.sha,commit:{message:h.message,author:{name:'teste',date:h.date}}})))}
+      if(MEM&&qs.get('ref')){const h=hist.find(x=>x.sha===qs.get('ref'));if(!h)return j({},404);const txt=Buffer.from(h.b64,'base64');if((req.headers.accept||'').includes('raw')){res.writeHead(200,{'content-type':'application/json'});return res.end(txt)}return j({sha:h.sha,content:h.b64,encoding:'base64'})}
       if(MEM&&mem.has(rel)){const m=mem.get(rel);
         if(rel.startsWith('imagens/')){res.writeHead(200,{'content-type':'image/jpeg'});return res.end(Buffer.from(m.b64,'base64'))}
         stats.get++;const et='"'+m.sha+'"';
@@ -58,6 +66,7 @@ http.createServer((req, res) => {
     if (p.startsWith(D) && fs.existsSync(p) && fs.statSync(p).isFile()) return j({ sha: 'x', content: fs.readFileSync(p).toString('base64'), encoding: 'base64' });
     res.writeHead(404); return res.end('{}');
   }
+  if (u === '/sw.js' && process.env.BCBR_SW === '1') { res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' }); return res.end(fs.readFileSync(path.join(RAIZ, 'sw.js'), 'utf8').replace('if (u.origin !== location.origin) return;', 'if (u.origin !== location.origin || u.pathname.startsWith("/api/")) return;')); }
   if (u === '/sw.js') { res.writeHead(200, { 'content-type': 'text/javascript' }); return res.end(SW_NULO); }
   const rel = u === '/' ? '/index.html' : u, p = path.join(RAIZ, rel);
   if (!p.startsWith(RAIZ) || rel.startsWith('/teste') || !fs.existsSync(p) || !fs.statSync(p).isFile()) { res.writeHead(404); return res.end(); }

@@ -2,7 +2,7 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.40.0"
+VERSAO = "1.42.0"
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
 js = js.split("<script>", 1)[1].rsplit("</script>", 1)[0]
 head = open(f"{R}/fonte/artefato-head.html", encoding="utf8").read()
@@ -97,6 +97,9 @@ troca("smdel:'Apagar a tarefa selecionada'", "smdel:'Apagar a tarefa selecionada
 troca("sem:['smdel']", "sem:['smdel','smurg']")
 troca("const TABS=[['hoje','Hoje'],", "const TABS=[['hoje','Hoje'],['semana','Semana'],")
 troca("const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=>base.includes(k));", "const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=>base.includes(k));if(o.length&&!o.includes('semana'))o.splice(Math.max(0,o.indexOf('hoje'))+1,0,'semana');")
+# 1.42 offline: o que não chegou ao GitHub volta para a fila (antes o flush tirava a chave de "dirty" antes de gravar e, sem internet, ela se perdia até o remoto mudar)
+troca("if(!DB)return;setSync('saving');", "if(!DB)return;setSync('saving');const tentadas=[...dirty],tinhaEst=estDirty;")
+troca("setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)", "tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)")
 troca("fc:vFc,fcstudy:vFcStudy}[tela];", "fc:vFc,fcstudy:vFcStudy,semana:vSemana,tarefas:vTarefas,notas:vNotas}[tela];")
 troca("  ${metaProvaCard()}${chipsHoje(agendados)}", "  ${smCardHoje()}${metaProvaCard()}${chipsHoje(agendados)}")
 # aba Questões à direita da Semana: último bloco em andamento + troca de bloco + atalhos (22/10/2026)
@@ -116,17 +119,17 @@ js = js + "\n\n" + open(f"{R}/build/questoes.js", encoding="utf8").read()
 # reordenar cartões arrastando (22/10/2026): botões de restaurar em Config + arrastar/segurar (build/layout.js)
 troca("${layoutUI()}${pesosUI()}", "${layoutUI()}${ordemUI()}${pesosUI()}")
 js = js + "\n\n" + open(f"{R}/build/layout.js", encoding="utf8").read()
-js = open(f"{R}/build/interpretar.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/semana.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas.js", encoding="utf8").read() + "\n\n" + js  # antes do código do app: estado e notas existem no primeiro render
+js = open(f"{R}/build/interpretar.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/semana.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas2.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/busca.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/offline.js", encoding="utf8").read() + "\n\n" + js  # antes do código do app: estado e notas existem no primeiro render
 
 open(f"{R}/app.js", "w", encoding="utf8").write(f"// Banco CBR app {VERSAO} — gerado por build/montar.py a partir do artefato (não editar à mão)\n" + js)
 
 css = open(f"{R}/build/extra.css", encoding="utf8").read() + open(f"{R}/build/semana.css", encoding="utf8").read() + open(f"{R}/build/questoes.css", encoding="utf8").read() + open(f"{R}/build/layout.css", encoding="utf8").read() + open(f"{R}/build/notas.css", encoding="utf8").read()
 pwa = ('<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png">'
-       '<meta name="theme-color" content="#3a3632"><meta name="apple-mobile-web-app-capable" content="yes">')
+       '<meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes">')
 head = head.replace("<style>", pwa + "<style>", 1).replace("</style>", css + "</style>", 1)
 # versão pequena ao lado do título
-assert head.count("</svg>Banco CBR</div>") == 1
-head = head.replace("</svg>Banco CBR</div>", f'</svg>Banco CBR<small class="versao">v{VERSAO}</small></div>')
+assert head.count("</svg>Radio</div>") == 1
+head = head.replace("</svg>Radio</div>", f'</svg>Radio<small class="versao">v{VERSAO}</small></div>')
 open(f"{R}/index.html", "w", encoding="utf8").write(head + f'\n<script>window.BCBR_VERSAO="{VERSAO}"</script><script src="shim.js?v={VERSAO}"></script>\n</body></html>\n')
 open(f"{R}/versao.txt", "w", encoding="utf8").write(VERSAO)  # o app confere ao abrir (atualização instantânea)
 sw_path = f"{R}/sw.js"

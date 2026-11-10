@@ -1,6 +1,7 @@
 // 1.40 no Chrome: dois "aparelhos" (origens 127.0.0.1 e localhost = localStorage separado) contra o mesmo servidor de teste
 // (--simulado + BCBR_MEM=1: o plano fica em memória do servidor; nada vai ao GitHub). Cobre busca rápida, fusão por bloco com o editor
 // com foco, ETag/304, cota, plano corrompido, link sem prompt() e as variáveis do tema Sépia.
+// 1.41: páginas (notasPaginas) em dois aparelhos: fusão por bloco e por campo, criação simultânea, conflito, painel aberto e exclusão.
 // BCBR_CAPTURAS=<pasta> grava capturas de tela do tema escuro (Notas, Calendário, Tarefas).
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
@@ -159,8 +160,54 @@ test('Sincronização 1.40: dois aparelhos, fusão por bloco com o editor aberto
     assert.equal(await B.ev("window.__prompt"),0);
   });
 
+  await t.test('1.41 páginas em dois aparelhos: blocos diferentes, campos diferentes e criações simultâneas ficam; mesmo bloco vira conflito; painel aberto recebe o bloco remoto; exclusão fecha o painel',async()=>{
+    assert.ok(await A.confirmado());assert.ok(await B.confirmado());
+    const T0='2026-11-09T00:00:00Z';
+    // A cria a página com dois blocos; B puxa
+    const id=await A.ev("ntPaginaCria()");
+    await A.ev(`pgMuda(l=>{const p=l.find(x=>x.id===${JSON.stringify(id)});p.titulo='Base';p.doc={v:1,blocos:[{id:'pa',atualizado:${JSON.stringify(T0)},conteudo:${JSON.stringify(par('pa','A1'))}},{id:'pb',atualizado:${JSON.stringify(T0)},conteudo:${JSON.stringify(par('pb','B1'))}}]}})`);
+    await A.ate("!ntTemPendentes()&&!NT.sync");
+    await B.ev("smPuxar()");await B.ate(`!!pgAchar(${JSON.stringify(id)})`,4000);
+    const textosNP=d=>d.ev("NP.ed.getJSON().content.map(n=>(n.content||[]).map(x=>x.text).join(''))");
+    const fimNP=(d,texto)=>d.ev(`(()=>{let p=null;NP.ed.state.doc.descendants((n,pos)=>{if(n.isText&&n.text===${JSON.stringify(texto)})p=pos+n.nodeSize});if(p==null)throw Error('texto ausente');NP.ed.chain().focus().setTextSelection(p).run();0})()`);
+    const quieto=async d=>{try{await d.ate("!NP?.sujo&&!ntTemPendentes()&&!NT.sync&&!NT.sujo")}catch(e){throw Error(e.message+JSON.stringify(await d.ev("({np:NP&&NP.sujo,pend:ntTemPendentes(),sync:!!NT.sync,sujo:NT.sujo,err:SM.erro})")))}};
+    // os dois abrem a página; cada um digita num bloco diferente, sem ter puxado a mudança do outro
+    await A.ev(`ntPainelAbre(${JSON.stringify(id)})`);await B.ev(`ntPainelAbre(${JSON.stringify(id)})`);
+    await A.ate("NP.ed.isFocused");await B.ate("NP.ed.isFocused");
+    await fimNP(A,'A1');await A.ate("NP.ed.isFocused");await A.digita('-A');await espera(1300);await quieto(A);
+    await fimNP(B,'B1');await B.ate("NP.ed.isFocused");await B.digita('-B');await espera(1300);await quieto(B);
+    assert.deepEqual((await textosNP(B)).slice(0,2),['A1-A','B1-B'],'B: o painel aberto recebeu o bloco do A e manteve o que ele digitou');
+    assert.equal((await stats()).n409>=1,true,'houve 409 e a fusão refez a gravação');
+    await A.ev("smPuxar()");await A.ate("NP.ed.getText().includes('B1-B')",4000);
+    assert.deepEqual((await textosNP(A)).slice(0,2),['A1-A','B1-B'],'A: idem, nada se perdeu');
+    assert.equal(await A.ev("NP.ed.isFocused"),true,'o painel do A continua com foco');
+    // campos diferentes: A muda o título, B fixa (sem puxar): os dois campos ficam
+    await A.ev(`pgMuda(l=>{const p=l.find(x=>x.id===${JSON.stringify(id)});p.titulo='Título do A';p.atualizado=new Date().toISOString()})`);await quieto(A);
+    await espera(30);await B.ev(`ntPaginaFixa(${JSON.stringify(id)})`);await quieto(B);
+    const pB=await B.ev(`(()=>{const p=pgAchar(${JSON.stringify(id)});return [p.titulo,p.fixada]})()`);assert.deepEqual(pB,['Título do A',true],'título do A + fixada do B');
+    await A.ev("smPuxar()");await A.ate(`pgAchar(${JSON.stringify(id)}).fixada===true`,4000);
+    assert.equal(await A.ev(`document.querySelector('.nt-pan-titulo').value`),'Título do A');
+    // mesmo bloco nos dois: vence o mais novo; o outro vai para notas_conflitos com a página
+    await fimNP(A,'A1-A');await A.ate("NP.ed.isFocused");await A.digita('1');await espera(1300);await quieto(A);
+    await espera(40);await fimNP(B,'A1-A');await B.ate("NP.ed.isFocused");await B.digita('2');await espera(1300);await quieto(B);
+    const confl=await B.ev("(SM.d.notas_conflitos||[]).filter(c=>c.pagina)");assert.equal(confl.length,1,'uma versão guardada');assert.equal(confl[0].pagina,id);assert.match(JSON.stringify(confl[0].conteudo),/A1-A1/);
+    assert.equal((await textosNP(B))[0],'A1-A2','vence o mais novo (B)');
+    // campo desconhecido do plano e criação simultânea de páginas em cada aparelho
+    await B.ev("SM.d.notasPaginas.campoFuturo='fica';0");
+    const ia=await A.ev("ntPaginaCria()"),ib=await B.ev("ntPaginaCria()");await quieto(A);await quieto(B);
+    await A.ev("smPuxar()");await B.ev("smPuxar()");
+    await A.ate(`!!pgAchar(${JSON.stringify(ib)})`,4000);await B.ate(`!!pgAchar(${JSON.stringify(ia)})`,4000);
+    const ids=async d=>(await d.ev("ntPaginas().map(p=>p.id)")).sort();
+    assert.deepEqual(await ids(A),await ids(B),'os dois aparelhos convergiram');assert.equal((await ids(A)).length,3);
+    assert.equal(await A.ev("SM.d.notasPaginas.campoFuturo"),'fica','campo desconhecido do plano preservado pelo outro aparelho');
+    // A exclui a página: o painel aberto do B fecha e a página some do B
+    await A.ev(`ntPaginaExclui(${JSON.stringify(id)})`);await quieto(A);
+    await B.ev("smPuxar()");await B.ate("!document.getElementById('nt_pan')&&!pgAchar("+JSON.stringify(id)+")",4000);
+    assert.equal(await B.ev("ntPaginas().length"),2);
+  });
+
   await t.test('tema Sépia: variáveis nos dois modos escuros, contraste legível e theme-color',async()=>{
-    const SEPIA={bg:'#3a3632',band:'#45403a',card:'#45403a',card2:'#4d4740',tx:'#f3ede4',mut:'#c2b8aa',bd:'#554e46',pri:'#c98a4b','pri-tx':'#e0a96d',ok:'#8fcf7a',warn:'#e6b85c',okbg:'#45503c',badbg:'#55403b',pbg:'#4f4532',ptx:'#f3e3b0',f:'#8fcf7a',m:'#e6b85c'};
+    const SEPIA={bg:'#221e1a',band:'#2f2923',card:'#2f2923',card2:'#3a332b',tx:'#faf4ea',mut:'#d6c8b4',bd:'#463d34',pri:'#f0a75a','pri-tx':'#f5b574',ok:'#9bd886',warn:'#e8bf68',okbg:'#2f3a2a',badbg:'#46302b',pbg:'#3d3425',ptx:'#f3e3b0',f:'#9bd886',m:'#e8bf68'};
     const le=()=>B.ev(`(()=>{const s=getComputedStyle(document.documentElement),o={};for(const k of ${JSON.stringify([...Object.keys(SEPIA),'bad','d','on-pri'])})o[k]=s.getPropertyValue('--'+k).trim();o.esquema=s.colorScheme;return o})()`);
     await B.ev("document.documentElement.dataset.theme='dark'");
     let v=await le();for(const [k,c] of Object.entries(SEPIA))assert.equal(v[k],c,'--'+k);assert.equal(v.esquema,'dark');
@@ -173,8 +220,8 @@ test('Sincronização 1.40: dois aparelhos, fusão por bloco com o editor aberto
     const cr=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
     for(const t of ['tx','mut','pri-tx','ok','bad','warn','d'])for(const f of ['bg','card'])assert.ok(cr(v[t],v[f])>=4.5,`--${t} sobre --${f}: ${cr(v[t],v[f]).toFixed(2)}`);
     assert.ok(cr(v['on-pri'],v.pri)>=4.5,'texto dos botões sobre --pri');
-    assert.equal(await B.ev("document.querySelector('meta[name=theme-color]').content"),'#3a3632');
-    assert.equal(JSON.parse(fs.readFileSync(path.join(raiz,'manifest.webmanifest'),'utf8')).theme_color,'#3a3632');
+    assert.equal(await B.ev("document.querySelector('meta[name=theme-color]').content"),'#2f2923');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(raiz,'manifest.webmanifest'),'utf8')).theme_color,'#2f2923');
     // capturas (opcional)
     const dir=process.env.BCBR_CAPTURAS;
     if(dir){

@@ -11,6 +11,59 @@ const SM={d:null,sha:null,ok:false,erro:'',ed:null,add:{},dr:{},ab:new Set(),sel
 const SM_ARQ='semana/plano.json',SM_VELHO='semana/atual.json';
 try{SM.ab=new Set(JSON.parse(localStorage.getItem('sm_abertas')||'[]'))}catch(e){}
 try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
+// 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
+// SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
+// locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d,null,1):null)}catch(e){}
+const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const SM_MERGE_FORA=new Set(['notasDoc','notasPaginas','notasFrases','notas_conflitos']);
+// Três vias (b = base, l = local, r = remoto). Objetos: por chave; listas de objetos: por id (apagado de um lado e intacto do outro apaga; editado do outro lado fica; itens sem id:
+// os do remoto ficam e os locais novos entram). Escalar mudado dos dois lados: vale o lado cujo item tem \`atualizado\` (ou \`em\`) mais novo; sem carimbo, o local.
+// sb = {desde} quando a base se perdeu: não dá para saber o que o remoto apagou, então só entra item local criado depois de \`desde\` (os ids vêm da hora), nada é ressuscitado.
+const smCarimbo=x=>smPlano(x)?String(x.atualizado||x.em||''):'';
+function smMerge3(b,l,r,topo=true,car=null,sb=null){
+  if(smIgual(l,r))return r;
+  if(l===undefined)return smIgual(b,r)?undefined:r;
+  if(r===undefined)return smIgual(b,l)?undefined:l;
+  if(smIgual(b,l))return r;
+  if(smIgual(b,r))return l;
+  if(smPlano(l)&&smPlano(r)){
+    const o={},bb=smPlano(b)?b:{},cl=smCarimbo(l),cr=smCarimbo(r),c=cl&&cr?{l:cl,r:cr}:car;
+    for(const k of new Set([...Object.keys(r),...Object.keys(l)])){
+      const v=topo&&SM_MERGE_FORA.has(k)?r[k]:smMerge3(bb[k],l[k],r[k],false,c,sb);
+      if(v!==undefined)o[k]=v;
+    }
+    return o;
+  }
+  const objs=a=>Array.isArray(a)&&a.length>0&&a.every(smPlano),temId=x=>typeof x.id==='string';
+  if(objs(l)&&objs(r)&&(b===undefined||Array.isArray(b))&&(l.some(temId)||r.some(temId))){
+    const bl=Array.isArray(b)?b:[],B=new Map(bl.filter(temId).map(x=>[x.id,x])),Lm=new Map(l.filter(temId).map(x=>[x.id,x])),Rm=new Map(r.filter(temId).map(x=>[x.id,x])),out=[];
+    const novoLocal=x=>!sb||(parseInt(x.id.slice(1,9),36)>=sb.desde);   // sem base: só o que nasceu depois de ficar sujo
+    for(const x of r){
+      if(!temId(x)){out.push(x);continue}   // sem id: o remoto fica
+      const v=smMerge3(B.get(x.id),Lm.get(x.id),x,false,null,sb);if(v!==undefined)out.push(v);
+    }
+    for(const x of l){
+      if(!temId(x)){if(!r.some(y=>smIgual(y,x)))out.push(x);continue}   // sem id: o local novo entra (sem repetir)
+      if(!Rm.has(x.id)){const v=smMerge3(B.get(x.id),x,undefined,false,null,sb);if(v!==undefined&&(B.has(x.id)||novoLocal(x)))out.push(v)}
+    }
+    return out;
+  }
+  if(car&&car.l!==car.r)return car.l>car.r?l:r;   // escalar: o item mais recentemente alterado
+  return l;
+}
+// Funde o plano remoto com o local (SM.d) usando a base guardada; sem base, o modo cauteloso acima.
+const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
+function smSujo(sim){
+  SM.sujo=sim;
+  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
+}
+// Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
+function smEnviaSujo(){
+  if(!SM.d||!SM.sujo||SM.enviandoSujo||navigator.onLine===false)return;
+  SM.enviandoSujo=true;smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false});
+}
 const smDec=s=>decodeURIComponent(escape(atob(String(s).replace(/\n/g,''))));
 const smId=()=>'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const smHoje=()=>dKey(Date.now());
@@ -33,7 +86,7 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
 // 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
   if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
-  try{await smPuxar1()}finally{SM.puxando=0}
+  try{await smPuxar1()}finally{SM.puxando=0;smEnviaSujo()}
 }
 async function smPuxar1(){
   smAgendaPuxar();
@@ -46,7 +99,9 @@ async function smPuxar1(){
     SM.etag=f.etag;
     if(f.sha!==SM.sha){
       if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
-      SM.d=JSON.parse(smDec(f.content));if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
+      const texto=smDec(f.content),remoto=JSON.parse(texto);
+      SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
+      if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
   }catch(e){
     SM.ok=true;
     if(e.status===404){
@@ -70,18 +125,18 @@ function smMudar(fn,msg,aoSalvar){
       try{
         grupo.forEach(g=>g.fn(SM.d));
         if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
-        const body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(JSON.stringify(SM.d,null,1)),branch:'main'};if(SM.sha)body.sha=SM.sha;
-        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos;
+        const texto=JSON.stringify(SM.d,null,1),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
+        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[];   // o que subiu: páginas criadas durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
-        SM.gravs++;SM.sha=r.content.sha;SM.erro='';smGuardaCache();smNativoTarefas();
-        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos);   // o que subiu é a última versão sincronizada das notas
+        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
+        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);if(typeof ntAntes==='function')ntAntes();SM.d=JSON.parse(smDec(f.content));SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
-        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smRender();return fim(false);
+        if(e.status===409||e.status===422){try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
+        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
       }
     }
     SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smRender();return fim(false);

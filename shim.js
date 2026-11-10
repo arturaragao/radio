@@ -45,7 +45,7 @@
   function telaConfig(msg) {
     configAberta = true;
     document.getElementById("app").innerHTML = `<div class="card" style="max-width:560px;margin:24px auto">
-      <h2>Banco CBR — configurar este aparelho</h2>
+      <h2>Radio — configurar este aparelho</h2>
       <p class="mut">Uma vez por aparelho. As chaves ficam só aqui.</p>
       ${msg ? `<p style="color:var(--bad)">${msg}</p>` : ""}
       <label style="display:block;margin-top:10px"><b>Chave do GitHub</b> (fine-grained, repositório <b>banco-cbr-app</b>, Contents: Read and write)
@@ -64,10 +64,12 @@
 
   async function api(path, opt = {}) {
     const chave = tok();
-    const r = await fetch(API + path, {
+    let r;
+    try { r = await fetch(API + path, {
       ...opt, cache: "no-store",
       headers: { Authorization: "Bearer " + chave, Accept: opt.accept === "raw" ? "application/vnd.github.raw" : opt.accept || "application/vnd.github+json", ...(opt.body ? { "Content-Type": "application/json" } : {}), ...(opt.etag ? { "If-None-Match": opt.etag } : {}) },
-    });
+    }); } catch (e) { window.BCBR.semRede = true; throw e; }   // 1.42: falha de rede (mesmo com navigator.onLine verdadeiro) alimenta o indicador offline
+    window.BCBR.semRede = false;
     // 1.40: cota do GitHub (BCBR.cota) para o ciclo rápido da Semana/Notas voltar a 90 s se faltar; opt.etag = GET condicional (304 não gasta cota).
     const rest = r.headers?.get?.("x-ratelimit-remaining");
     if (rest != null) window.BCBR.cota = { rest: +rest, reset: +r.headers?.get?.("x-ratelimit-reset") || 0 };
@@ -210,8 +212,9 @@
   window.claude = { use: async (k) => (k === "db" ? DBshim : k === "sample" ? (localStorage.getItem(LS.gm) ? gemini : null) : null) };
 
   // ---------- baixar tudo (offline) ----------
-  window.BCBR.baixarTudo = async (aoAndar) => {
-    const fs = [...new Set((window.QUESTOES || []).flatMap((q) => [...q.imgs, ...q.imgsCom]).map((u) => u.slice(3)))];
+  window.BCBR.baixarTudo = async (aoAndar, extras = []) => {   // extras: imagens das notas (nomes de arquivo)
+    if ("serviceWorker" in navigator) await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 4000))]).catch(() => {});   // as imagens passam pelo SW, que guarda no aparelho
+    const fs = [...new Set([...(window.QUESTOES || []).flatMap((q) => [...q.imgs, ...q.imgsCom]).map((u) => u.slice(3)), ...extras])];
     let n = 0;
     for (let i = 0; i < fs.length; i += 6) {
       await Promise.all(fs.slice(i, i + 6).map((f) => fetch("./img/" + encodeURIComponent(f)).catch(() => {})));

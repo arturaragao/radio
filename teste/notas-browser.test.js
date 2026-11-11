@@ -107,18 +107,19 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await tab(true);assert.equal(await ev("document.querySelectorAll('.nt-pm ul ul').length"),0);
   });
 
-  await t.test('Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+Shift+S e Ctrl+Shift+H (última cor, padrão fundo amarelo)',async()=>{
+  await t.test('Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+Shift+S e Ctrl+Shift+H (cor padrão, sem escolha fundo amarelo)',async()=>{
     await reset(par('marcas'));await ev("NT.ed.commands.selectAll()");
     const marcas=async()=>((await topo())[0].content[0].marks||[]).map(m=>m.type+(m.attrs?.backgroundColor?':'+m.attrs.backgroundColor:'')+(m.attrs?.color?':'+m.attrs.color:'')).sort();
     await ctrl('b');await ctrl('i');await ctrl('u');await ctrl('s',true);
     assert.deepEqual(await marcas(),['bold','italic','strike','underline']);
     await espera(150);assert.equal(await ev("getComputedStyle(NT.bolha).display"),'none','1.41: sem bolha ao selecionar texto');
-    await ev("localStorage.removeItem('bcbr_nt_cor')");
+    await ev("localStorage.removeItem('bcbr_nt_cor');localStorage.removeItem('bcbr_nt_cor_padrao')");
     await reset(par('cor'));await ev("NT.ed.commands.selectAll()");
     await ctrl('h',true);assert.ok((await marcas()).some(m=>/textStyle:var\(--ntb-amarelo\)/.test(m)),'padrão: fundo amarelo '+await marcas());
     await ev("ntAplicaCor(NT.ed,'texto','azul')");
+    await ev("ntCorPadraoSet('texto','azul')");
     await reset(par('outra'));await ev("NT.ed.commands.selectAll()");await ctrl('h',true);
-    assert.ok((await marcas()).some(m=>/var\(--ntc-azul\)/.test(m)),'aplica a última cor usada: '+await marcas());
+    assert.ok((await marcas()).some(m=>/var\(--ntc-azul\)/.test(m)),'aplica a cor definida como padrão: '+await marcas());
     // pela barrinha: paleta
     await ev("NT.barra.querySelector('[data-m=\"cor\"]').click()");
     assert.equal(await ev("!NT.barra.querySelector('.nt-paleta').hidden&&NT.barra.querySelectorAll('.nt-sw').length"),18,'9 cores de texto + 9 de fundo (paleta da barra fixa)');
@@ -290,7 +291,9 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     const g=await ev("(()=>{const h=document.querySelector('.nt-topo h2').getBoundingClientRect(),b=document.querySelector('.nt-barra').getBoundingClientRect(),t=document.querySelector('.nt-topo').getBoundingClientRect();return {hx:h.right,hy:h.top+h.height/2,bx:b.left,by:b.top,bh:b.height,tt:t.top,esq:h.left}})()");
     assert.ok(g.bx>=g.hx-1&&g.by<g.hy&&g.by+g.bh>g.hy,'a barra está na mesma fileira do título "Notas", à direita dele: '+JSON.stringify(g));
     assert.ok(g.esq<80,'no canto superior esquerdo');
-    for(const m of ['bold','italic','underline','strike','link','cor','h1','h2','h3','bullet','ordered','task','tgl','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
+    for(const m of ['bold','italic','underline','strike','cor','frase','frases','hist','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
+    for(const m of ['link','h1','h2','h3','bullet','ordered','task','tgl'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),false,'1.43: o botão '+m+' saiu da barra');
+    assert.equal(await ev("document.querySelectorAll('.nt-barra-l [data-m]').length"),9,'ficam B I U S, cor, frase, frases, histórico e atalhos');
   });
 
   await t.test('1.41 a barra formata a seleção sem tirar o foco nem a seleção do editor; botões acesos mostram o estado',async()=>{
@@ -311,20 +314,10 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await click('.nt-paleta [data-cor="fundo:amarelo"]');
     assert.ok((await marcas()).includes('textStyle:var(--ntb-amarelo)'),'realce aplicado: '+await marcas());
     assert.equal(await ev("document.querySelector('.nt-paleta').hidden&&NT.ed.isFocused"),true,'paleta fecha e o foco fica no editor');
-    // títulos, listas, checklist, toggle
-    await reset(par('titulo'));await irFim('titulo');await click(barra('.nt-barra','h2'));
-    assert.equal((await topo())[0].type,'heading');assert.equal((await topo())[0].attrs.level,2);
-    assert.equal(await ev("document.querySelector('.nt-barra [data-m=\"h2\"]').classList.contains('on')&&!document.querySelector('.nt-barra [data-m=\"h1\"]').classList.contains('on')"),true,'H2 aceso e H1 apagado');
-    await click(barra('.nt-barra','h2'));assert.equal((await topo())[0].type,'paragraph','de novo volta a texto');
-    for(const [m,tipo] of [['bullet','bulletList'],['ordered','orderedList'],['task','taskList'],['tgl','details']]){
-      await reset(par('x'));await irFim('x');await click(barra('.nt-barra',m));
-      assert.equal((await tipos())[0],tipo,m);
-      assert.equal(await ev(`document.querySelector('.nt-barra [data-m="${m}"]').classList.contains('on')`),true,m+' aceso');
-      assert.equal(await ev("NT.ed.isFocused"),true,m+': foco no editor');
-    }
-    // link: campo ao lado do botão (sem prompt)
-    await reset(par('texto do link'));await ev("NT.ed.commands.selectAll()");await click(barra('.nt-barra','link'));
-    assert.equal(await ev("!document.querySelector('.nt-link').hidden&&document.activeElement===document.querySelector('.nt-link-in')"),true,'campo do link com foco');
+    // 1.43: títulos, link, listas, checklist e toggle saíram da barra; os atalhos de teclado e o menu "/" continuam
+    // link: Ctrl+K abre o campo ao lado da paleta (prompt() não existe no WebView)
+    await reset(par('texto do link'));await ev("NT.ed.commands.selectAll()");await ctrl('k');
+    assert.equal(await ev("!document.querySelector('.nt-link').hidden&&document.activeElement===document.querySelector('.nt-link-in')"),true,'campo do link com foco (Ctrl+K)');
     await digita('exemplo.com');await enter();await aguarda("NT.ed.isFocused");
     assert.equal((await topo())[0].content[0].marks[0].attrs.href,'https://exemplo.com');assert.equal(await ev("NT.ed.isFocused"),true,'foco volta ao editor depois do link');
     // botão sem seleção: nada quebra, e o foco volta
@@ -471,6 +464,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.deepEqual(await secao('pg'),['Gama','Alfa','Beta'],'desafixada vai para o fim de Páginas');assert.equal(await ev("!document.querySelector('.nt-pg-lista[data-sec=\"fix\"]')"),true);
     // recolher e expandir (estado por aparelho)
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display"),'none');assert.equal(await ev("localStorage.getItem('bcbr_nt_lat')"),'0');
+    await aguarda("!!document.querySelector('.nt-pm')");   // (a aba é redesenhada depois de fechar o painel: espera o editor voltar)
     const larg=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(larg>=930,'com a barra lateral recolhida o texto usa quase toda a largura (1000 px): '+larg);
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display!=='none'&&localStorage.getItem('bcbr_nt_lat')"),'1');
   });

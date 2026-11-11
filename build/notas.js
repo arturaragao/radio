@@ -8,10 +8,12 @@
 // SM.d.notasPaginas={v:1,paginas:[{id,titulo,fixada,ordem,criado,atualizado,doc:{v:1,blocos}}]} no mesmo plano, mesma fila (NT_PEND leva
 // `paginas` ao lado de `blocos`), mesma fusão por bloco (ntFunde) e fusão por campo (título/fixada/ordem: o mais recente) em ntFundePaginas.
 // Cada editor tem um contexto (NT = página principal, NP = painel de uma página, aberto só enquanto o painel existe).
+// 1.43: barra fixa só com B I U S, cor/realce (com cor padrão do Ctrl+Shift+H), frases, histórico e Atalhos; barra lateral por hover e com largura ajustável;
+// sem "Recentes"; página/Notas em aba própria do navegador (?pagina=<id>), várias abas dividindo o mesmo localStorage (base de fusão por aba, ver NTB).
 const ntCtx=()=>({ed:null,el:null,timer:null,shown:null,sujo:false,posImg:null,alvo:null,barra:null,bolha:null,buscaEl:null,grupoArrasto:null});
 const NT={...ntCtx(),sync:null};
 let NP=null;
-const NT_PEND='bcbr_notasdoc_pendente',NT_ABERTOS='bcbr_nt_abertos',NT_COR='bcbr_nt_cor',NT_BASE='bcbr_notas_base',NT_BASE_P='bcbr_notaspag_base',NT_LAT='bcbr_nt_lat',NT_BASE_F='bcbr_notasfrases_base',NT_REC='bcbr_nt_recentes',NT_MAX_CONFLITOS=20;
+const NT_PEND='bcbr_notasdoc_pendente',NT_ABERTOS='bcbr_nt_abertos',NT_COR='bcbr_nt_cor',NT_BASE='bcbr_notas_base_v143',NT_BASE_P='bcbr_notaspag_base_v143',NT_LAT='bcbr_nt_lat',NT_BASE_F='bcbr_notasfrases_base_v143',NT_COR_PAD='bcbr_nt_cor_padrao',NT_LATW='bcbr_nt_latw',NT_MAX_CONFLITOS=20;
 
 // ===== Funções puras: documento <-> blocos, migração das notas antigas =====
 const ntNovoId=()=>'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -73,26 +75,40 @@ function ntFunde(base,local,remoto,agora=new Date().toISOString()){
 }
 // Lista de conflitos do plano (SM.d.notas_conflitos): sem repetir (id+data), só os 20 mais recentes.
 function ntJuntaConflitos(a,b){
-  const vistos=new Set(),out=[];
-  for(const c of [...(a||[]),...(b||[])]){const k=c.id+'|'+c.em;if(!vistos.has(k)){vistos.add(k);out.push(c)}}
+  const vistos=new Set(),versoes=new Set(),out=[];
+  for(const c of [...(a||[]),...(b||[])]){const k=c.id+'|'+c.em,v=c.conteudo===undefined?k:JSON.stringify([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);if(!vistos.has(k)&&!versoes.has(v)){vistos.add(k);versoes.add(v);out.push(c)}}
   return out.slice(-NT_MAX_CONFLITOS);
 }
-function ntBaseLer(){try{const b=JSON.parse(localStorage.getItem(NT_BASE)||'null');return Array.isArray(b)?b:null}catch(e){return null}}
-// Base = última versão sincronizada (blocos da página principal e lista de páginas). Sem `paginas`, vale o plano atual (chamada de smMudar após o PUT).
-function ntBaseSalva(blocos,paginas=SM.d?.notasPaginas?.paginas||[],frases=SM.d?.notasFrases||[]){
-  if(Array.isArray(blocos))try{localStorage.setItem(NT_BASE,JSON.stringify(blocos))}catch(e){}
-  pgBaseSalva(paginas);frBaseSalva(frases);
+// 1.43: a base de CADA aba fica na memória (NTB); o localStorage só dá a partida ao abrir a aba. Com várias abas abertas, outra aba que sobe ao GitHub
+// regrava a chave compartilhada: se esta aba lesse a base de lá, o que ela ainda não viu pareceria "alteração local" e reverteria o texto da outra.
+const NT_BASE_PT='bcbr_notaspastas_base_v143',NT_PT_FECHADAS='bcbr_nt_pastas_fechadas';
+// 1.43 nunca altera/remove as bases da 1.42: abas antigas ainda podem usá-las e atualizá-las.
+const NT_BASES_ANTIGAS=['bcbr_notas_base','bcbr_notaspag_base','bcbr_notasfrases_base','bcbr_notaspastas_base'];
+function ntBasesInicia(){
+  for(const antiga of NT_BASES_ANTIGAS){const nova=antiga+'_v143';if(localStorage.getItem(nova)===null){const raw=localStorage.getItem(antiga);if(raw!==null)localStorage.setItem(nova,raw)}}
+  NT.basesProntas=true;
 }
-function frBaseLer(){try{const b=JSON.parse(localStorage.getItem(NT_BASE_F)||'null');return Array.isArray(b)?b:null}catch(e){return null}}
-function frBaseSalva(l){if(Array.isArray(l))try{localStorage.setItem(NT_BASE_F,JSON.stringify(l))}catch(e){}}
-function pgBaseLer(){try{const b=JSON.parse(localStorage.getItem(NT_BASE_P)||'null');return Array.isArray(b)?b:null}catch(e){return null}}
+const NTB={b:undefined,p:undefined,f:undefined,pt:undefined};
+const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
+function ntBaseLer(){if(NTB.b===undefined)NTB.b=ntLsLista(NT_BASE);return NTB.b}
+// Base = última versão sincronizada (blocos da página principal e lista de páginas). Sem `paginas`, vale o plano atual (chamada de smMudar após o PUT).
+function ntBaseSalva(blocos,paginas=SM.d?.notasPaginas?.paginas||[],frases=SM.d?.notasFrases||[],pastas=SM.d?.notasPaginas?.pastas){
+  if(NT.legado)return;
+  if(Array.isArray(blocos)){NTB.b=blocos;try{localStorage.setItem(NT_BASE,JSON.stringify(blocos))}catch(e){}}
+  pgBaseSalva(paginas);frBaseSalva(frases);ptBaseSalva(pastas);
+}
+function ptBaseLer(){if(NTB.pt===undefined)NTB.pt=ntLsLista(NT_BASE_PT);return NTB.pt}
+function ptBaseSalva(l){if(Array.isArray(l)){NTB.pt=l;try{localStorage.setItem(NT_BASE_PT,JSON.stringify(l))}catch(e){}}}
+function frBaseLer(){if(NTB.f===undefined)NTB.f=ntLsLista(NT_BASE_F);return NTB.f}
+function frBaseSalva(l){if(Array.isArray(l)){NTB.f=l;try{localStorage.setItem(NT_BASE_F,JSON.stringify(l))}catch(e){}}}
+function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.p}
 
 // ===== Páginas: fusão três vias da lista (página nova/apagada/editada) e por campo (título, fixada, ordem) =====
 // Campo que mudou só de um lado: fica essa mudança. Dos dois e diferente: vale o de `atualizado` maior (empate: o remoto). Os blocos da página
 // passam por ntFunde (mesma regra das notas). Página apagada de um lado e intacta do outro: apaga; se foi editada do outro lado, a edição fica.
 // Campos desconhecidos (de versões futuras) são preservados: o objeto da página é copiado inteiro, só os campos conhecidos são decididos.
-const NT_PG_CAMPOS=['titulo','fixada','ordem'];
-function ntFundePaginas(base,local,remoto,agora=new Date().toISOString()){
+const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta'];
+function ntFundePaginas(base,local,remoto,agora=new Date().toISOString(),pastas=false){
   const lim=l=>(Array.isArray(l)?l:[]).filter(p=>p&&typeof p==='object'&&typeof p.id==='string');
   base=lim(base);local=lim(local);remoto=lim(remoto);
   const mapa=l=>new Map(l.map(p=>[p.id,p])),B=mapa(base),L=mapa(local),R=mapa(remoto),res=[],conflitos=[];
@@ -103,13 +119,14 @@ function ntFundePaginas(base,local,remoto,agora=new Date().toISOString()){
       if(ntIgual(l,r))v=r;
       else{
         const localNovo=String(l.atualizado||'')>String(r.atualizado||'');v={...l,...r};
-        for(const k of NT_PG_CAMPOS){
+        for(const k of pastas?['titulo','ordem']:NT_PG_CAMPOS){
+          if(k==='pasta'&&(l[k]===undefined||r[k]===undefined)){v[k]=l[k]??r[k]??b?.[k]??'';continue} // aparelho antigo não apaga a classificação
           const lm=!b||!ntIgual(b[k],l[k]),rm=!b||!ntIgual(b[k],r[k]);
           v[k]=lm&&!rm?l[k]:rm&&!lm?r[k]:localNovo?l[k]:r[k];
         }
-        const f=ntFunde(blocos(b),blocos(l),blocos(r),agora);
-        v.doc={v:1,blocos:f.blocos};v.atualizado=localNovo?l.atualizado:r.atualizado;
-        conflitos.push(...f.conflitos.map(c=>({...c,pagina:id})));
+        if(!pastas){const f=ntFunde(blocos(b),blocos(l),blocos(r),agora);
+          v.doc={v:1,blocos:f.blocos};conflitos.push(...f.conflitos.map(c=>({...c,pagina:id})));}
+        v.atualizado=localNovo?l.atualizado:r.atualizado;
       }
     }else if(l||r){const x=l||r;if(!b||!ntIgual(b,x))v=x}
     if(v)res.push(v);
@@ -130,8 +147,10 @@ function ntFundeFrases(base,local,remoto){
   }
   return res;
 }
-function pgBaseSalva(paginas){if(Array.isArray(paginas))try{localStorage.setItem(NT_BASE_P,JSON.stringify(paginas))}catch(e){}}
+function pgBaseSalva(paginas){if(Array.isArray(paginas)){NTB.p=paginas;try{localStorage.setItem(NT_BASE_P,JSON.stringify(paginas))}catch(e){}}}
 const ntPaginas=()=>Array.isArray(SM.d?.notasPaginas?.paginas)?SM.d.notasPaginas.paginas:[];
+const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
+const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
 const ntPgOrdem=(a,b)=>(Number(a.ordem)||0)-(Number(b.ordem)||0)||String(a.criado).localeCompare(String(b.criado))||String(a.id).localeCompare(String(b.id));
 
@@ -178,30 +197,107 @@ function ntMigra(d){
 }
 
 // ===== Fila de salvamento: o documento pendente fica no aparelho até o GitHub confirmar =====
-function ntPendentes(){
-  try{const p=JSON.parse(localStorage.getItem(NT_PEND)||'null');return p&&Array.isArray(p.blocos)?[p]:[]}catch(e){return []}
+function ntFilaInvalida(k,raw){
+  if(!NT.filaRuim){NT.filaRuim=true;toast('Uma alteração local está corrompida. A cópia vai para notas_conflitos; as demais continuam salvas.')}
+  return {base:[],em:0,conflitos:[{id:k,em:new Date(0).toISOString(),conteudo:raw,motivo:'entrada da fila inválida ou corrompida'}]};
 }
-function ntTemPendentes(){return ntPendentes().length>0}
-// Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco (a fusão vira o novo pendente).
+// Único caminho do legado: releitura e cópia das bases do disco DENTRO da trava, nunca das bases em memória da aba.
+// Sem Web Locks, o legado fica intacto e apenas a fila nova funciona.
+const NT_LEGADO_OK=NT_PEND+'_v143_legado_ok';
+function ntLegadoChave(raw){
+  let h=14695981039346656037n;
+  for(let i=0;i<raw.length;i++)h=BigInt.asUintN(64,(h^BigInt(raw.charCodeAt(i)))*1099511628211n);
+  return NT_PEND+':legado:'+h.toString(16);
+}
+function ntMigraLegado(){
+  if(NT.migrando)return NT.migrando;
+  const migra=()=>{
+    try{
+      ntBasesInicia();
+      const raw=localStorage.getItem(NT_PEND);
+      if(raw===null){NT.legado=false;return}
+      const k=ntLegadoChave(raw);
+      const confirmada=(ntLsLista(NT_LEGADO_OK)||[]).includes(k.split(':').pop());
+      if(!confirmada&&localStorage.getItem(k)===null){
+        let op;
+        try{op=JSON.parse(raw);if(!Array.isArray(op?.blocos))throw Error('formato')}
+        catch(e){op=ntFilaInvalida(NT_PEND,raw)}
+        const [base,basePaginas,baseFrases,basePastas]=NT_BASES_ANTIGAS.map(k=>ntLsLista(k)||[]);
+        op={...op,base,basePaginas,baseFrases,basePastas,legadoRaw:raw,em:Number.isFinite(op.em)?op.em:0};
+        localStorage.setItem(k,JSON.stringify(op));
+      }
+      if(!confirmada&&JSON.parse(localStorage.getItem(k)).legadoRaw!==raw)throw Error('colisão de revisão');
+      // A 1.43 nunca escreve nem apaga o legado; só registra os hashes confirmados pelo PUT.
+      NT.legadoRaw=raw;NT.legadoChave=k;NT.legado=false;
+    }catch(e){NT.legado=true;if(!NT.filaCheia){NT.filaCheia=true;toast('Sem espaço para migrar as notas neste aparelho. A fila antiga foi mantida.')}}
+  };
+  // Fora da trava só detecta mudança; os bytes e bases usados na cópia são relidos dentro dela.
+  const visto=localStorage.getItem(NT_PEND),pendente=visto!==null&&(visto!==NT.legadoRaw||(localStorage.getItem(NT.legadoChave)===null&&!(ntLsLista(NT_LEGADO_OK)||[]).includes(NT.legadoChave?.split(':').pop())));
+  if(NT.basesProntas&&!pendente){NT.legado=false;return}
+  if(typeof navigator.locks?.request!=='function'){
+    try{if(!NT.basesProntas)ntBasesInicia()}catch(e){}   // apenas copia bases congeladas; nunca migra sem locks
+    NT.legado=false;
+    if(pendente&&!NT.avisoLegado){NT.avisoLegado=true;toast('Há uma edição antiga das Notas guardada neste aparelho. Abra o Radio no Chrome atualizado para recuperá-la.')}
+    return;
+  }
+  NT.migrando=navigator.locks.request('radio-notas-migra-legado',{mode:'exclusive'},migra)
+    .catch(()=>{NT.legado=true;toast('Não foi possível migrar as notas neste aparelho. Tente novamente.')})
+    .finally(()=>{NT.migrando=null});
+  return NT.migrando;
+}
+function ntPendentes(){
+  try{
+    if(ntMigraLegado()||NT.legado)return [];
+    const filas=[];
+    const chaves=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(NT_PEND+':'))chaves.push(k)}
+    for(const k of chaves){const raw=localStorage.getItem(k);if(raw===null)continue;try{const op=JSON.parse(raw);if(!Array.isArray(op?.base)||!Number.isFinite(op.em)||!Number.isFinite(new Date(op.em).getTime())||!['blocos','paginas','frases','pastas','conflitos'].some(c=>Array.isArray(op[c])))throw Error('formato');filas.push({k,raw,op})}catch(e){filas.push({k,raw,op:ntFilaInvalida(k,raw)})}}
+    filas.sort((a,b)=>a.op.em-b.op.em||a.k.localeCompare(b.k));
+    if(!filas.length)return [];
+    const res={blocos:ntBaseLer()||SM.d?.notasDoc?.blocos||[],paginas:pgBaseLer()||ntPaginas(),frases:frBaseLer()||SM.d?.notasFrases||[],pastas:ptBaseLer()||ntPastas(),filas};
+    for(const {op} of filas){
+      const em=new Date(op.em).toISOString();let f;
+      res.conflitos=ntJuntaConflitos(res.conflitos,op.conflitos);
+      if(op.blocos) {f=ntFunde(op.base,op.blocos,res.blocos,em);res.blocos=f.blocos;res.conflitos=ntJuntaConflitos(res.conflitos,f.conflitos)}
+      if(op.paginas){f=ntFundePaginas(op.basePaginas||op.base,op.paginas,res.paginas,em);res.paginas=f.paginas;res.conflitos=ntJuntaConflitos(res.conflitos,f.conflitos)}
+      if(op.frases)res.frases=ntFundeFrases(op.baseFrases||op.base,op.frases,res.frases);
+      if(op.pastas)res.pastas=ntFundePaginas(op.basePastas||op.base,op.pastas,res.pastas,em,true).paginas;
+      res.em=op.em;
+    }
+    return [res];
+  }catch(e){return []}
+}
+// Cada edição tem uma entrada imutável, com sua própria base. Duas abas nunca escrevem/apagam a entrada uma da outra.
+// NT_PEND antigo continua legível; as entradas novas usam o mesmo prefixo. Só as entradas confirmadas pelo PUT são retiradas.
+function ntFilaGrava(campo,base,valor,extra={}){
+  if(ntMigraLegado()||NT.legado)return false;
+  const em=Math.max(Date.now(),(ntPendentes()[0]?.em||0)+1);
+  try{localStorage.setItem(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
+  catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+}
+function ntTemPendentes(){return ntPendentes().length>0||!!NT.migrando||!!NT.legado}
+// Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco; as entradas originais ficam até o PUT confirmar.
 function ntAplica(d,ops){
   if(!ops||!ops.length){ntMigra(d);return}
-  const p=ops[ops.length-1],r=d.notasDoc?.blocos,rp=d.notasPaginas?.paginas;let fundiu=false,confl=0;
+  const p=ops[ops.length-1],r=d.notasDoc?.blocos,rp=d.notasPaginas?.paginas;let confl=0;
   if(Array.isArray(r)&&JSON.stringify(r)!==JSON.stringify(p.blocos)){
     const f=ntFunde(ntBaseLer(),p.blocos,r);
-    p.blocos=f.blocos;p.conflitos=ntJuntaConflitos(p.conflitos,f.conflitos);fundiu=true;confl+=f.conflitos.length;
+    p.blocos=f.blocos;p.conflitos=ntJuntaConflitos(p.conflitos,f.conflitos);confl+=f.conflitos.length;
   }
   if(Array.isArray(p.paginas)){   // páginas pendentes: funde com as do GitHub (se outro aparelho mexeu) e ficam no plano
     if(Array.isArray(rp)&&JSON.stringify(rp)!==JSON.stringify(p.paginas)){
       const f=ntFundePaginas(pgBaseLer(),p.paginas,rp);
-      p.paginas=f.paginas;p.conflitos=ntJuntaConflitos(p.conflitos,f.conflitos);fundiu=true;confl+=f.conflitos.length;
+      p.paginas=f.paginas;p.conflitos=ntJuntaConflitos(p.conflitos,f.conflitos);confl+=f.conflitos.length;
     }
     d.notasPaginas={...d.notasPaginas,v:1,paginas:p.paginas};
   }
   if(Array.isArray(p.frases)){   // frases-padrão pendentes: funde com as do GitHub
-    if(Array.isArray(d.notasFrases)&&JSON.stringify(d.notasFrases)!==JSON.stringify(p.frases)){p.frases=ntFundeFrases(frBaseLer(),p.frases,d.notasFrases);fundiu=true}
+    if(Array.isArray(d.notasFrases)&&JSON.stringify(d.notasFrases)!==JSON.stringify(p.frases))p.frases=ntFundeFrases(frBaseLer(),p.frases,d.notasFrases);
     d.notasFrases=p.frases;
   }
-  if(fundiu)try{localStorage.setItem(NT_PEND,JSON.stringify(p))}catch(e){}
+  if(Array.isArray(p.pastas)){
+    if(Array.isArray(d.notasPaginas?.pastas))p.pastas=ntFundePaginas(ptBaseLer(),p.pastas,d.notasPaginas.pastas,undefined,true).paginas;
+    d.notasPaginas={...d.notasPaginas,v:1,pastas:p.pastas};
+  }
   if(confl&&typeof toast==='function')toast('Nota editada nos dois aparelhos: guardei a versão mais antiga em notas_conflitos.');
   d.notasDoc={v:1,blocos:p.blocos};
   if(p.conflitos?.length)d.notas_conflitos=ntJuntaConflitos(d.notas_conflitos,p.conflitos);
@@ -210,17 +306,27 @@ function ntAplica(d,ops){
 function ntAntes(){if(NT.ed&&NT.sujo)ntSalvaDoc();if(NP?.ed&&NP.sujo)pgSalvaDoc()}
 // `d` = plano recém-baixado do GitHub, já em SM.d: funde o pendente, guarda a base e mostra no editor só o que mudou.
 function ntRecebe(d){
-  const r=d.notasDoc?.blocos,rp=d.notasPaginas?.paginas||[],rf=d.notasFrases||[];ntAplica(d,ntPendentes());
-  ntBaseSalva(r,rp,rf);
+  const espera=ntMigraLegado();if(espera)return espera.then(()=>{if(!NT.legado)ntRecebe(d)});if(NT.legado)return;
+  const r=d.notasDoc?.blocos,rp=d.notasPaginas?.paginas||[],rf=d.notasFrases||[],pt=d.notasPaginas?.pastas;ntAplica(d,ntPendentes());
+  ntBaseSalva(r,rp,rf,pt||null);
   ntSincroniza();
 }
-const ntConfirmada=(salvo,op)=>JSON.stringify(salvo.notasDoc?.blocos)===JSON.stringify(op.blocos)&&(!Array.isArray(op.paginas)||JSON.stringify(salvo.notasPaginas?.paginas)===JSON.stringify(op.paginas))&&(!Array.isArray(op.frases)||JSON.stringify(salvo.notasFrases)===JSON.stringify(op.frases));
+const ntConfirmada=(salvo,op)=>JSON.stringify(salvo.notasDoc?.blocos)===JSON.stringify(op.blocos)&&(!Array.isArray(op.paginas)||JSON.stringify(salvo.notasPaginas?.paginas)===JSON.stringify(op.paginas))&&(!Array.isArray(op.frases)||JSON.stringify(salvo.notasFrases)===JSON.stringify(op.frases))&&(!Array.isArray(op.pastas)||JSON.stringify(salvo.notasPaginas?.pastas)===JSON.stringify(op.pastas))&&(op.conflitos||[]).every(c=>(salvo.notas_conflitos||[]).some(s=>ntIgual({...s,em:null},{...c,em:null})));
 function ntSync(){
+  const espera=ntMigraLegado();if(espera)return espera.then(()=>NT.legado?false:ntSync());if(NT.legado)return Promise.resolve(false);
   if(NT.sync)return NT.sync;
   const ops=ntPendentes();if(!ops.length||!SM.d)return Promise.resolve(!ops.length);
   NT.sync=smMudar(d=>ntAplica(d,ntPendentes()),'notas',salvo=>{
     // Só limpa se o que subiu é o mesmo documento que estava pendente (edição nova durante o envio continua na fila).
-    const atual=ntPendentes()[0];if(atual&&atual.em===ops[0].em&&ntConfirmada(salvo,atual))localStorage.removeItem(NT_PEND);
+    const atual=ntPendentes()[0];if(atual&&ntConfirmada(salvo,atual)){
+      for(const f of atual.filas||[])if(localStorage.getItem(f.k)===f.raw){
+        if(typeof f.op.legadoRaw==='string'){
+          const hash=ntLegadoChave(f.op.legadoRaw).split(':').pop();
+          localStorage.setItem(NT_LEGADO_OK,JSON.stringify([...(ntLsLista(NT_LEGADO_OK)||[]).filter(h=>h!==hash),hash].slice(-20)));
+        }
+        localStorage.removeItem(f.k);
+      }
+    }
   }).finally(()=>{NT.sync=null;if(ntTemPendentes()&&!SM.erro){clearTimeout(NT.retry);NT.retry=setTimeout(ntSync,700)}});
   return NT.sync;
 }
@@ -230,8 +336,7 @@ function ntSalvaDoc(){
   const ant=NT.shown||SM.d.notasDoc?.blocos||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;   // compara com o que o editor mostrava, não com o plano (que pode ter vindo de outro aparelho)
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
-  const prev=ntPendentes()[0];   // (guarda também as páginas pendentes)
-  try{localStorage.setItem(NT_PEND,JSON.stringify({...prev,blocos,em:Date.now(),conflitos:prev?.conflitos||[]}))}catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return}
+  if(!ntFilaGrava('blocos',ant,blocos)){NT.sujo=true;return}
   NT.shown=blocos;SM.d.notasDoc={v:1,blocos};smGuardaCache();ntSync();
 }
 
@@ -259,7 +364,12 @@ function ntToggleCursor(c){
 
 // ===== Paleta de cores (Notion); o documento guarda var(--ntc-…)/var(--ntb-…), definidas no CSS por tema =====
 const NT_CORES=[['cinza','Cinza'],['marrom','Marrom'],['laranja','Laranja'],['amarelo','Amarelo'],['verde','Verde'],['azul','Azul'],['roxo','Roxo'],['rosa','Rosa'],['vermelho','Vermelho']];
-function ntUltimaCor(){try{const c=JSON.parse(localStorage.getItem(NT_COR)||'null');if(c&&['texto','fundo'].includes(c.tipo)&&NT_CORES.some(x=>x[0]===c.cor))return c}catch(e){}return {tipo:'fundo',cor:'amarelo'}}
+// Cor padrão do Ctrl+Shift+H (por aparelho): qualquer cor de texto ou de fundo marcada com ★ na paleta. Sem padrão, fundo amarelo.
+function ntCorPadrao(){try{const c=JSON.parse(localStorage.getItem(NT_COR_PAD)||'null');if(c&&['texto','fundo'].includes(c.tipo)&&NT_CORES.some(x=>x[0]===c.cor))return c}catch(e){}return null}
+function ntCorPadraoSet(tipo,cor){   // marcar de novo a mesma cor desmarca
+  const a=ntCorPadrao();try{a&&a.tipo===tipo&&a.cor===cor?localStorage.removeItem(NT_COR_PAD):localStorage.setItem(NT_COR_PAD,JSON.stringify({tipo,cor}))}catch(e){}
+  return ntCorPadrao();
+}
 function ntAplicaCor(ed,tipo,cor){
   const css=`var(--nt${tipo==='texto'?'c':'b'}-${cor})`,atual=ed.getAttributes('textStyle')[tipo==='texto'?'color':'backgroundColor'];
   try{localStorage.setItem(NT_COR,JSON.stringify({tipo,cor}))}catch(e){}
@@ -487,10 +597,29 @@ function ntRegraToggle(){
 }
 function ntAtalhos(c){
   return TT.Extension.create({name:'atalhosNotas',priority:1000,addKeyboardShortcuts(){return {
-    'Mod-Shift-h':()=>{const u=ntUltimaCor();ntAplicaCor(this.editor,u.tipo,u.cor);return true},
+    'Mod-Shift-h':()=>{const u=ntCorPadrao()||{tipo:'fundo',cor:'amarelo'};ntAplicaCor(this.editor,u.tipo,u.cor);return true},
     'Mod-k':()=>{ntLink(c);return true},
+    'Mod-a':()=>{   // dentro de um toggle: primeiro seleciona só esse bloco; repetir seleciona a página inteira
+      const s=this.editor.state.selection;if(s.node)return false;
+      for(let d=s.$from.depth;d>0;d--)if(s.$from.node(d).type.name==='details')return this.editor.commands.setNodeSelection(s.$from.before(d));
+      return false;
+    },
+    'Backspace':()=>ntApagaToggleVazio(this.editor),
     'Mod-Alt-t':()=>ntTodosNo(c),'Mod-Enter':()=>ntToggleCursor(c),
     'Tab':()=>ntTab(this.editor,false),'Shift-Tab':()=>ntTab(this.editor,true)}}});
+}
+// Backspace no início do título de um toggle VAZIO (sem título e só parágrafos vazios dentro) apaga o toggle numa transação (Ctrl+Z traz de volta) e põe o
+// cursor no fim do bloco anterior. Com conteúdo, vale o comportamento do Tiptap: o título vira parágrafo e o conteúdo sobe (também um passo só no Ctrl+Z).
+function ntApagaToggleVazio(ed){
+  const {state,view}=ed,s=state.selection,$=s.$from;
+  if(!s.empty||$.parent.type.name!=='detailsSummary'||$.parent.content.size||$.parentOffset!==0)return false;
+  const det=$.node($.depth-1);let vazio=true;
+  det.lastChild.forEach(n=>{if(n.type.name!=='paragraph'||n.content.size)vazio=false});
+  if(!vazio)return false;
+  const ini=$.before($.depth-1),tr=state.tr;
+  if($.node($.depth-2).childCount===1)tr.replaceWith(ini,ini+det.nodeSize,state.schema.nodes.paragraph.create());else tr.delete(ini,ini+det.nodeSize);
+  try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(Math.min(ini,tr.doc.content.size)),-1))}catch(e){}
+  view.dispatch(tr.scrollIntoView());return true;
 }
 // Link (Ctrl+K ou botão da barra): campo ao lado do botão (prompt() não existe no WebView do APK).
 function ntLink(c){
@@ -499,7 +628,7 @@ function ntLink(c){
   c.linkSel={from,to};
   const pop=c.barra.querySelector('.nt-link'),i=pop.querySelector('.nt-link-in');i.value=ed.getAttributes('link').href||'';
   c.barra.querySelector('.nt-paleta').hidden=true;
-  ntPopPos(pop,c.barra.querySelector('[data-m="link"]'));i.focus();i.select();
+  ntPopPos(pop,c.barra.querySelector('[data-m="cor"]'));i.focus();i.select();
 }
 function ntLinkAplica(c,url){
   const u=String(url||'').trim();c.barra.querySelector('.nt-link').hidden=true;
@@ -530,6 +659,7 @@ const NT_SLASH=[
   ['Imagem','Enviar uma imagem','imagem foto',null],
   ['Página','Nova página, aberta num painel','pagina page subpagina',null],
   ['Frase','Inserir uma frase-padrão salva','frase laudo modelo padrao',null],
+  ['Importar do Notion','Escolher exportação HTML (.zip ou .html)','importar notion zip html',null],
 ];
 const ntSemAcento=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 // Menu flutuante de sugestões ("/" blocos, "@" lembretes). itens(query) -> [[título, subtítulo, ...]]; comando(editor,range,item).
@@ -566,29 +696,34 @@ function ntSugestao(c,{nome,char,itens,comando,allow,allowSpaces=false,semVazio=
 }
 const ntSlash=c=>ntSugestao(c,{nome:'slashNotas',char:'/',
   allow:({state,range})=>state.doc.resolve(range.from).parent.type.name!=='detailsSummary',
-  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&it[0]==='Página')&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // (dentro de uma página não há "Página")
+  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
   comando:(editor,range,it)=>{
     const ch=editor.chain().focus().deleteRange(range);
     if(it[3]){it[3](ch).run();return}
-    ch.run();if(it[0]==='Página')ntPaginaDoSlash(c);else if(it[0]==='Frase')ntFrasesEscolhe(c);else ntEscolheImagem(c);
+    ch.run();if(it[0]==='Página')ntPaginaDoSlash(c);else if(it[0]==='Frase')ntFrasesEscolhe(c);else if(it[0]==='Importar do Notion')ntNotionEscolhe();else ntEscolheImagem(c);
   }});
 
 // ----- Barra fixa de formatação (no topo da página e no painel de cada página) + barra da imagem -----
 // Os botões não roubam o foco: mousedown é cancelado (só o campo do link recebe foco). Sem bolha ao selecionar texto (1.41).
 const NT_BARRA=[
   ['bold','<b>B</b>','Negrito (Ctrl+B)'],['italic','<i>I</i>','Itálico (Ctrl+I)'],['underline','<u>U</u>','Sublinhado (Ctrl+U)'],['strike','<s>S</s>','Tachado (Ctrl+Shift+S)'],
-  ['link','🔗','Link (Ctrl+K)'],['cor','A▾','Cor do texto e realce (Ctrl+Shift+H aplica a última)'],null,
-  ['h1','H1','Título 1'],['h2','H2','Título 2'],['h3','H3','Título 3'],null,
-  ['bullet','•','Lista com marcadores'],['ordered','1.','Lista numerada'],['task','☑','Checklist'],['tgl','▶','Toggle'],null,
+  ['cor','A▾','Cor do texto e realce (Ctrl+Shift+H aplica a cor padrão)'],null,
   ['frase','✚<span class="nt-bt-t"> Frase</span>','Salvar o texto selecionado como frase-padrão (insira com /Frase)'],['frases','📋','Gerenciar frases-padrão'],['hist','🕘<span class="nt-bt-t"> Histórico</span>','Histórico de versões das notas'],null,
   ['atalhos','⌨<span class="nt-bt-t"> Atalhos</span>','Atalhos e funções (Ctrl+/)']];
-const NT_BARRA_ATIVO={bold:'bold',italic:'italic',underline:'underline',strike:'strike',link:'link',bullet:'bulletList',ordered:'orderedList',task:'taskList',tgl:'details'};
+const NT_BARRA_ATIVO={bold:'bold',italic:'italic',underline:'underline',strike:'strike'};   // (1.43: títulos, link, listas, checklist e toggle saíram da barra; ficam os atalhos, o menu "/" e o painel de Atalhos)
+// Paleta: cada cor é uma linha com amostra grande na cor de verdade (A para texto, quadrado cheio para fundo), o nome e a estrela que a faz padrão do Ctrl+Shift+H.
+// (As variáveis --ntc-/--ntb- valem também em .nt-barra no CSS: a paleta fica fora do .nt-ed.)
+const ntPaletaHtml=tipo=>NT_CORES.map(([k,n])=>`<div class="nt-cor"><button type="button" class="nt-sw" data-cor="${tipo}:${k}" title="${n}" aria-label="${tipo==='texto'?'Texto':'Fundo'} ${n}"><span class="nt-amo ${tipo}" style="${tipo==='texto'?`color:var(--ntc-${k})`:`background:var(--ntb-${k})`}">${tipo==='texto'?'A':''}</span><span class="nt-nome">${n}</span></button><button type="button" class="nt-star" data-padrao="${tipo}:${k}" title="Definir como cor padrão do Ctrl+Shift+H" aria-label="Definir ${tipo==='texto'?'texto':'fundo'} ${n} como padrão do Ctrl+Shift+H" aria-pressed="false">☆</button></div>`).join('');
+function ntPaletaPinta(c){
+  const pad=ntCorPadrao();
+  for(const st of c.barra?.querySelectorAll('.nt-star')||[]){const on=!!pad&&st.dataset.padrao===pad.tipo+':'+pad.cor;st.classList.toggle('on',on);st.textContent=on?'★':'☆';st.setAttribute('aria-pressed',String(on))}
+}
 function ntBarra(c){
-  const b=document.createElement('div'),sw=tipo=>NT_CORES.map(([k,n])=>`<button type="button" class="nt-sw" data-cor="${tipo}:${k}" title="${n}" aria-label="${tipo==='texto'?'Texto':'Fundo'} ${n}" style="${tipo==='texto'?`color:var(--ntc-${k})`:`background:var(--ntb-${k})`}">${tipo==='texto'?'A':''}</button>`).join('');
+  const b=document.createElement('div'),sw=ntPaletaHtml;
   b.className='nt-barra';
   b.innerHTML=`<div class="nt-barra-l" role="toolbar" aria-label="Formatação">${NT_BARRA.map(x=>x?`<button type="button" data-m="${x[0]}" title="${x[2]}" aria-label="${x[2]}">${x[1]}</button>`:'<i class="nt-sep"></i>').join('')}</div>
     <div class="nt-pop nt-link" hidden><input type="text" class="nt-link-in" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Endereço do link (vazio remove)" aria-label="Endereço do link"><button type="button" data-m="link-ok" title="Aplicar">OK</button><button type="button" data-m="link-x" title="Cancelar">✕</button></div>
-    <div class="nt-pop nt-paleta" hidden><div class="nt-paleta-t">Texto</div><div class="nt-paleta-l">${sw('texto')}</div><div class="nt-paleta-t">Fundo</div><div class="nt-paleta-l">${sw('fundo')}</div><button type="button" class="nt-sem-cor" data-cor="nenhuma">Sem cor</button></div>`;
+    <div class="nt-pop nt-paleta" hidden><div class="nt-paleta-t">Cor do texto</div><div class="nt-paleta-l">${sw('texto')}</div><div class="nt-paleta-t">Cor de fundo (realce)</div><div class="nt-paleta-l">${sw('fundo')}</div><div class="nt-paleta-dica">☆ marca a cor padrão do Ctrl+Shift+H (clique de novo para desmarcar)</div><button type="button" class="nt-sem-cor" data-cor="nenhuma">Sem cor</button></div>`;
   b.addEventListener('mousedown',e=>{if(!e.target.closest('input'))e.preventDefault()});
   const inp=b.querySelector('.nt-link-in'),pop=b.querySelector('.nt-link'),pal=b.querySelector('.nt-paleta');
   inp.addEventListener('keydown',e=>{
@@ -600,14 +735,11 @@ function ntBarra(c){
     const bt=e.target.closest('button');if(!bt||!c.ed)return;const m=bt.dataset.m,ch=()=>c.ed.chain().focus();
     if(m==='link-ok'){ntLinkAplica(c,inp.value);return}
     if(m==='link-x'){ntLinkCancela(c);return}
+    if(bt.dataset.padrao){const[t,k]=bt.dataset.padrao.split(':'),p=ntCorPadraoSet(t,k);ntPaletaPinta(c);toast(p?`Ctrl+Shift+H agora aplica ${t==='texto'?'a cor de texto':'o fundo'} ${NT_CORES.find(x=>x[0]===k)[1].toLowerCase()}.`:'Cor padrão removida: Ctrl+Shift+H volta ao fundo amarelo.');return}
     if(bt.dataset.cor){if(bt.dataset.cor==='nenhuma')ntSemCor(c.ed);else{const[t,k]=bt.dataset.cor.split(':');ntAplicaCor(c.ed,t,k)}pal.hidden=true;ntBarraPinta(c);return}
     if(!m)return;
     if(m==='bold')ch().toggleBold().run();else if(m==='italic')ch().toggleItalic().run();else if(m==='underline')ch().toggleUnderline().run();else if(m==='strike')ch().toggleStrike().run();
-    else if(m==='link'){ntLink(c);return}
-    else if(m==='cor'){if(pal.hidden){pop.hidden=true;ntPopPos(pal,bt)}else pal.hidden=true;return}
-    else if(/^h[123]$/.test(m))ch().toggleHeading({level:+m[1]}).run();
-    else if(m==='bullet')ch().toggleBulletList().run();else if(m==='ordered')ch().toggleOrderedList().run();else if(m==='task')ch().toggleTaskList().run();
-    else if(m==='tgl'){if(c.ed.isActive('details'))ch().unsetDetails().run();else ch().setDetails().run()}
+    else if(m==='cor'){if(pal.hidden){pop.hidden=true;ntPaletaPinta(c);ntPopPos(pal,bt)}else pal.hidden=true;return}
     else if(m==='atalhos'){ntAtalhosAbre();return}
     else if(m==='frase'){ntFraseSalvaSel(c);return}
     else if(m==='frases'){ntFrasesGerencia();return}
@@ -621,7 +753,7 @@ function ntBarraPinta(c){
   const e=c.ed,b=c.barra;if(!e||!b)return;
   for(const bt of b.querySelectorAll('.nt-barra-l [data-m]')){
     const m=bt.dataset.m;let on=false;
-    try{on=/^h[123]$/.test(m)?e.isActive('heading',{level:+m[1]}):m==='cor'?!!(e.getAttributes('textStyle').color||e.getAttributes('textStyle').backgroundColor):NT_BARRA_ATIVO[m]?e.isActive(NT_BARRA_ATIVO[m]):false}catch(x){}
+    try{on=m==='cor'?!!(e.getAttributes('textStyle').color||e.getAttributes('textStyle').backgroundColor):NT_BARRA_ATIVO[m]?e.isActive(NT_BARRA_ATIVO[m]):false}catch(x){}
     bt.classList.toggle('on',on);if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist')bt.setAttribute('aria-pressed',String(on));
   }
 }
@@ -680,6 +812,8 @@ function ntAlca(c){
   al.addEventListener('dragend',()=>{c.ed.view.dragging=null;c.grupoArrasto=null});
   al.addEventListener('click',()=>{
     const b=bloco();if(!b)return;
+    if(!ntBselPos(c.ed.state).includes(b.pos))c.ed.commands.setNodeSelection(b.pos);
+    c.ed.view.focus();   // a alça está fora do contenteditable: Delete/Backspace precisam voltar ao editor já neste clique
     if(!menu.hidden){menu.hidden=true;return}
     menu.hidden=false;menu.style.top=al.offsetTop+26+'px';menu.style.left=al.offsetLeft+'px';
   });
@@ -701,7 +835,7 @@ function ntExtensoes(c){
     E.BulletList,E.OrderedList,E.ListItem,E.TaskList,E.TaskItem.configure({nested:true}),
     E.Blockquote.extend({addInputRules(){return []}}),   // "> " é toggle; citação só pelo menu "/"
     E.HorizontalRule,ntToggle(),E.DetailsSummary,E.DetailsContent,ntDestaque(),ntImagem(),ntPaginaLink(),
-    E.TextStyle,E.Color,E.BackgroundColor,E.UndoRedo,E.Dropcursor.configure({color:'#5687be',width:2}),E.Gapcursor,E.TrailingNode,
+    E.TextStyle.extend({addAttributes(){return {...this.parent?.(),codigo:{default:null,parseHTML:el=>el.hasAttribute('data-codigo')?true:null,renderHTML:a=>a.codigo?{'data-codigo':'true',class:'nt-code'}:{}}}}}),E.Color,E.BackgroundColor,E.UndoRedo,E.Dropcursor.configure({color:'#5687be',width:2}),E.Gapcursor,E.TrailingNode,
     E.Placeholder.configure({placeholder:({node})=>node.type.name==='detailsSummary'?'Toggle':node.type.name==='heading'?'Título':"Digite '/' para ver os comandos"}),
     ntIds(),ntRegraToggle(),ntAtalhos(c),ntSlash(c),ntLembrete(),ntLembretePlugin(c),ntBuscaExt(),ntBselExt(c),
     TT.Extension.create({name:'envioImagem',addProseMirrorPlugins(){return [ntPluginEnvio()]}})];
@@ -758,11 +892,13 @@ function ntFalha(){
   const tem=Array.isArray(SM.d?.notas_v138)&&SM.d.notas_v138.length;
   raiz.innerHTML=`<div class="card"><p>Não consegui abrir as notas: o documento salvo está corrompido. Os blocos ficaram guardados em notas_conflitos.</p>${tem?'<button type="button" class="b" id="nt_restaura" onclick="ntRestaura()">Restaurar das notas antigas (cópia da 1.38)</button>':'<p class="mut">Não há cópia das notas antigas neste plano.</p>'}</div>`;
 }
-function ntRestaura(){
+async function ntRestaura(){
   const v=SM.d?.notas_v138;if(!Array.isArray(v)||!v.length)return;
-  try{localStorage.removeItem(NT_PEND)}catch(e){}
+  await ntMigraLegado();
+  const d={notas:JSON.parse(JSON.stringify(v))};ntMigra(d);
+  if(!ntFilaGrava('blocos',ntBaseLer()||[],d.notasDoc.blocos))return;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.shown=null;
-  smMudar(d=>{delete d.notasDoc;d.notas=JSON.parse(JSON.stringify(d.notas_v138));ntMigra(d)},'notas: restauradas da cópia 1.38');
+  ntAplica(SM.d,ntPendentes());smGuardaCache();return ntSync();
 }
 // Aplica no editor do contexto `c` SÓ os blocos de topo que mudaram (transação do ProseMirror, fora do histórico do Ctrl+Z): cursor, seleção e o
 // que está sendo digitado nos outros blocos não são tocados. Nunca setContent no documento inteiro.
@@ -816,7 +952,7 @@ function vNotas(){
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Mostrar ou esconder a lista de páginas" aria-label="Páginas" aria-expanded="${lat}">☰</button><h2>Notas</h2><div class="nt-barra-slot" id="nt_barra"></div></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
+  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><h2>Notas</h2><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre('notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -837,19 +973,43 @@ function ntPaginaLink(){
   });
 }
 // Toda mudança nas páginas entra na fila (NT_PEND.paginas), no plano local e sobe pelo mesmo ntSync das notas.
-function pgGrava(l){
-  const p=ntPendentes()[0];
-  try{localStorage.setItem(NT_PEND,JSON.stringify({...p,blocos:p?.blocos||SM.d.notasDoc?.blocos||[],paginas:l,em:Date.now(),conflitos:p?.conflitos||[]}))}catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
-  SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l};smGuardaCache();ntSync();ntLateralPinta();ntPaginaLinks();return true;
+function pgGrava(l,pastas){
+  if(!ntFilaGrava('paginas',ntPaginas(),l,pastas?{pastas,basePastas:ntPastas()}:{}))return false;
+  SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l,...(pastas?{pastas}:{})};smGuardaCache();ntSync();ntLateralPinta();ntPaginaLinks();return true;
 }
 function pgMuda(fn){if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntPaginas()));fn(l);return pgGrava(l)}
+function ntPastasMuda(fn){
+  if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntPastas()));fn(l);
+  if(!ntFilaGrava('pastas',ntPastas(),l))return false;
+  SM.d.notasPaginas={...SM.d.notasPaginas,v:1,pastas:l};smGuardaCache();ntSync();ntLateralPinta();return true;
+}
+function ntPastaForm(id,a){NT.pastaForm={id,a};ntLateralPinta();const i=document.querySelector('#nt_lat .nt-pt-titulo');i?.focus();i?.select()}
+function ntPastaSalva(){
+  const f=NT.pastaForm,titulo=document.querySelector('#nt_lat .nt-pt-titulo')?.value.trim();if(!f||!titulo)return;
+  const agora=ntAgora();
+  if(ntPastasMuda(l=>{if(f.id){const p=l.find(p=>p.id===f.id);if(p){p.titulo=titulo;p.atualizado=agora}}else l.push({id:ntNovoId().replace(/^b/,'f'),titulo,ordem:Math.max(0,...l.map(p=>+p.ordem||0))+10,criado:agora,atualizado:agora})}))NT.pastaForm=null;
+  ntLateralPinta();
+}
+function ntPastaExclui(id){if(ntPastasMuda(l=>{const i=l.findIndex(p=>p.id===id);if(i>=0)l.splice(i,1)}))NT.pastaForm=null;ntLateralPinta()}
+function ntPastaAlterna(id){const l=ntLsLista(NT_PT_FECHADAS)||[],i=l.indexOf(id);if(i<0)l.push(id);else l.splice(i,1);try{localStorage.setItem(NT_PT_FECHADAS,JSON.stringify(l))}catch(e){}ntLateralPinta()}
+function ntPastaMove(id,ref,depois){ntPastasMuda(l=>{const a=l.find(p=>p.id===id);if(!a)return;const sec=l.filter(p=>p.id!==id).sort(ntPgOrdem);let i=sec.findIndex(p=>p.id===ref);if(i<0)i=sec.length;else if(depois)i++;sec.splice(i,0,a);sec.forEach((p,n)=>{if(p.ordem!==(n+1)*10){p.ordem=(n+1)*10;p.atualizado=ntAgora()}})})}
+function ntPaginaPasta(id,pasta){
+  if(pasta&&!ntPastas().some(p=>p.id===pasta))return false;
+  return pgMuda(l=>{const p=l.find(p=>p.id===id);if(p){p.pasta=pasta;p.ordem=Math.max(0,...l.filter(x=>x.id!==id&&ntPastaDa(x)===pasta).map(x=>+x.ordem||0))+10;p.atualizado=ntAgora()}});
+}
+function ntPaginaMoverMenu(id){
+  const p=pgAchar(id);if(!p)return;
+  const ov=ntModal('nt-mover','<h3>Mover para…</h3><select aria-label="Pasta de destino"><option value="">Fora de pasta</option></select><button type="button" class="b">Mover</button>');
+  const sel=ov.querySelector('select');for(const f of [...ntPastas()].sort(ntPgOrdem)){const o=document.createElement('option');o.value=f.id;o.textContent=f.titulo;sel.appendChild(o)}sel.value=ntPastaDa(p);
+  ov.querySelector('button').onclick=()=>{if(ntPaginaPasta(id,sel.value))ntModalFecha(ov)};sel.focus();
+}
 const ntAgora=()=>new Date().toISOString();
 function ntPaginaCria(){
   const agora=ntAgora(),id=ntNovoId().replace(/^b/,'p'),bid=ntNovoId(),ordem=Math.max(0,...ntPaginas().map(p=>Number(p.ordem)||0))+10;
-  pgMuda(l=>l.push({id,titulo:'',fixada:false,ordem,criado:agora,atualizado:agora,doc:{v:1,blocos:[{id:bid,atualizado:agora,conteudo:{type:'paragraph',attrs:{id:bid}}}]}}));
+  if(!pgMuda(l=>l.push({id,titulo:'',fixada:false,pasta:'',ordem,criado:agora,atualizado:agora,doc:{v:1,blocos:[{id:bid,atualizado:agora,conteudo:{type:'paragraph',attrs:{id:bid}}}]}})))return null;
   return id;
 }
-function ntPaginaNova(){const id=ntPaginaCria();ntPainelAbre(id);return id}   // botão "+ Nova página"
+function ntPaginaNova(){const id=ntPaginaCria();if(id)ntPainelAbre(id);return id}   // botão "+ Nova página"
 function ntPaginaDoSlash(c){const id=ntPaginaCria();c.ed.chain().focus().insertContent({type:'paginaLink',attrs:{pagina:id}}).run();ntPainelAbre(id)}   // "/Página"
 function ntPaginaFixa(id){
   const p=pgAchar(id);if(!p)return;
@@ -862,10 +1022,12 @@ function ntPaginaExclui(id){
   pgMuda(l=>{const i=l.findIndex(y=>y.id===id);if(i>=0)l.splice(i,1)});toast('Página excluída.');
 }
 // Reordena dentro da seção (fixadas / páginas): `id` passa para antes (ou depois) de `ref`; só quem mudou de ordem é regravado.
-function ntPaginaMove(id,ref,depois){
+function ntPaginaMove(id,ref,depois,pasta){
   pgMuda(l=>{
     const a=l.find(p=>p.id===id);if(!a)return;
-    const sec=l.filter(p=>!!p.fixada===!!a.fixada&&p.id!==id).sort(ntPgOrdem);
+    const alvo=ref&&l.find(p=>p.id===ref);
+    if(pasta!==undefined||alvo&&!a.fixada){const dest=pasta??ntPastaDa(alvo);if(a.pasta!==dest){a.pasta=dest;a.atualizado=ntAgora()}}
+    const sec=l.filter(p=>!!p.fixada===!!a.fixada&&(a.fixada||ntPastaDa(p)===ntPastaDa(a))&&p.id!==id).sort(ntPgOrdem);
     let i=ref?sec.findIndex(p=>p.id===ref):sec.length;if(i<0)i=sec.length;else if(depois)i++;
     sec.splice(i,0,a);const agora=ntAgora();
     sec.forEach((p,n)=>{const o=(n+1)*10;if(p.ordem!==o){p.ordem=o;p.atualizado=agora}});
@@ -883,8 +1045,8 @@ function pgSalvaDoc(){
   const ant=c.shown||p.doc?.blocos||[],blocos=ntBlocos(c.ed.getJSON(),ant);c.sujo=false;
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
-  c.shown=blocos;const agora=ntAgora();
-  pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.doc={v:1,blocos};x.atualizado=agora}});
+  const agora=ntAgora();
+  if(pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.doc={v:1,blocos};x.atualizado=agora}}))c.shown=blocos;else c.sujo=true;
 }
 function pgTituloSalva(){
   const c=NP;if(!c?.titulo)return;clearTimeout(c.tituloTimer);
@@ -904,31 +1066,33 @@ function pgSincroniza(){
 }
 function ntPainelPinta(){
   const c=NP,p=c&&pgAchar(c.pagina),b=document.querySelector('#nt_pan [data-a="pin"]');if(!b||!p)return;
+  if(c.aba&&document.activeElement!==c.titulo)document.title=p.titulo||'Sem título';   // título da aba do navegador = título da página
   b.classList.toggle('on',!!p.fixada);b.title=b.ariaLabel=p.fixada?'Desafixar página':'Fixar página';b.setAttribute('aria-pressed',String(!!p.fixada));
 }
-function ntPainelAbre(id){
+function ntPainelAbre(id,aba=false){
   if(!SM.d||!window.TT)return;const p=pgAchar(id);if(!p){toast('Página não encontrada.');return}
+  if(NP?.aba&&NP.pagina!==id){ntAbaAbre(id);return}   // aba de uma página: as outras páginas abrem cada uma na sua aba
   if(NP){if(NP.pagina===id)return;ntPainelFecha()}
   ntAntes();if(matchMedia('(max-width:700px)').matches&&NT.latMov)ntLateralAlterna();
-  ntRecentePoe(id);
   const v=ntValidos(p.doc?.blocos);ntGuardaRuins(v.ruins);
-  const c=NP=ntCtx(),ov=document.createElement('div');c.pagina=id;c.shown=Array.isArray(p.doc?.blocos)?p.doc.blocos:[];
-  ov.id='nt_pan';ov.className='nt-pan';ov.setAttribute('role','dialog');ov.setAttribute('aria-modal','true');ov.setAttribute('aria-label','Página');
-  ov.innerHTML=`<div class="nt-pan-c"><div class="nt-pan-topo"><div class="nt-pan-barra"></div><button type="button" class="nt-pan-b" data-a="pin" aria-label="Fixar página">📌</button><span class="nt-pan-exc"><button type="button" class="nt-pan-b" data-a="exc" title="Excluir página" aria-label="Excluir página">🗑</button><span class="nt-pan-conf" hidden>Excluir esta página? <button type="button" class="nt-pan-b ruim" data-a="exc-sim">Excluir</button><button type="button" class="nt-pan-b" data-a="exc-nao">Cancelar</button></span></span><button type="button" class="nt-pan-b" data-a="fecha" title="Fechar (Esc)" aria-label="Fechar página">✕</button></div><div class="nt-pan-corpo"><input type="text" class="nt-pan-titulo" placeholder="Sem título" aria-label="Título da página" maxlength="200" autocomplete="off"><div class="nt-pan-ed"></div></div></div>`;
+  const c=NP=ntCtx(),ov=document.createElement('div');c.pagina=id;c.aba=aba;c.shown=Array.isArray(p.doc?.blocos)?p.doc.blocos:[];
+  ov.id='nt_pan';ov.className='nt-pan'+(aba?' aba':'');ov.setAttribute('role','dialog');ov.setAttribute('aria-modal','true');ov.setAttribute('aria-label','Página');
+  ov.innerHTML=`<div class="nt-pan-c"><div class="nt-pan-topo"><div class="nt-pan-barra"></div><button type="button" class="nt-pan-b" data-a="aba" title="Abrir em nova aba do navegador" aria-label="Abrir em nova aba">↗</button><button type="button" class="nt-pan-b" data-a="pin" aria-label="Fixar página">📌</button><span class="nt-pan-exc"><button type="button" class="nt-pan-b" data-a="exc" title="Excluir página" aria-label="Excluir página">🗑</button><span class="nt-pan-conf" hidden>Excluir esta página? <button type="button" class="nt-pan-b ruim" data-a="exc-sim">Excluir</button><button type="button" class="nt-pan-b" data-a="exc-nao">Cancelar</button></span></span><button type="button" class="nt-pan-b" data-a="fecha" title="Fechar (Esc)" aria-label="Fechar página">✕</button></div><div class="nt-pan-corpo"><input type="text" class="nt-pan-titulo" placeholder="Sem título" aria-label="Título da página" maxlength="200" autocomplete="off"><div class="nt-pan-ed"></div></div></div>`;
   document.body.appendChild(ov);document.body.style.overflow='hidden';
   c.titulo=ov.querySelector('.nt-pan-titulo');c.titulo.value=p.titulo||'';
   ntEditor(c,v.bons,pgSalvaDoc);ov.querySelector('.nt-pan-ed').appendChild(c.el);ov.querySelector('.nt-pan-barra').appendChild(ntBarra(c));ntBarraPinta(c);
   let abaixo=false;
   ov.addEventListener('pointerdown',e=>{abaixo=e.target===ov});
   ov.addEventListener('click',e=>{
-    if(e.target===ov&&abaixo){ntPainelFecha();return}
+    if(e.target===ov&&abaixo&&!c.aba){ntPainelFecha();return}
     const a=e.target.closest('.nt-pan-topo [data-a]')?.dataset.a,conf=ov.querySelector('.nt-pan-conf'),exc=ov.querySelector('[data-a="exc"]');
     if(a==='fecha')ntPainelFecha();else if(a==='pin')ntPaginaFixa(c.pagina);
+    else if(a==='aba'){ntAbaAbre(c.pagina);ntPainelFecha()}
     else if(a==='exc'){conf.hidden=false;exc.hidden=true}
     else if(a==='exc-nao'){conf.hidden=true;exc.hidden=false}
     else if(a==='exc-sim')ntPaginaExclui(c.pagina);
   });
-  c.titulo.addEventListener('input',()=>{clearTimeout(c.tituloTimer);c.tituloTimer=setTimeout(pgTituloSalva,600)});
+  c.titulo.addEventListener('input',()=>{if(c.aba)document.title=c.titulo.value||'Sem título';clearTimeout(c.tituloTimer);c.tituloTimer=setTimeout(pgTituloSalva,600)});
   c.titulo.addEventListener('blur',pgTituloSalva);
   c.titulo.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();c.ed.commands.focus('start')}});
   ntPainelPinta();ntLateralPinta();
@@ -942,49 +1106,122 @@ function ntPainelFecha(sem){
   try{c.ed.destroy()}catch(e){}
   c.ed=null;document.getElementById('nt_pan')?.remove();document.body.style.overflow='';
   ntLateralPinta();ntPaginaLinks();
+  if(c.aba)ntAbaMsg(sem?'Esta página foi excluída.':'Página fechada.');
 }
+// ===== Abas do navegador (1.43): ./?pagina=<id> abre o app direto numa página, em tela inteira; ./?pagina=notas, a página principal =====
+// Várias abas dividem o localStorage (fila NT_PEND): o evento `storage` (abaixo) funde o que a outra aba gravou, a base de fusão é por aba (NTB).
+const NTA=(()=>{try{return new URLSearchParams(location.search).get('pagina')||''}catch(e){return ''}})();
+const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
+function ntAbaAbre(id){ntAntes();if(NP)pgTituloSalva();window.open(ntAbaUrl(id),'_blank','noopener')}   // (o que está sendo digitado entra na fila antes: a aba nova abre com ele)
+function ntPgClique(e,id){if(e.ctrlKey||e.metaKey||e.shiftKey||e.button){ntAntes();if(NP)pgTituloSalva();return true}ntPainelAbre(id);return false}   // Ctrl+clique e clique do meio: o navegador abre o endereço da página numa aba
+function ntAbaMsg(txt){
+  document.getElementById('nt_aba_fim')?.remove();
+  const d=document.createElement('div');d.id='nt_aba_fim';d.className='nt-aba-fim';d.innerHTML=`<p>${esc(txt)}</p><a href="./">Abrir o Radio</a>`;document.body.appendChild(d);
+}
+function ntAbaIni(){
+  if(!NTA)return;
+  document.body.classList.add('nt-aba');
+  if(NTA==='notas'){document.title='Notas';go('notas');return}
+  document.body.classList.add('nt-aba-pg');document.title='Página';
+  let n=0,puxou=false;
+  const tenta=()=>{
+    if(!SM.d||!window.TT){if(++n<100)setTimeout(tenta,200);else ntAbaMsg('Não consegui abrir: este aparelho ainda não tem as notas. Abra o app uma vez com conexão.');return}
+    if(!pgAchar(NTA)){   // página criada em outro aparelho e ainda não baixada: busca uma vez
+      if(!puxou){puxou=true;smPuxar().then(tenta,tenta);return}
+      ntAbaMsg('Página não encontrada (foi excluída ou ainda não chegou a este aparelho).');return;
+    }
+    ntPainelAbre(NTA,true);
+  };
+  tenta();
+}
+setTimeout(ntAbaIni,0);
 
 // ===== Barra lateral retrátil: Fixadas / Páginas, arrastar para ordenar =====
 const ntMovel=()=>matchMedia('(max-width:700px)').matches;
 function ntLateralAberta(){if(ntMovel())return !!NT.latMov;try{return localStorage.getItem(NT_LAT)!=='0'}catch(e){return true}}   // celular: sempre começa recolhida
+// Largura (por aparelho, 180 a 480 px; duplo clique na margem volta a 230) e abertura temporária ao passar o mouse sobre o ☰ (só mouse, só no PC).
+const ntLatClamp=w=>Math.max(180,Math.min(480,Math.round(w)||230));
+const ntLatW=()=>{try{return ntLatClamp(+localStorage.getItem(NT_LATW)||230)}catch(e){return 230}};
 function ntLateralAlterna(){
   const corpo=document.querySelector('.nt-corpo');if(!corpo)return;
+  corpo.classList.remove('lat-hover');   // clicar no botão fixa (ou solta) a barra
   const off=corpo.classList.toggle('lat-off');
   if(ntMovel())NT.latMov=!off;else try{localStorage.setItem(NT_LAT,off?'0':'1')}catch(e){}
   document.getElementById('nt_lat_bt')?.setAttribute('aria-expanded',String(!off));
 }
+let ntLatT=0;
+document.addEventListener('pointerover',e=>{
+  if(e.pointerType!=='mouse')return;
+  const corpo=document.querySelector('.nt-corpo');if(!corpo)return;
+  const em=e.target.closest?.('#nt_lat_bt,#nt_lat,#nt_lat_rz');
+  if(em){
+    clearTimeout(ntLatT);
+    if(em.id==='nt_lat_bt'&&corpo.classList.contains('lat-off')&&!corpo.classList.contains('lat-hover')&&!ntMovel()&&!document.body.classList.contains('nt-aba')){
+      corpo.style.setProperty('--nt-lat-x',corpo.getBoundingClientRect().left+'px');corpo.classList.add('lat-hover');
+    }
+    return;
+  }
+  if(corpo.classList.contains('lat-hover')){clearTimeout(ntLatT);ntLatT=setTimeout(()=>corpo.classList.remove('lat-hover'),300)}   // tolerância: não pisca no caminho do botão até a barra
+});
+document.documentElement?.addEventListener('mouseleave',()=>{const c=document.querySelector('.nt-corpo.lat-hover');if(c){clearTimeout(ntLatT);ntLatT=setTimeout(()=>c.classList.remove('lat-hover'),300)}});
+document.addEventListener('pointerdown',e=>{   // arrastar a margem direita da barra muda a largura
+  const rz=e.target.closest?.('#nt_lat_rz');if(!rz||e.button!==0)return;
+  const corpo=rz.closest('.nt-corpo'),x0=e.clientX,w0=document.getElementById('nt_lat').offsetWidth;let w=w0;e.preventDefault();
+  try{rz.setPointerCapture(e.pointerId)}catch(x){}rz.classList.add('arrasta');
+  const mv=ev=>{w=ntLatClamp(w0+ev.clientX-x0);corpo.style.setProperty('--nt-lat-w',w+'px')},
+    fim=()=>{rz.removeEventListener('pointermove',mv);rz.removeEventListener('pointerup',fim);rz.removeEventListener('pointercancel',fim);rz.classList.remove('arrasta');try{localStorage.setItem(NT_LATW,String(w))}catch(x){}};
+  rz.addEventListener('pointermove',mv);rz.addEventListener('pointerup',fim);rz.addEventListener('pointercancel',fim);
+});
+document.addEventListener('dblclick',e=>{if(!e.target.closest?.('#nt_lat_rz'))return;try{localStorage.removeItem(NT_LATW)}catch(x){}document.querySelector('.nt-corpo')?.style.setProperty('--nt-lat-w','230px')});
 function ntLateralHtml(){
   const l=[...ntPaginas()].sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
-  const item=p=>`<div class="nt-pg-it${NP?.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" title="Arrastar para mudar a ordem" aria-hidden="true">⋮⋮</span><button type="button" class="nt-pg-nome" onclick="ntPainelAbre('${esc(p.id)}')">📄 ${esc(p.titulo||'Sem título')}</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
-  const rec=ntRecentes().map(id=>l.find(p=>p.id===id)).filter(Boolean);
-  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button>${rec.length?`<div class="nt-lat-s">Recentes</div><div class="nt-pg-lista" data-sec="rec">${rec.map(p=>`<button type="button" class="nt-pg-rec" data-pg="${esc(p.id)}" onclick="ntPainelAbre('${esc(p.id)}')">📄 ${esc(p.titulo||'Sem título')}</button>`).join('')}</div>`:''}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg">${res.map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página ainda.</p>'}</div>`;
+  const item=p=>`<div class="nt-pg-it${NP?.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" title="Arrastar para mudar a ordem" aria-hidden="true">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(p.id))}" draggable="false" onclick="return ntPgClique(event,'${esc(p.id)}')">📄 ${esc(p.titulo||'Sem título')}</a><button type="button" class="nt-pg-mover" title="Mover para…" aria-label="Mover ${esc(p.titulo||'Sem título')} para…" onclick="ntPaginaMoverMenu('${esc(p.id)}')">↪</button><button type="button" class="nt-pg-aba" title="Abrir em nova aba" aria-label="Abrir ${esc(p.titulo||'Sem título')} em nova aba" onclick="ntAbaAbre('${esc(p.id)}')">↗</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
+  const f=NT.pastaForm,form=id=>{
+    if(!f||f.id!==id)return '';
+    if(f.a==='excluir')return `<div class="nt-pt-form">Excluir pasta? As páginas ficam fora dela. <button type="button" onclick="ntPastaExclui('${esc(id)}')">Excluir</button><button type="button" onclick="NT.pastaForm=null;ntLateralPinta()">Cancelar</button></div>`;
+    return `<form class="nt-pt-form" onsubmit="event.preventDefault();ntPastaSalva()"><input class="nt-pt-titulo" data-form-pasta="${esc(id)}" aria-label="Nome da pasta" maxlength="200" required value="${esc(f.rascunho??ntPastas().find(p=>p.id===id)?.titulo??'')}"><button type="submit">Salvar</button><button type="button" onclick="NT.pastaForm=null;ntLateralPinta()">Cancelar</button></form>`;
+  };
+  const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
+  const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} 📁 ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
+  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
 }
-function ntLateralPinta(){if(NTD?.ativo)return;const el=document.getElementById('nt_lat');if(el)el.innerHTML=ntLateralHtml()}
+function ntLateralPinta(){
+  if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
+  const i=el.querySelector('.nt-pt-titulo'),foco=i&&document.activeElement===i,pos=foco?[i.selectionStart,i.selectionEnd]:null;
+  if(i&&NT.pastaForm?.id===i.dataset.formPasta)NT.pastaForm.rascunho=i.value;
+  el.innerHTML=ntLateralHtml();if(foco){const novo=el.querySelector('.nt-pt-titulo');novo?.focus();novo?.setSelectionRange(...pos)}
+}
 // Arrastar (mouse: segurando o item e movendo; toque: pela alça ⋮⋮). O alvo é decidido pelo meio das linhas da mesma seção.
 let NTD=null,ntEngole=false;
 function ntArrastoMarca(){
   const d=NTD;if(!d)return null;
-  const outros=[...d.lista.querySelectorAll('.nt-pg-it')].filter(x=>x!==d.it);
-  d.lista.querySelectorAll('.alvo-antes,.alvo-depois').forEach(x=>x.classList.remove('alvo-antes','alvo-depois'));
-  if(!outros.length)return null;
+  document.querySelectorAll('#nt_lat .alvo-antes,#nt_lat .alvo-depois,#nt_lat .alvo-pasta').forEach(x=>x.classList.remove('alvo-antes','alvo-depois','alvo-pasta'));
+  if(!d.pasta){
+    const el=document.elementFromPoint(d.x,d.y),cab=el?.closest('.nt-pt-cab'),lista=el?.closest('.nt-pg-lista');
+    if(cab){const pasta=cab.parentElement.dataset.pasta;cab.classList.add('alvo-pasta');return {pasta}}
+    if(lista&&lista.dataset.sec===d.lista.dataset.sec)d.destino=lista;else d.destino=d.lista;
+  }
+  const dest=d.pasta?d.lista:d.destino||d.lista,outros=[...dest.children].filter(x=>x!==d.it&&x.matches(d.pasta?'.nt-pt':'.nt-pg-it'));
+  if(!outros.length){dest.classList.add('alvo-pasta');return d.pasta?null:{pasta:dest.dataset.pasta}}
   const ref=outros.find(x=>{const r=x.getBoundingClientRect();return d.y<r.top+r.height/2}),alvo=ref||outros[outros.length-1];
-  alvo.classList.add(ref?'alvo-antes':'alvo-depois');return {ref:alvo.dataset.pg,depois:!ref};
+  alvo.classList.add(ref?'alvo-antes':'alvo-depois');return {ref:d.pasta?alvo.dataset.pasta:alvo.dataset.pg,depois:!ref,...(!d.pasta&&dest.dataset.sec!=='fix'?{pasta:dest.dataset.pasta}:{})};
 }
 function ntArrastoFim(aplica){
   const d=NTD;if(!d)return;NTD=null;
-  d.it.classList.remove('arrastando');d.lista.querySelectorAll('.alvo-antes,.alvo-depois').forEach(x=>x.classList.remove('alvo-antes','alvo-depois'));
-  if(d.ativo){ntEngole=true;setTimeout(()=>{ntEngole=false},100);if(aplica&&d.alvo)ntPaginaMove(d.id,d.alvo.ref,d.alvo.depois);else ntLateralPinta()}
+  d.it.classList.remove('arrastando');document.querySelectorAll('#nt_lat .alvo-antes,#nt_lat .alvo-depois,#nt_lat .alvo-pasta').forEach(x=>x.classList.remove('alvo-antes','alvo-depois','alvo-pasta'));
+  if(d.ativo){ntEngole=true;setTimeout(()=>{ntEngole=false},100);if(aplica&&d.alvo){if(d.pasta)ntPastaMove(d.id,d.alvo.ref,d.alvo.depois);else ntPaginaMove(d.id,d.alvo.ref,d.alvo.depois,d.alvo.pasta)}else ntLateralPinta()}
 }
 document.addEventListener('pointerdown',e=>{
-  const it=e.target.closest?.('.nt-pg-it');if(!it||(e.pointerType==='mouse'&&e.button!==0)||e.target.closest('.nt-pg-pin'))return;
+  const it=e.target.closest?.('.nt-pg-it,.nt-pt-cab');if(!it||(e.pointerType==='mouse'&&e.button!==0)||e.target.closest('button,input,select'))return;
   if(e.pointerType!=='mouse'&&!e.target.closest('.nt-pg-alca'))return;   // toque: só pela alça (o resto da lista rola)
-  NTD={it,id:it.dataset.pg,lista:it.parentElement,x0:e.clientX,y0:e.clientY,y:e.clientY,pid:e.pointerId,ativo:false,alvo:null};
+  const pasta=it.matches('.nt-pt-cab'),linha=pasta?it.parentElement:it;
+  NTD={it:linha,pasta,id:pasta?linha.dataset.pasta:it.dataset.pg,lista:linha.parentElement,x0:e.clientX,y0:e.clientY,x:e.clientX,y:e.clientY,pid:e.pointerId,ativo:false,alvo:null};
 });
 document.addEventListener('pointermove',e=>{
   const d=NTD;if(!d||e.pointerId!==d.pid)return;
   if(!d.it.isConnected){NTD=null;return}
   if(!d.ativo){if(Math.hypot(e.clientX-d.x0,e.clientY-d.y0)<5)return;d.ativo=true;d.it.classList.add('arrastando');try{getSelection().removeAllRanges()}catch(x){}}
-  e.preventDefault();d.y=e.clientY;d.alvo=ntArrastoMarca();
+  e.preventDefault();d.x=e.clientX;d.y=e.clientY;d.alvo=ntArrastoMarca();
 },{passive:false});
 document.addEventListener('pointerup',e=>{if(NTD&&e.pointerId===NTD.pid)ntArrastoFim(true)});
 document.addEventListener('pointercancel',e=>{if(NTD&&e.pointerId===NTD.pid)ntArrastoFim(false)});
@@ -994,8 +1231,8 @@ document.addEventListener('selectstart',e=>{if(NTD?.ativo)e.preventDefault()});
 // ===== Painel de atalhos (Ctrl+/): só o que existe de fato na aba =====
 const NT_ATALHOS=[
   ['Formatar o texto selecionado (ou o que for digitado)',[[['Ctrl+B'],'Negrito'],[['Ctrl+I'],'Itálico'],[['Ctrl+U'],'Sublinhado'],[['Ctrl+Shift+S'],'Tachado'],
-    [['Ctrl+K'],'Link: abre um campo (Enter aplica, Esc cancela, vazio remove)'],[['Ctrl+Shift+H'],'Aplica a última cor/realce usada (padrão: fundo amarelo); de novo, remove'],
-    [['**texto**','*texto*','~~texto~~'],'Digitar assim vira negrito, itálico, tachado'],[['Ctrl+clique'],'Abre o link do texto'],[['Barra de cima'],'B I U S, link, cor/realce, títulos, listas, checklist e toggle (botões acesos = ativo)']]],
+    [['Ctrl+K'],'Link: abre um campo (Enter aplica, Esc cancela, vazio remove)'],[['Ctrl+Shift+H'],'Aplica a cor padrão (★ na paleta de cores); sem padrão, fundo amarelo; de novo, remove'],
+    [['**texto**','*texto*','~~texto~~'],'Digitar assim vira negrito, itálico, tachado'],[['Ctrl+clique'],'Abre o link do texto'],[['Barra de cima'],'B I U S, cor/realce (★ marca a cor padrão do Ctrl+Shift+H), frases, histórico e Atalhos (botões acesos = ativo)']]],
   ['Criar blocos',[[['/'],'Menu de blocos: Título 1/2/3, Texto, Toggle, Lista, Lista numerada, Checklist, Citação, Destaque, Divisória, Imagem, Página (↑ ↓ escolhem, Enter aplica, Esc fecha)'],
     [['> '],'Toggle'],[['# ','## ','### '],'Título 1, 2, 3'],[['- ','* ','+ '],'Lista com marcadores'],[['1. '],'Lista numerada'],[['[] '],'Checklist'],[['---'],'Divisória'],
     [['Ctrl+Alt+1/2/3'],'Título 1, 2, 3'],[['Ctrl+Alt+0'],'Texto comum'],[['Ctrl+Shift+8'],'Lista com marcadores'],[['Ctrl+Shift+7'],'Lista numerada'],[['Ctrl+Shift+9'],'Checklist'],[['Ctrl+Shift+B'],'Citação'],[['Alt+A'],'Novo toggle no topo (também o botão +)']]],
@@ -1006,8 +1243,8 @@ const NT_ATALHOS=[
   ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
   ['Lembretes, frases e histórico',[[['@'],'Lembrete: Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm. Vira um chip e uma tarefa do plano; clique no chip para mudar a data; apagar o chip não apaga a tarefa'],[['/ Frase'],'Insere uma frase-padrão salva (filtre digitando, Enter insere)'],[['✚ Frase'],'Salva o texto selecionado como frase-padrão'],[['📋'],'Renomear e apagar frases'],[['🕘 Histórico'],'Versões anteriores (precisa de internet): ver, restaurar a página ou um bloco como edição nova']]],
   ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Clicar na imagem'],'Largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],
-  ['Páginas',[[['☰'],'Mostra/esconde a lista de páginas (Fixadas e Páginas)'],[['+ Nova página'],'Cria e abre uma página'],[['/ Página'],'Cria uma página e coloca um link para ela no ponto do cursor'],
-    [['Clicar na página'],'Abre no painel grande, com o mesmo editor e a mesma barra'],[['Arrastar o item'],'Muda a ordem dentro da seção (no toque, pela alça ⋮⋮)'],[['📌'],'Fixa ou desafixa'],[['Esc','✕','clique fora'],'Fecha o painel e salva'],[['Recentes'],'As últimas 5 páginas abertas neste aparelho, acima das Fixadas'],[['🗑'],'Exclui a página (pede confirmação)']]],
+  ['Páginas',[[['☰'],'Passar o mouse mostra a lista de páginas por cima do texto (some ao sair); clicar fixa, clicar de novo solta. Arrastar a margem direita da lista muda a largura (duplo clique volta ao padrão)'],[['+ Nova página'],'Cria e abre uma página'],[['/ Página'],'Cria uma página e coloca um link para ela no ponto do cursor'],
+    [['Clicar na página'],'Abre no painel grande, com o mesmo editor e a mesma barra'],[['Arrastar o item'],'Muda a ordem dentro da seção (no toque, pela alça ⋮⋮)'],[['📌'],'Fixa ou desafixa'],[['Esc','✕','clique fora'],'Fecha o painel e salva'],[['↗','Ctrl+clique','clique do meio'],'Abre a página (ou as Notas) em outra aba do navegador: várias páginas ao mesmo tempo, o que se escreve numa aparece na outra'],[['🗑'],'Exclui a página (pede confirmação)']]],
   ['Geral',[[['Ctrl+Z'],'Desfazer'],[['Ctrl+Y','Ctrl+Shift+Z'],'Refazer'],[['Ctrl+/'],'Abre/fecha este painel'],[['Esc'],'Fecha este painel']]],
 ];
 const ntAtalhosAberto=()=>!!document.getElementById('nt_atalhos');
@@ -1032,7 +1269,7 @@ document.addEventListener('keydown',e=>{
   if(document.querySelector('.nt-slash'))return;   // o menu "/" trata o Esc
   const pal=document.querySelector('.nt-paleta:not([hidden])');if(pal){e.preventDefault();e.stopPropagation();pal.hidden=true;return}
   if(NTD){e.stopPropagation();ntArrastoFim(false);return}
-  if(NP){e.preventDefault();e.stopPropagation();ntPainelFecha()}
+  if(NP&&!NP.aba){e.preventDefault();e.stopPropagation();ntPainelFecha()}   // (na aba da página, Esc não fecha nada)
 },true);
 // Clicar fora fecha o menu da alça e a paleta de cores.
 document.addEventListener('pointerdown',e=>{
@@ -1041,8 +1278,24 @@ document.addEventListener('pointerdown',e=>{
     const pal=c?.barra?.querySelector('.nt-paleta');if(pal&&!pal.hidden&&!e.target.closest?.('.nt-paleta,[data-m="cor"]'))pal.hidden=true;
   }
 });
-if(SM.d){if(!ntBaseLer()&&!ntTemPendentes())ntBaseSalva(SM.d.notasDoc?.blocos);else if(!pgBaseLer()&&!ntTemPendentes())pgBaseSalva(ntPaginas());if(!frBaseLer()&&!ntTemPendentes())frBaseSalva(SM.d.notasFrases||[]);ntAplica(SM.d,ntPendentes());smGuardaCache()}
+function ntFilaInicia(){
+  if(NT.legado)return;
+  if(SM.d){if(!ntBaseLer()&&!ntTemPendentes())ntBaseSalva(SM.d.notasDoc?.blocos);else if(!pgBaseLer()&&!ntTemPendentes())pgBaseSalva(ntPaginas());if(!frBaseLer()&&!ntTemPendentes())frBaseSalva(SM.d.notasFrases||[]);ntAplica(SM.d,ntPendentes());smGuardaCache()}
+}
+// smCarga já capturou smPuxar; seu corpo chama smPuxar1 dinamicamente. A barreira fica aqui para não alterar a Semana.
+// Também protege salvamentos disparados durante a inicialização, inclusive quando ainda não há SM.d.
+const ntPuxar1=smPuxar1,ntMudar=smMudar;
+smPuxar1=async function(...args){await ntMigraLegado();if(NT.legado)return false;return ntPuxar1(...args)};
+smMudar=function(...args){const espera=ntMigraLegado();if(espera)return espera.then(()=>NT.legado?false:ntMudar(...args));if(NT.legado)return Promise.resolve(false);return ntMudar(...args)};
+const ntFilaInicio=ntMigraLegado();if(ntFilaInicio)ntFilaInicio.then(ntFilaInicia);else ntFilaInicia();
 window.addEventListener('online',()=>{ntSync().then(()=>smPuxar())});
-window.addEventListener('storage',e=>{if(e.key===NT_PEND){if(SM.d){ntAntes();ntAplica(SM.d,ntPendentes());ntSincroniza()}smRender()}});
+// Outra aba do navegador gravou (ou terminou de enviar) a fila: funde com o que esta aba tem e mostra no editor sem recarregar.
+window.addEventListener('storage',async e=>{
+  if(e.key!==NT_PEND&&!e.key?.startsWith(NT_PEND+':'))return;
+  await ntMigraLegado();if(NT.legado)return;
+  if(SM.d){ntAntes();ntAplica(SM.d,ntPendentes());ntSincroniza()}
+  smRender();
+  if(e.newValue==null&&SM.d&&!ntTemPendentes())Promise.resolve(NT.sync).then(()=>smPuxar()).catch(()=>{});   // busca depois do PUT local; também resolve SM.sujo desta aba
+});
 window.addEventListener('beforeunload',()=>{if(NT.sujo)ntSalvaDoc();if(NP?.sujo)pgSalvaDoc();if(NP)pgTituloSalva()});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){if(NT.sujo)ntSalvaDoc();if(NP?.sujo)pgSalvaDoc();if(NP)pgTituloSalva()}});

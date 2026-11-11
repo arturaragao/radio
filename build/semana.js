@@ -111,7 +111,8 @@ async function smPuxar1(){
     smRender();
   }
 }
-function smRender(){if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
+function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   // aba de uma página (?pagina=<id>): o resto do app não é desenhado
+  if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
 // toda mudança é uma função idempotente: aplica na hora e de novo na gravação (se outro aparelho mudou o arquivo, relê e reaplica)
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
 function smMudar(fn,msg,aoSalvar){
@@ -126,12 +127,12 @@ function smMudar(fn,msg,aoSalvar){
         grupo.forEach(g=>g.fn(SM.d));
         if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
         const texto=JSON.stringify(SM.d,null,1),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
-        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[];   // o que subiu: páginas criadas durante o voo do PUT não entram na base
+        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
         SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
-        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags);   // o que subiu é a última versão sincronizada das notas
+        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags,frases,pastas||null);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){

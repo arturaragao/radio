@@ -13,8 +13,8 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
   const E={...env,...(sw?{BCBR_SW:'1'}:{})};
   const S={proc:sobeServidor(porta,E)};
   const proc=spawn(chrome,['--headless=new','--no-sandbox','--disable-gpu','--disable-background-networking','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${perfil}`,'about:blank'],{windowsHide:true,stdio:'ignore'});
-  let ws;
-  const fim=async()=>{try{ws?.close()}catch(e){}proc.kill();S.proc.kill();await espera(600);fs.rmSync(perfil,{recursive:true,force:true,maxRetries:8,retryDelay:250})};
+  let ws;const abas=[];   // abas extras (novaAba)
+  const fim=async()=>{try{ws?.close()}catch(e){}for(const w of abas)try{w.close()}catch(e){}proc.kill();S.proc.kill();await espera(600);fs.rmSync(perfil,{recursive:true,force:true,maxRetries:8,retryDelay:250})};
   try{
     const pa=path.join(perfil,'DevToolsActivePort');for(let i=0;i<150&&!fs.existsSync(pa);i++)await espera(100);
     if(!fs.existsSync(pa))throw new Error('Chrome não abriu o protocolo de depuração');
@@ -38,6 +38,21 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
       if(aba){await ev(`go('${aba}')`);if(aba==='notas')for(let i=0;i<100;i++){if(await ev("typeof NT!=='undefined'&&!!NT.ed&&!!document.querySelector('.nt-pm')").catch(()=>false))break;await espera(100)}}
       await espera(600);await ev("SM.fila.then(()=>1)");
     };
+    // 1.43: outra aba do MESMO Chrome (mesmo perfil = mesmo localStorage), como duas abas do navegador. Devolve {ev,call,abre(url),traz,erros}.
+    const novaAba=async id=>{
+      const alvo2=id?(await(await fetch(`http://127.0.0.1:${pc}/json/list`)).json()).find(t=>t.id===id):await(await fetch(`http://127.0.0.1:${pc}/json/new?about:blank`,{method:'PUT'})).json();
+      const w=new WebSocket(alvo2.webSocketDebuggerUrl);await new Promise((a,b)=>{w.onopen=a;w.onerror=b});abas.push(w);
+      let sq=0;const pd=new Map(),erros2=[];
+      const call2=(method,params={})=>new Promise((resolve,reject)=>{const id=++sq;pd.set(id,{resolve,reject});w.send(JSON.stringify({id,method,params}))});
+      w.onmessage=e=>{const r=JSON.parse(e.data);if(r.id){const p=pd.get(r.id);pd.delete(r.id);if(p)r.error?p.reject(Error(JSON.stringify(r.error))):p.resolve(r.result)}
+        if(r.method==='Runtime.exceptionThrown')erros2.push(r.params.exceptionDetails.exception?.description||r.params.exceptionDetails.text);
+        if(r.method==='Fetch.requestPaused'){const p=r.params;call2(local(p.request.url)?'Fetch.continueRequest':'Fetch.failRequest',{requestId:p.requestId,...(local(p.request.url)?{}:{errorReason:'BlockedByClient'})}).catch(()=>{})}};
+      const ev2=async expression=>{const r=await call2('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value};
+      await call2('Page.enable');await call2('Runtime.enable');await call2('Fetch.enable',{patterns:[{urlPattern:'*'}]});
+      await call2('Emulation.setDeviceMetricsOverride',{width:largura,height:altura,deviceScaleFactor:1,mobile:false});
+      const abre2=async url=>{await call2('Page.navigate',{url});for(let i=0;i<150;i++){if(await ev2("typeof SM!=='undefined'&&SM.ok&&!!document.querySelector('main')").catch(()=>false))break;await espera(100)}await espera(600)};
+      return {call:call2,ev:ev2,erros:erros2,abre:abre2,traz:()=>call2('Page.bringToFront'),fecha:async()=>{try{w.close()}catch(e){}await fetch(`http://127.0.0.1:${pc}/json/close/${alvo2.id}`).catch(()=>{})}};
+    };
     const abre=async aba=>{await call('Page.navigate',{url:URL_});await esperaApp(aba)};
     const tecla=async(key,extra={})=>{await call('Input.dispatchKeyEvent',{type:'keyDown',key,...extra});await call('Input.dispatchKeyEvent',{type:'keyUp',key,...extra})};
     const digita=async txt=>{for(const ch of txt){await call('Input.dispatchKeyEvent',{type:'keyDown',key:ch,text:ch,unmodifiedText:ch});await call('Input.dispatchKeyEvent',{type:'keyUp',key:ch})}};
@@ -56,7 +71,7 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
     const fechaTodos=()=>ev("document.querySelectorAll('.nt-seta').forEach(b=>b.getAttribute('aria-expanded')==='true'&&b.click())");
     const confirmado=async()=>{for(let i=0;i<100;i++){if(await ev("!ntTemPendentes()&&!NT.sync&&!NT.sujo&&!SM.sujo"))return true;await espera(100)}return false};
     const abertos=()=>ev("[...document.querySelectorAll('.nt-pm [data-type=details]')].map(d=>d.classList.contains('is-open'))");
-    return {call,ev,espera,esperaApp,abre,tecla,digita,especial,ctrl,click,mouse,arrasta,shot,ate,par,tg,reset,fechaTodos,confirmado,abertos,erros,consoleErros,URL_,S,porta,env:E,fim,
+    return {call,ev,espera,esperaApp,abre,tecla,digita,especial,ctrl,click,mouse,arrasta,shot,ate,par,tg,reset,fechaTodos,confirmado,abertos,erros,consoleErros,URL_,S,porta,env:E,fim,novaAba,
       sobeServidor:()=>{S.proc=sobeServidor(porta,E)},paraServidor:async()=>{S.proc.kill();await espera(500)}};
   }catch(e){await fim();throw e}
 }

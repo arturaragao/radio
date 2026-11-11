@@ -1,5 +1,5 @@
 // 1.42 no Chrome headless (dados fictícios, servidor --simulado + BCBR_MEM=1 + 5.700 questões fictícias): Ctrl+F nas Notas, busca global Ctrl+P, Ctrl+Alt+T / Ctrl+Enter,
-// seleção de blocos por retângulo, histórico de versões, @lembrete, Recentes, frases-padrão e o resgate do texto digitado numa página apagada em outro aparelho (A2).
+// seleção de blocos por retângulo, histórico de versões, @lembrete, frases-padrão e o resgate do texto digitado numa página apagada em outro aparelho (A2).
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {iniciar,espera}=require('./chrome-util.js');
@@ -54,7 +54,7 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     // atalhos listados no painel Ctrl+/
     await ctrl('/');await espera(150);
     const painel=await ev("document.getElementById('nt_atalhos')?.textContent");
-    for(const s of ['Ctrl+Alt+T','Ctrl+Enter','Ctrl+F','Ctrl+P','Histórico','@','Frase','Recentes','Selecionar blocos'])assert.ok(painel.includes(s),'painel de atalhos lista '+s);
+    for(const s of ['Ctrl+Alt+T','Ctrl+Enter','Ctrl+F','Ctrl+P','Histórico','@','Frase','Selecionar blocos'])assert.ok(painel.includes(s),'painel de atalhos lista '+s);
     await especial('Escape');
   });
 
@@ -112,17 +112,16 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     assert.deepEqual((await txtTopo()).slice(0,5),['p2','T:T3','p4','p5','p1'],'o grupo foi para o começo, p1 desceu');
   });
 
-  await t.test('Recentes: últimas 5 páginas abertas, acima de Fixadas',async()=>{
+  await t.test('1.43 sem "Recentes": a barra lateral só tem Fixadas e Páginas, e a chave bcbr_nt_recentes não é mais gravada (nem sobra)',async()=>{
     for(let i=1;i<=6;i++){await ev(`(()=>{const id=ntPaginaCria();pgMuda(l=>{l.find(p=>p.id===id).titulo='Pág ${i}'});window.__id${i}=id})()`)}
     await ev("go('notas')");await ate("!!NT.ed&&!!document.querySelector('.nt-pm')");
     await ev("pgMuda(l=>{l.find(p=>p.titulo==='Pág 2').fixada=true})");
     for(let i=1;i<=6;i++){await ev(`ntPainelAbre(window.__id${i})`);await espera(150);await especial('Escape');await espera(150)}
     await ev("ntLateralPinta()");
-    const secoes=await ev("[...document.querySelectorAll('#nt_lat .nt-lat-s')].map(e=>e.textContent)");
-    assert.deepEqual(secoes,['Recentes','Fixadas','Páginas'],'Recentes vem antes de Fixadas');
-    assert.deepEqual(await ev("[...document.querySelectorAll('#nt_lat [data-sec=rec] .nt-pg-rec')].map(e=>e.textContent.replace('📄 ',''))"),['Pág 6','Pág 5','Pág 4','Pág 3','Pág 2'],'as 5 últimas, a mais nova primeiro');
-    assert.match(await ev("localStorage.getItem('bcbr_nt_recentes')"),/^\[/,'por aparelho, em localStorage');
-    await click('#nt_lat [data-sec=rec] .nt-pg-rec');await ate("!!document.querySelector('#nt_pan')");await especial('Escape');
+    assert.deepEqual(await ev("[...document.querySelectorAll('#nt_lat .nt-lat-s')].map(e=>e.textContent)"),['Fixadas','Páginas'],'sem a seção Recentes');
+    assert.equal(await ev("document.querySelectorAll('#nt_lat .nt-pg-rec,#nt_lat [data-sec=rec]').length"),0);
+    assert.equal(await ev("typeof ntRecentes+typeof ntRecentePoe+typeof NT_REC"),'undefinedundefinedundefined','o código saiu');
+    assert.equal(await ev("localStorage.getItem('bcbr_nt_recentes')"),null,'abrir páginas não grava a chave');
   });
 
   await t.test('busca global Ctrl+P: acha nota, página, tarefa, evento e questão, agrupa por tipo, navega, lembra recentes; 5.700 questões sem lentidão',async()=>{

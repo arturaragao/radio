@@ -114,7 +114,18 @@ function ntBselExt(c){
         handleDOMEvents:{
           copy(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);return true},
           cut(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);ntBselApaga(v,p);return true},
-          mousedown(v){limpa(v);return false},
+          mousedown(v,e){
+            limpa(v);
+            // 1.43 (bug): com um bloco que contém texto (toggle, destaque, citação) selecionado como NÓ, o ProseMirror trata qualquer clique dentro dele como
+            // "arrastar o nó selecionado": não dava para selecionar nem arrastar o texto de uma linha de dentro (arrastava o toggle inteiro). Clicar dentro
+            // volta a seleção para texto; o bloco inteiro continua arrastável pela alça ⋮⋮.
+            const s=v.state.selection;
+            if(e.button===0&&s.node&&!s.node.isAtom&&!e.target.closest?.('.nt-seta,.nt-alca')){
+              const r=v.posAtCoords({left:e.clientX,top:e.clientY});
+              if(r)try{v.dispatch(v.state.tr.setSelection(TT.pm.state.Selection.near(v.state.doc.resolve(r.pos))))}catch(x){}
+            }
+            return false;
+          },
         },
         handleDrop(v,e,_s,moved){
           if(!c.grupoArrasto||!moved)return false;
@@ -416,8 +427,7 @@ function ntHistRestaura(c,versao,pg,bloco){
 // ===== Frases-padrão: SM.d.notasFrases = [{id,titulo,texto,atualizado}] (fusão por `atualizado`, aparelho antigo não apaga) =====
 const ntFrases=()=>Array.isArray(SM.d?.notasFrases)?SM.d.notasFrases:[];
 function frGrava(l){
-  const p=ntPendentes()[0];
-  try{localStorage.setItem(NT_PEND,JSON.stringify({...p,blocos:p?.blocos||SM.d.notasDoc?.blocos||[],frases:l,em:Date.now(),conflitos:p?.conflitos||[]}))}catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  if(!ntFilaGrava('frases',ntFrases(),l))return false;
   SM.d.notasFrases=l;smGuardaCache();ntSync();return true;
 }
 const frMuda=fn=>{if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntFrases()));fn(l);return frGrava(l)};
@@ -465,6 +475,183 @@ function ntFrasesGerencia(){
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();
 }
 
-// ===== Recentes: últimas 5 páginas abertas neste aparelho =====
-function ntRecentes(){try{const l=JSON.parse(localStorage.getItem(NT_REC)||'[]');return Array.isArray(l)?l.filter(x=>typeof x==='string'):[]}catch(e){return []}}
-function ntRecentePoe(id){try{localStorage.setItem(NT_REC,JSON.stringify([id,...ntRecentes().filter(x=>x!==id)].slice(0,5)))}catch(e){}}
+// ===== Importação HTML do Notion: ZIP local, documento inerte e construção explícita do JSON =====
+const NT_ZIP_MAX=200*1024*1024,NT_IMG_LIM=25*1024*1024,NT_ZIP_ARQS=2000;
+function ntZipCrc(b){let c=0xffffffff;for(const v of b){c^=v;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0)}return (c^0xffffffff)>>>0}
+function ntZipCaminho(s){
+  if(/^[a-z][\w+.-]*:|^[\\/]|\0/i.test(s))throw Error('Caminho inválido no ZIP.');
+  const p=[];for(const x of s.replaceAll('\\','/').split('/')){if(x==='..'){if(!p.length)throw Error('Caminho fora do ZIP.');p.pop()}else if(x&&x!=='.')p.push(x)}return p.join('/');
+}
+// Expansão limitada também DURANTE o deflate: tamanho declarado falso não permite uma bomba ZIP.
+async function ntZipLer(bytes,estado={n:0,total:0},prefixo='',nivel=0,cancelado=()=>false){
+  if(nivel>5)throw Error('ZIP com muitos níveis de arquivos compactados.');
+  const b=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes),d=new DataView(b.buffer,b.byteOffset,b.byteLength),erro=()=>Error('ZIP corrompido ou incompleto.');
+  if(b.length>NT_ZIP_MAX)throw Error('O ZIP deve ter no máximo 200 MB.');
+  const u16=p=>d.getUint16(p,true),u32=p=>d.getUint32(p,true);let e=-1;
+  for(let p=b.length-22;p>=Math.max(0,b.length-65557);p--)if(u32(p)===0x06054b50&&p+22+u16(p+20)===b.length){e=p;break}
+  if(e<0)throw erro();
+  const n=u16(e+10),tam=u32(e+12),ini=u32(e+16);
+  if(n===65535||tam===0xffffffff||ini===0xffffffff||(e>=20&&u32(e-20)===0x07064b50))throw Error('ZIP64 não é suportado. Exporte um ZIP menor.');
+  if(u16(e+4)||u16(e+6)||u16(e+8)!==n)throw Error('ZIP dividido em volumes não é suportado.');
+  if(ini+tam!==e)throw erro();
+  if((estado.n+=n)>NT_ZIP_ARQS)throw Error('O ZIP deve conter no máximo 2.000 arquivos.');
+  const entradas=[],nomes=new Set();let p=ini;
+  for(let i=0;i<n;i++){
+    if(p+46>e||u32(p)!==0x02014b50)throw erro();
+    const flags=u16(p+8),metodo=u16(p+10),crc=u32(p+16),comp=u32(p+20),tamanho=u32(p+24),nl=u16(p+28),xl=u16(p+30),cl=u16(p+32),offset=u32(p+42),fim=p+46+nl+xl+cl;
+    if(flags&0x2041)throw Error('ZIP cifrado não é suportado. Exporte sem senha.');
+    if(![0,8].includes(metodo))throw Error('Método de compactação do ZIP não suportado (use 0 ou 8).');
+    if([comp,tamanho,offset].includes(0xffffffff)||u16(p+34)===65535)throw Error('ZIP64 não é suportado.');
+    if(fim>e||u16(p+34))throw erro();
+    for(let x=p+46+nl;x<p+46+nl+xl;){if(x+4>p+46+nl+xl)throw erro();const tag=u16(x),len=u16(x+2);if(tag===1)throw Error('ZIP64 não é suportado.');x+=4+len;if(x>p+46+nl+xl)throw erro()}
+    let nome;try{nome=new TextDecoder('utf-8',{fatal:true}).decode(b.subarray(p+46,p+46+nl))}catch(e){throw Error('Nome de arquivo do ZIP não está em UTF-8.')}
+    const caminho=ntZipCaminho(nome);if(!caminho||nomes.has(caminho))throw Error('ZIP contém caminhos vazios ou repetidos.');nomes.add(caminho);
+    if(tamanho>NT_IMG_LIM&&/\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(nome))throw Error('Cada imagem deve ter no máximo 25 MB.');
+    if((estado.total+=tamanho)>NT_ZIP_MAX)throw Error('O conteúdo descompactado deve ter no máximo 200 MB.');
+    if(offset+30>ini||u32(offset)!==0x04034b50)throw erro();
+    if(u16(offset+6)!==flags||u16(offset+8)!==metodo||u16(offset+26)!==nl)throw erro();
+    if(!(flags&8)&&(u32(offset+14)!==crc||u32(offset+18)!==comp||u32(offset+22)!==tamanho))throw erro();
+    const inicio=offset+30+u16(offset+26)+u16(offset+28);
+    if(inicio+comp>ini||!b.subarray(offset+30,offset+30+nl).every((v,j)=>v===b[p+46+j]))throw erro();
+    for(let x=offset+30+nl;x<inicio;){if(x+4>inicio)throw erro();const tag=u16(x),len=u16(x+2);if(tag===1)throw Error('ZIP64 não é suportado.');x+=4+len;if(x>inicio)throw erro()}
+    entradas.push({caminho:prefixo+caminho,diretorio:nome.endsWith('/'),metodo,crc,tamanho,inicio,comp});p=fim;
+  }
+  if(p!==e)throw erro();
+  const out=new Map();
+  for(const a of entradas){
+    if(cancelado())throw Error('Importação cancelada.');
+    let raw=b.subarray(a.inicio,a.inicio+a.comp);
+    if(a.metodo===8){
+      let leitor;try{leitor=new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader()}catch(e){throw Error('Este navegador não suporta descompactação deflate-raw.')}
+      const partes=[];let l=0;
+      try{while(true){const r=await leitor.read();if(r.done)break;if(cancelado())throw Error('Importação cancelada.');l+=r.value.length;if(l>a.tamanho||l>NT_ZIP_MAX)throw erro();partes.push(r.value)}}catch(e){await leitor.cancel().catch(()=>{});throw Error(cancelado()?'Importação cancelada.':'ZIP corrompido durante a descompactação.')}
+      raw=new Uint8Array(l);let off=0;for(const x of partes){raw.set(x,off);off+=x.length}
+    }
+    if(raw.length!==a.tamanho||ntZipCrc(raw)!==a.crc)throw erro();
+    if(a.diretorio)continue;
+    if(/\.zip$/i.test(a.caminho)){
+      const interno=await ntZipLer(raw,estado,a.caminho.replace(/\.zip$/i,'')+'/',nivel+1,cancelado);for(const [k,v] of interno){if(out.has(k))throw erro();out.set(k,v)}
+    }else{if(out.has(a.caminho))throw erro();out.set(a.caminho,raw)}
+  }
+  return out;
+}
+function ntNotionRef(base,ref){
+  if(!ref||/^[a-z][\w+.-]*:|^[\\/]/i.test(ref))return '';
+  try{return ntZipCaminho(base.slice(0,base.lastIndexOf('/')+1)+decodeURIComponent(ref.split(/[?#]/)[0]))}catch(e){return ''}
+}
+const ntNotionNome=s=>s.split('/').pop().replace(/\.html?$/i,'').replace(/[ _-]?[a-f0-9]{32}$/i,'').trim()||'Página importada';
+function ntNotionConverte(html,caminho,paginas=new Map()){
+  // DOMParser não injeta nada na página ativa. Nenhum elemento deste documento é adotado no DOM vivo.
+  const d=new DOMParser().parseFromString(html,'text/html');
+  d.querySelectorAll('script,style,link,meta,base').forEach(e=>e.remove());
+  const titulo=(d.querySelector('title')?.textContent||d.querySelector('h1')?.textContent||ntNotionNome(caminho)).trim().replace(/[ _-][a-f0-9]{32}$/i,'').slice(0,200)||ntNotionNome(caminho);
+  const imagens=[],cores={gray:'cinza',brown:'marrom',orange:'laranja',yellow:'amarelo',green:'verde',blue:'azul',purple:'roxo',pink:'rosa',red:'vermelho'};let simplificados=0;
+  const marcas=(e,ant)=>{
+    let ms=[...ant];const add=(type,attrs)=>{ms=ms.filter(m=>m.type!==type);ms.push({type,...(attrs?{attrs}:{})})},tag=e.tagName;
+    const tipo={B:'bold',STRONG:'bold',I:'italic',EM:'italic',U:'underline',S:'strike',DEL:'strike',STRIKE:'strike'}[tag];if(tipo)add(tipo);
+    let attrs={...(ms.find(m=>m.type==='textStyle')?.attrs||{})};
+    if(tag==='CODE')attrs.codigo=true;
+    for(const c of e.classList){const m=/^(?:highlight-|block-color-)(gray|brown|orange|yellow|green|blue|purple|pink|red)(_background)?$/.exec(c);if(m)attrs[m[2]?'backgroundColor':'color']=`var(--nt${m[2]?'b':'c'}-${cores[m[1]]})`}
+    if(Object.keys(attrs).length)add('textStyle',attrs);
+    if(tag==='A'){const href=e.getAttribute('href')?.trim();if(/^(https?:\/\/|mailto:)/i.test(href||'')){try{const u=new URL(href);if(['http:','https:','mailto:'].includes(u.protocol))add('link',{href:u.href,target:'_blank',rel:'noopener noreferrer nofollow'})}catch(e){}}}
+    return ms;
+  };
+  const inline=(n,ms=[])=>{
+    if(n.nodeType===3){const text=n.textContent.replace(/[\r\n\t]+/g,' ');return text?[{type:'text',text,...(ms.length?{marks:ms}:{})}]:[]}
+    if(n.nodeType!==1||['SCRIPT','STYLE','IFRAME','IMG','INPUT'].includes(n.tagName))return [];
+    if(n.classList.contains('equation')){simplificados++;return n.textContent?[{type:'text',text:n.textContent}]:[]}
+    const m=marcas(n,ms);if(n.tagName==='BR')return [{type:'text',text:'\n',...(m.length?{marks:m}:{})}];
+    return [...n.childNodes].flatMap(c=>inline(c,m));
+  };
+  const par=(e,ms)=>({type:'paragraph',content:inline(e,ms)}),naoVazio=a=>a.length?a:[ntPar('')];
+  const blocos=(pai,ms=[])=>{
+    const out=[];let linha=[];const flush=()=>{if(linha.some(n=>n.text?.trim()))out.push({type:'paragraph',content:linha});linha=[]};
+    for(const e of pai.childNodes){
+      if(e.nodeType===3){linha.push(...inline(e,ms));continue}if(e.nodeType!==1)continue;
+      const tag=e.tagName,m=marcas(e,ms);if(['SCRIPT','STYLE','INPUT'].includes(tag))continue;
+      if(['SPAN','STRONG','B','EM','I','U','S','DEL','CODE','BR','A'].includes(tag)){
+        if(e.querySelector('img')){flush();out.push(...blocos(e,m));continue} // exportação real: figure > a > img
+        const pg=tag==='A'&&paginas.get(ntNotionRef(caminho,e.getAttribute('href')));if(pg){flush();out.push({type:'paginaLink',attrs:{pagina:pg}})}else linha.push(...inline(e,ms));continue;
+      }
+      flush();
+      if(tag==='H1'&&e.classList.contains('page-title'))continue;
+      if(tag==='DETAILS'){
+        const sum=[...e.children].find(c=>c.tagName==='SUMMARY'),content=blocos(e,m);
+        out.push({type:'details',attrs:{id:ntNovoId()},content:[{type:'detailsSummary',content:sum?inline(sum,m):[]},{type:'detailsContent',content:naoVazio(content)}]});continue;
+      }
+      if(tag==='SUMMARY')continue;
+      if(tag==='UL'&&e.classList.contains('toggle')){
+        for(const li of e.children){if(li.tagName!=='LI')continue;
+          if(li.children.length===1&&li.firstElementChild.tagName==='DETAILS'){out.push(...blocos(li,m));continue}
+          const f=blocos(li,m),primeiro=f[0]?.type==='paragraph'?f.shift():ntPar('');
+          out.push({type:'details',attrs:{id:ntNovoId()},content:[{type:'detailsSummary',content:primeiro.content||[]},{type:'detailsContent',content:naoVazio(f)}]});
+        }continue;
+      }
+      if(tag==='UL'||tag==='OL'){
+        const tarefa=e.classList.contains('to-do-list'),items=[...e.children].filter(c=>c.tagName==='LI').map(li=>{
+          const cont=blocos(li,marcas(li,m));if(cont[0]?.type!=='paragraph')cont.unshift(ntPar(''));
+          return {type:tarefa?'taskItem':'listItem',...(tarefa?{attrs:{checked:!!li.querySelector('input[checked],.checkbox-on')}}:{}),content:cont};
+        });if(items.length)out.push({type:tarefa?'taskList':tag==='OL'?'orderedList':'bulletList',...(tag==='OL'?{attrs:{start:Math.max(1,Number(e.getAttribute('start'))||1)}}:{}),content:items});continue;
+      }
+      if(tag==='IMG'){
+        const src=e.getAttribute('src')||'',ref=ntNotionRef(caminho,src),no=ntPar('[imagem não importada: '+(ref?.split('/').pop()||'externa')+']');
+        out.push(no);if(ref)imagens.push({no,caminho:ref});else simplificados++;continue;
+      }
+      if(tag==='TABLE'){simplificados++;for(const tr of e.querySelectorAll('tr'))out.push(ntPar([...tr.children].map(c=>c.textContent.trim()).join(' | ')));continue}
+      if(e.classList.contains('column-list')||e.classList.contains('equation')||e.classList.contains('collection-content')||e.classList.contains('source')||['IFRAME','OBJECT','EMBED'].includes(tag)){
+        simplificados++;const texto=e.classList.contains('column-list')?[...e.children].map(c=>c.textContent.trim()).join('\n'):e.textContent.trim();out.push(ntPar(texto||e.getAttribute('title')||'[conteúdo incorporado simplificado]'));continue;
+      }
+      if(tag==='HR'){out.push({type:'horizontalRule'});continue}
+      if(/^H[1-3]$/.test(tag)){out.push({type:'heading',attrs:{level:Number(tag[1])},content:inline(e,ms)});continue}
+      if(tag==='P'){const a=e.children.length===1&&e.firstElementChild.tagName==='A'?e.firstElementChild:null,pg=a&&paginas.get(ntNotionRef(caminho,a.getAttribute('href')));out.push(pg?{type:'paginaLink',attrs:{pagina:pg}}:par(e,ms));continue}
+      if(tag==='BLOCKQUOTE'||e.classList.contains('callout')){const content=blocos(e,m);out.push({type:tag==='BLOCKQUOTE'?'blockquote':'callout',content:naoVazio(content)});continue}
+      out.push(...blocos(e,m));
+    }flush();return out;
+  };
+  const raiz=d.querySelector('.page-body')||d.querySelector('article')||d.body;
+  return {titulo,doc:{type:'doc',content:naoVazio(blocos(raiz))},imagens,simplificados};
+}
+function ntNotionEscolhe(){
+  const i=document.createElement('input');i.type='file';i.accept='.zip,.html,.htm';i.className='nt-notion-arquivo';i.hidden=true;i.onchange=()=>{const f=i.files[0];i.remove();if(f)ntNotionImporta(f)};i.oncancel=()=>i.remove();document.body.appendChild(i);i.click();
+}
+async function ntNotionImporta(arquivo){
+  if(NT.importando){toast('Já existe uma importação em andamento.');return}
+  NT.importando=true;let cancelado=false;
+  const ov=ntModal('nt-importa','<h3>Importar do Notion</h3><p class="nt-importa-status" role="status">Lendo arquivo…</p><div class="nt-importa-acoes"><button type="button" class="b">Cancelar</button></div>'),status=ov.querySelector('[role=status]'),acoes=ov.querySelector('.nt-importa-acoes');
+  ov.aoFechar=()=>{cancelado=true};acoes.querySelector('button').onclick=()=>{cancelado=true;status.textContent='Cancelando…'};
+  const checa=()=>{if(cancelado)throw Error('Importação cancelada.')};
+  let enviadas=0,falhas=0,simplificados=0;
+  try{
+    if(arquivo.size>NT_ZIP_MAX)throw Error('O arquivo deve ter no máximo 200 MB.');
+    const zip=/\.zip$/i.test(arquivo.name),arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
+    if(!zip&&!/\.html?$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip ou .html.');
+    const htmls=[...arqs].filter(([k])=>/\.html?$/i.test(k)).sort(([a],[b])=>a.split('/').length-b.split('/').length||a.localeCompare(b));
+    if(!htmls.length)throw Error('Nenhuma página HTML encontrada no arquivo.');
+    const ids=new Map(htmls.map(([k])=>[k,ntNovoId().replace(/^b/,'p')])),pags=htmls.map(([k,v])=>({...ntNotionConverte(new TextDecoder().decode(v),k,ids),id:ids.get(k)}));
+    for(const p of pags)for(const img of p.imagens){const b=arqs.get(img.caminho);if(b?.length>NT_IMG_LIM)throw Error('Cada imagem deve ter no máximo 25 MB.')}
+    let soTexto=false;
+    if((navigator.onLine===false||BCBR.semRede)&&pags.some(p=>p.imagens.length)){
+      status.textContent='As imagens precisam de conexão. Deseja importar só o texto?';
+      soTexto=await new Promise(resolve=>{const b=document.createElement('button');b.type='button';b.className='b';b.textContent='Importar só o texto';b.onclick=()=>{b.remove();resolve(true)};acoes.appendChild(b);const cancela=()=>{cancelado=true;resolve(false)};acoes.querySelector('button').onclick=cancela;ov.aoFechar=cancela});checa();
+    }
+    for(let i=0;i<pags.length;i++){
+      const p=pags[i];simplificados+=p.simplificados;checa();status.textContent=`Importando… página ${i+1}/${pags.length}, imagem 0/${p.imagens.length}`;
+      for(let j=0;j<p.imagens.length;j++){
+        checa();status.textContent=`Importando… página ${i+1}/${pags.length}, imagem ${j+1}/${p.imagens.length}`;
+        const img=p.imagens[j],raw=arqs.get(img.caminho);
+        if(soTexto||!raw){falhas++;continue}
+        try{const nome=await ntImgEnvia(await ntImgComprime(new Blob([raw])));Object.keys(img.no).forEach(k=>delete img.no[k]);Object.assign(img.no,{type:'image',attrs:{src:'./img/'+nome}});enviadas++}catch(e){falhas++}
+      }
+    }
+    checa();
+    const agora=ntAgora(),pasta=pags.length>1?{id:ntNovoId().replace(/^b/,'f'),titulo:pags[0].titulo,ordem:Math.max(0,...ntPastas().map(f=>+f.ordem||0))+10,criado:agora,atualizado:agora}:null;
+    // Validar tudo antes de gravar: sem página parcialmente importada por HTML/ZIP inválido.
+    for(const p of pags)NT.ed.state.schema.nodeFromJSON(p.doc).check();
+    const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));
+    if(!pgGrava([...ntPaginas(),...novas],pasta?[...ntPastas(),pasta]:undefined))throw Error('Sem espaço para salvar a importação neste aparelho.');
+    status.textContent=`${novas.length} páginas criadas; ${enviadas} imagens enviadas, ${falhas} falhas; ${simplificados} itens simplificados.`;
+    acoes.replaceChildren();const fim=document.createElement('button');fim.type='button';fim.className='b';fim.textContent='Concluir';fim.onclick=()=>ntModalFecha(ov);acoes.appendChild(fim);ov.aoFechar=null;ntPainelAbre(novas[0].id);
+    return {paginas:novas.length,enviadas,falhas,simplificados};
+  }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
+  finally{NT.importando=false}
+}

@@ -45,7 +45,7 @@ function bgDocs(){
     const sum=b.conteudo?.type==='details'?bgTextoNo(b.conteudo.content?.find(x=>x.type==='detailsSummary')).trim():'';
     add('nota',b.id,sum||txt.slice(0,70),txt,()=>bgIrNota(b.id));
   }
-  for(const p of d?.notasPaginas?.paginas||[])add('pagina',p.id,p.titulo||'Sem título',(p.doc?.blocos||[]).map(b=>bgTextoNo(b.conteudo)).join(' '),()=>bgIrPagina(p.id));
+  for(const p of d?.notasPaginas?.paginas||[])add('pagina',p.id,p.titulo||'Sem título',(p.doc?.blocos||[]).map(b=>bgTextoNo(b.conteudo)).join(' '),()=>bgIrPagina(p.id),d.notasPaginas.pastas?.find(f=>f.id===p.pasta)?.titulo);
   for(const t of d?.tarefas||[])add('tarefa',t.id,t.texto,[t.det,...(t.subtarefas||[]).map(s=>s.texto)].filter(Boolean).join(' '),()=>bgIrTarefa(t.id),(t.dia&&t.dia.length===10?t.dia.slice(8)+'/'+t.dia.slice(5,7):'')+(t.feito?' · feita':''));
   for(const [iso,x] of Object.entries(d?.dias||{})){
     const rot=iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4);
@@ -122,7 +122,7 @@ function bgAbre(){
   pinta();q.focus();
 }
 document.addEventListener('keydown',e=>{
-  if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey||typeof SM==='undefined')return;
+  if(!(e.ctrlKey||e.metaKey)||e.altKey||e.shiftKey||typeof SM==='undefined'||document.body.classList.contains('nt-aba-pg'))return;   // (na aba de uma página não há outras abas do app para ir)
   const k=String(e.key).toLowerCase();if(k!=='p'&&k!=='k')return;
   if(k==='k'&&e.target.closest?.('.ProseMirror'))return;   // dentro do texto das Notas, Ctrl+K continua sendo link
   e.preventDefault();e.stopImmediatePropagation();bgAbre();

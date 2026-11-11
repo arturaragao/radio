@@ -24,13 +24,13 @@ for(const prova of ['2026-11-01','12/12/2025','',null]){
   });
 }
 
-test('configurações mostram data e RI somente leitura e todos os artefatos estão em 1.42.0',()=>{
+test('configurações mostram data e RI somente leitura e todos os artefatos estão em 1.43.0',()=>{
   assert.match(app,/<input id="c_p" type="text" value="12\/12\/2026" readonly>/);
   assert.match(app,/<input id="c_d" type="number" value="\$\{RI_DIARIA\}" readonly/);
   assert.doesNotMatch(app,/cfg\.prova\s*\+|new Date\(cfg\.prova/);
-  assert.equal(fs.readFileSync(require.resolve('../versao.txt'),'utf8'),'1.42.0');
-  assert.match(fs.readFileSync(require.resolve('../sw.js'),'utf8'),/const VERSAO = "bcbr-1.42.0";/);
-  assert.match(fs.readFileSync(require.resolve('../index.html'),'utf8'),/BCBR_VERSAO="1.42.0"/);
+  assert.equal(fs.readFileSync(require.resolve('../versao.txt'),'utf8'),'1.43.0');
+  assert.match(fs.readFileSync(require.resolve('../sw.js'),'utf8'),/const VERSAO = "bcbr-1.43.0";/);
+  assert.match(fs.readFileSync(require.resolve('../index.html'),'utf8'),/BCBR_VERSAO="1.43.0"/);
 });
 
 test('meta padrão 50 preserva meta personalizada já salva',()=>{

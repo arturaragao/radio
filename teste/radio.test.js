@@ -44,7 +44,7 @@ test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legív
 
 test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; nada técnico foi renomeado',()=>{
   const index=ler('index.html'),man=JSON.parse(ler('manifest.webmanifest'));
-  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1\.42\.0<\/small><\/div>/);
+  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1\.43\.0<\/small><\/div>/);
   assert.equal(man.name,'Radio');assert.equal(man.short_name,'Radio');assert.equal(man.theme_color,'#2f2923');assert.equal(man.background_color,'#221e1a');
   assert.match(index,/<meta name="theme-color" content="#2f2923" media="\(prefers-color-scheme: dark\)">/);
   assert.match(index,/<meta name="theme-color" content="#4a3320" media="\(prefers-color-scheme: light\)">/);
@@ -53,4 +53,15 @@ test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; n
   // repositório, chaves e arquivos continuam com os nomes antigos
   assert.match(shim,/REPO = "arturaragao\/banco-cbr-app"/);assert.match(shim,/tk: "bcbr_gh_token"/);assert.match(ler('sw.js'),/const REPO = "arturaragao\/banco-cbr-app"/);
   assert.ok(fs.existsSync(require.resolve('../vendor/tiptap.js')));
+});
+
+test('Paleta de cores 1.43: as variáveis de cor valem na barra (a paleta fica fora do .nt-ed) e o contorno das amostras tem contraste >= 3:1 nos dois temas',()=>{
+  assert.equal((css.match(/\.nt-barra\{--ntc-cinza/g)||[]).length,4,'--ntc-/--ntb- declaradas em .nt-ed e em .nt-barra, nos 4 blocos de tema');
+  assert.match(css,/\.nt-amo\{[^}]*border:2px solid color-mix\(in srgb,var\(--tx\) 55%,transparent\)/,'contorno da amostra: --tx a 55 %');
+  const mistura=(a,b,k)=>'#'+[1,3,5].map(i=>Math.round(parseInt(a.slice(i,i+2),16)*k+parseInt(b.slice(i,i+2),16)*(1-k)).toString(16).padStart(2,'0')).join('');
+  for(const nome of ['escuro','claro']){
+    const t=T[nome],borda=mistura(t.tx,t.card,.55);
+    assert.ok(razao(borda,t.card)>=3,`${nome}: contorno da amostra sobre --card = ${razao(borda,t.card).toFixed(2)}`);
+    assert.ok(razao(borda,t.bg)>=3,`${nome}: contorno da amostra sobre --bg = ${razao(borda,t.bg).toFixed(2)}`);
+  }
 });

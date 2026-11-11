@@ -114,14 +114,16 @@ async function smPuxar1(){
     const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
     const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
     SM.ok=true;SM.erro='';
-    if(f.naoMudou||g!==(SM.gravs||0))return;
+    if(f.naoMudou||g!==(SM.gravs||0)){if(g===(SM.gravs||0)&&typeof rdGancho==='function'&&SM.base)rdGancho('leitura',SM.base);return}
     SM.avisoTamanho=f.size>800000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
     if(f.sha!==SM.sha){
       if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
       const texto=smDec(f.content),remoto=JSON.parse(texto);
+      if(typeof rdGancho==='function')rdGancho('leitura',remoto);
       SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
       if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
     SM.etag=f.etag;
+    if(typeof rdGancho==='function'&&SM.base)rdGancho('leitura',SM.base);
   }catch(e){
     console.warn('Leitura do plano no GitHub',e);
     SM.ok=true;
@@ -129,6 +131,7 @@ async function smPuxar1(){
       try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_VELHO}`);SM.d=smConverte(JSON.parse(smDec(f.content)))}catch(e2){SM.d={v:2,dias:{},tarefas:[],notas:[]}}
       SM.sha=null;smMudar(()=>{},'calendário do mês (primeira vez)');
     }else SM.erro=smErroLeitura(e);
+    if(typeof rdGancho==='function')rdGancho('erro',e);
     smRender();
   }
 }
@@ -138,11 +141,15 @@ function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   //
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
 function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
-  if(!SM.d)return Promise.resolve(false);fn(SM.d);smGuardaCache();smRender();smNativoTarefas();
+  if(!SM.d)return Promise.resolve(false);
+  const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
+  fn(SM.d);
+  if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
+  smGuardaCache();smRender();smNativoTarefas();
   const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
-    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});return ok};
+    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});if(typeof rdGancho==='function')rdGancho('fim',grupo.length);return ok};
     for(let t=0;t<6;t++){
       try{
         grupo.forEach(g=>g.fn(SM.d));
@@ -150,14 +157,17 @@ function smMudar(fn,msg,aoSalvar){
         const texto=JSON.stringify(SM.d),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
         const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
+        const enviadas=typeof rdGancho==='function'?rdGancho('envio',texto):null;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
+        if(typeof rdGancho==='function')rdGancho('confirmou',enviadas,texto);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
         SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
         if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags,frases,pastas||null);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
+        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
+        if(typeof rdGancho==='function')rdGancho('erro',e);
         SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
       }
     }
@@ -413,6 +423,7 @@ const SM_RASC_ED='bcbr_rasc_edicao';
 const smRascEd=id=>{try{const r=JSON.parse(localStorage.getItem(SM_RASC_ED)||'null');return r&&r.id===id?r:null}catch(e){return null}};
 function smRascEdSalva(id){
   const g=k=>document.getElementById(k),a=g('sm_ed_txt');if(!a)return;
+  if(typeof rdGancho==='function')rdGancho('rascunho',id);
   try{localStorage.setItem(SM_RASC_ED,JSON.stringify({id,texto:a.innerText,textoHtml:smSanitiza(a.innerHTML),det:g('sm_ed_det')?.innerText,detHtml:g('sm_ed_det')?smSanitiza(g('sm_ed_det').innerHTML):undefined,area:g('sm_ed_area').value,dia:g('sm_ed_dia')?g('sm_ed_dia').value:undefined,...smExtrasLer()}))}catch(e){}
 }
 const smRascEdLimpa=()=>{try{localStorage.removeItem(SM_RASC_ED)}catch(e){}};

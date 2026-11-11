@@ -701,9 +701,9 @@ test('Notas 1.40: ntFunde — mesmo bloco editado nos dois lados: vence o atuali
   assert.deepEqual(lista(r),['x:remoto']);assert.equal(r.conflitos[0].conteudo.content[0].text,'local');
   // o mesmo texto dos dois lados não é conflito
   assert.deepEqual(copia(a.c.ntFunde(base,[bp('x','igual','2026-11-02T00:00:00Z')],[bp('x','igual','2026-11-03T00:00:00Z')])).conflitos,[]);
-  // lista de conflitos: máx. 20, sem repetir
+  // 1.44 parcial: nenhum conflito removido sem descarte explícito; sem repetir
   const muitos=Array.from({length:25},(_,i)=>({id:'c',em:'e'+i}));
-  assert.equal(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])).length,20);
+  assert.deepEqual(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])),muitos);
   const c=r.conflitos[0];assert.equal(copia(a.c.ntJuntaConflitos([c],[{...c,em:'outra tentativa'}])).length,1,'repetir a fusão não duplica a mesma versão');
 });
 test('Notas 1.40: ntFunde — apagado de um lado e intacto do outro apaga; apagado de um e editado do outro fica o editado',async()=>{

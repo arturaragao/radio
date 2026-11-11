@@ -1,4 +1,12 @@
 .versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
+.rd-topo{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;font-size:.75rem}
+.rd-topo button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:3px 7px;font:inherit;cursor:pointer;max-width:100%;text-align:left}
+.rd-topo .rd-erro{color:var(--bad,#ff7272)}
+.rd-modal .nt-modal-c{max-width:720px;max-height:85vh;overflow:auto}
+.rd-modal section{border-top:1px solid var(--bd);padding:12px 0}
+.rd-modal pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;user-select:text;background:var(--card2);padding:10px;max-height:240px;overflow:auto}
+.nt-pan-topo:has(.rd-topo){flex-wrap:wrap}
+.nt-pan-topo .rd-topo{flex-basis:100%}
 .blist{border:1px solid var(--bd);border-radius:12px;overflow:hidden}
 .bq{border-bottom:1px solid var(--bd)}.bq:last-child{border-bottom:0}
 .bq>summary{list-style:none;cursor:pointer;display:flex;gap:10px;align-items:flex-start;padding:10px 12px}

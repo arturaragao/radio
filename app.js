@@ -1,4 +1,4 @@
-// Banco CBR app 1.43.1 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.44.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // ===== INTERPRETAR O TEXTO DE UMA TAREFA (pt-BR, sem API) — 1.17.0 =====
 // interpretarTarefa(texto, hoje) -> [{texto,dia,hora,urg,area,prioridade,etiquetas,repetir}]
 // Pura com hoje explícito; sem hoje usa a data local por compatibilidade com chamadas antigas.
@@ -345,14 +345,16 @@ async function smPuxar1(){
     const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
     const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
     SM.ok=true;SM.erro='';
-    if(f.naoMudou||g!==(SM.gravs||0))return;
+    if(f.naoMudou||g!==(SM.gravs||0)){if(g===(SM.gravs||0)&&typeof rdGancho==='function'&&SM.base)rdGancho('leitura',SM.base);return}
     SM.avisoTamanho=f.size>800000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
     if(f.sha!==SM.sha){
       if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
       const texto=smDec(f.content),remoto=JSON.parse(texto);
+      if(typeof rdGancho==='function')rdGancho('leitura',remoto);
       SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
       if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
     SM.etag=f.etag;
+    if(typeof rdGancho==='function'&&SM.base)rdGancho('leitura',SM.base);
   }catch(e){
     console.warn('Leitura do plano no GitHub',e);
     SM.ok=true;
@@ -360,6 +362,7 @@ async function smPuxar1(){
       try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_VELHO}`);SM.d=smConverte(JSON.parse(smDec(f.content)))}catch(e2){SM.d={v:2,dias:{},tarefas:[],notas:[]}}
       SM.sha=null;smMudar(()=>{},'calendário do mês (primeira vez)');
     }else SM.erro=smErroLeitura(e);
+    if(typeof rdGancho==='function')rdGancho('erro',e);
     smRender();
   }
 }
@@ -369,11 +372,15 @@ function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   //
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
 function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
-  if(!SM.d)return Promise.resolve(false);fn(SM.d);smGuardaCache();smRender();smNativoTarefas();
+  if(!SM.d)return Promise.resolve(false);
+  const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
+  fn(SM.d);
+  if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
+  smGuardaCache();smRender();smNativoTarefas();
   const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
-    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});return ok};
+    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});if(typeof rdGancho==='function')rdGancho('fim',grupo.length);return ok};
     for(let t=0;t<6;t++){
       try{
         grupo.forEach(g=>g.fn(SM.d));
@@ -381,14 +388,17 @@ function smMudar(fn,msg,aoSalvar){
         const texto=JSON.stringify(SM.d),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
         const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
+        const enviadas=typeof rdGancho==='function'?rdGancho('envio',texto):null;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
+        if(typeof rdGancho==='function')rdGancho('confirmou',enviadas,texto);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
         SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
         if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags,frases,pastas||null);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
+        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
+        if(typeof rdGancho==='function')rdGancho('erro',e);
         SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
       }
     }
@@ -644,6 +654,7 @@ const SM_RASC_ED='bcbr_rasc_edicao';
 const smRascEd=id=>{try{const r=JSON.parse(localStorage.getItem(SM_RASC_ED)||'null');return r&&r.id===id?r:null}catch(e){return null}};
 function smRascEdSalva(id){
   const g=k=>document.getElementById(k),a=g('sm_ed_txt');if(!a)return;
+  if(typeof rdGancho==='function')rdGancho('rascunho',id);
   try{localStorage.setItem(SM_RASC_ED,JSON.stringify({id,texto:a.innerText,textoHtml:smSanitiza(a.innerHTML),det:g('sm_ed_det')?.innerText,detHtml:g('sm_ed_det')?smSanitiza(g('sm_ed_det').innerHTML):undefined,area:g('sm_ed_area').value,dia:g('sm_ed_dia')?g('sm_ed_dia').value:undefined,...smExtrasLer()}))}catch(e){}
 }
 const smRascEdLimpa=()=>{try{localStorage.removeItem(SM_RASC_ED)}catch(e){}};
@@ -1575,11 +1586,11 @@ function ntFunde(base,local,remoto,agora=new Date().toISOString()){
   }
   return {blocos:ordem.map(i=>res.get(i)),conflitos};
 }
-// Lista de conflitos do plano (SM.d.notas_conflitos): sem repetir (id+data), só os 20 mais recentes.
+// Lista de conflitos do plano: sem repetir. 1.44 parcial: só o usuário descarta cópias.
 function ntJuntaConflitos(a,b){
   const vistos=new Set(),versoes=new Set(),out=[];
   for(const c of [...(a||[]),...(b||[])]){const k=c.id+'|'+c.em,v=c.conteudo===undefined?k:JSON.stringify([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);if(!vistos.has(k)&&!versoes.has(v)){vistos.add(k);versoes.add(v);out.push(c)}}
-  return out.slice(-NT_MAX_CONFLITOS);
+  return out;
 }
 // 1.43: a base de CADA aba fica na memória (NTB); o localStorage só dá a partida ao abrir a aba. Com várias abas abertas, outra aba que sobe ao GitHub
 // regrava a chave compartilhada: se esta aba lesse a base de lá, o que ela ainda não viu pareceria "alteração local" e reverteria o texto da outra.
@@ -1838,6 +1849,7 @@ function ntSalvaDoc(){
   const ant=NT.shown||SM.d.notasDoc?.blocos||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;   // compara com o que o editor mostrava, não com o plano (que pode ter vindo de outro aparelho)
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
+  if(typeof rdGancho==='function')rdGancho('edicao',rdGancho('antes',{notasDoc:{blocos:ant}}),{notasDoc:{blocos}});
   if(!ntFilaGrava('blocos',ant,blocos)){NT.sujo=true;return}
   NT.shown=blocos;SM.d.notasDoc={v:1,blocos};smGuardaCache();ntSync();
 }
@@ -2375,7 +2387,7 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;c.sujo=true;clearTimeout(c.timer);c.timer=setTimeout(aoMudar,1000)});
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto')){c.rdMostrado=null;return}c.sujo=true;if(typeof rdGancho==='function')rdGancho('editor',c);clearTimeout(c.timer);c.timer=setTimeout(aoMudar,1000)});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
   for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
@@ -2476,6 +2488,7 @@ function ntPaginaLink(){
 }
 // Toda mudança nas páginas entra na fila (NT_PEND.paginas), no plano local e sobe pelo mesmo ntSync das notas.
 function pgGrava(l,pastas){
+  if(typeof rdGancho==='function')rdGancho('edicao',rdGancho('antes',{notasPaginas:{paginas:ntPaginas()}}),{notasPaginas:{paginas:l}});
   if(!ntFilaGrava('paginas',ntPaginas(),l,pastas?{pastas,basePastas:ntPastas()}:{}))return false;
   SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l,...(pastas?{pastas}:{})};smGuardaCache();ntSync();ntLateralPinta();ntPaginaLinks();return true;
 }
@@ -2685,7 +2698,7 @@ function ntLateralHtml(){
   };
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} 📁 ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
+  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div><button type="button" class="b nt-pg-novo" id="rd_conflitos" onclick="rdConflitosAbre()">Conflitos (${(SM.d.notas_conflitos||[]).length})</button>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
@@ -3460,6 +3473,170 @@ async function ntNotionImporta(arquivo){
   }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
   finally{NT.importando=false}
 }
+
+
+// 1.44 PARCIAL: observação local. Não é uma fila nem altera o formato/fusão do plano.
+// Só um PUT confirmado marca edições como enviadas; GET observa o remoto ANTES da fusão.
+const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000;
+const RD={enviando:0,ultima:0,erro:'',localErro:''};
+const rdCopia=x=>JSON.parse(JSON.stringify(x));
+const rdTexto=n=>typeof n==='string'?n:n?.text||((n?.content||[]).map(rdTexto).join(n?.type==='doc'||n?.type==='detailsContent'?'\n':''));
+const rdChave=x=>JSON.stringify([x.tipo,x.pagina||'',x.id,x.campo||'']);
+function rdLer(){
+  try{const l=JSON.parse(localStorage.getItem(RD_CHAVE)||'[]');if(!Array.isArray(l))throw Error('formato inválido');return l.filter(e=>e&&typeof e.texto==='string'&&Number.isFinite(e.hora)&&e.hora>Date.now()-RD_IDADE).slice(-200)}
+  catch(e){RD.localErro='Detector indisponível: não consegui ler o diário local.';return []}
+}
+function rdGuardar(l){
+  try{localStorage.setItem(RD_CHAVE,JSON.stringify(l.filter(e=>e.hora>Date.now()-RD_IDADE).slice(-200)));RD.localErro=''}
+  catch(e){RD.localErro='Detector sem espaço para guardar o diário local. Baixe uma cópia em Ajustes.'}
+}
+function rdItens(d){
+  const m=new Map(),poe=x=>m.set(rdChave(x),x);
+  for(const t of d?.tarefas||[])for(const campo of ['texto','det'])poe({tipo:'tarefa',id:t.id,campo,texto:String(t[campo]||''),atualizado:t.atualizado||t.em||''});
+  const blocos=(l,pagina='')=>{for(const b of l||[])poe({tipo:'bloco',id:b.id,pagina,texto:rdTexto(b.conteudo),atualizado:b.atualizado||'',conteudo:b.conteudo})};
+  blocos(d?.notasDoc?.blocos);
+  for(const p of d?.notasPaginas?.paginas||[]){poe({tipo:'pagina',id:p.id,campo:'titulo',texto:p.titulo||'',atualizado:p.atualizado||''});blocos(p.doc?.blocos,p.id)}
+  return m;
+}
+function rdUltimas(l){const m=new Map();for(const e of l)m.set(rdChave(e),e);return m}
+function rdMudou(antes,depois,rascunho=false){
+  const l=rdLer(),ult=rdUltimas(l);let mudou=false;
+  for(const k of new Set([...antes.keys(),...depois.keys()])){
+    const a=antes.get(k),b=depois.get(k),excluido=!b;
+    if(a&&b&&a.texto===b.texto)continue;
+    if(!a&&!b?.texto)continue;
+    const v=b||{...a,texto:''},u=ult.get(k);
+    if(u&&!u.enviada&&u.texto===v.texto&&!!u.excluido===excluido){
+      if(!rascunho&&u.rascunho){u.rascunho=false;u.atualizado=v.atualizado;u.anterior=a?.texto;u.conteudo=v.conteudo;mudou=true}
+      continue;
+    }
+    l.push({...rdCopia(v),hora:Date.now(),uid:Date.now().toString(36)+Math.random().toString(36).slice(2),anterior:a?.texto,rascunho,excluido,enviada:false});mudou=true;
+  }
+  if(mudou)rdGuardar(l);
+}
+// Chamados nos pontos de edição, inclusive antes do debounce. Rascunhos nunca são confirmados por coincidência de texto.
+function rdEditor(c){
+  const ant=c.rdMostrado||c.shown||[],blocos=ntBlocos(c.ed.getJSON(),ant);
+  const plano=l=>c.pagina?{notasPaginas:{paginas:[{id:c.pagina,doc:{blocos:l}}]}}:{notasDoc:{blocos:l}};
+  rdMudou(rdItens(plano(ant)),rdItens(plano(blocos)),true);c.rdMostrado=rdCopia(blocos);
+}
+function rdRascunhoTarefa(id){
+  const t=SM.d?.tarefas?.find(t=>t.id===id),el=document.getElementById('sm_ed_txt');if(!t||!el)return;
+  const n={...t,texto:el.innerText.trim(),det:document.getElementById('sm_ed_det')?.innerText.trim()||''};
+  const antes=rdItens({tarefas:[t]}),depois=rdItens({tarefas:[n]}),ult=rdUltimas(rdLer());
+  for(const [k,a] of antes){const u=ult.get(k);if(u?.rascunho)antes.set(k,{...a,texto:u.texto})}
+  rdMudou(antes,depois,true);
+}
+function rdEnvio(texto){
+  const m=rdItens(JSON.parse(texto));
+  return [...rdUltimas(rdLer()).values()].filter(e=>!e.rascunho&&!e.excluido&&m.get(rdChave(e))?.texto===e.texto).map(e=>e.uid);
+}
+function rdConfirmou(ids,texto){
+  const l=rdLer(),m=rdItens(JSON.parse(texto)),s=new Set(ids);
+  for(const e of l)if(s.has(e.uid)){e.enviada=true;e.confirmada=Date.now();e.atualizado=m.get(rdChave(e))?.atualizado||e.atualizado}
+  rdGuardar(l);RD.ultima=Date.now();RD.erro='';rdVerifica(JSON.parse(texto));
+}
+function rdVerifica(d){
+  const l=rdLer(),m=rdItens(d),agora=Date.now();let mudou=false;
+  for(const [k,e] of rdUltimas(l)){
+    if(e.excluido||e.rascunho||!e.enviada||e.ignorada||agora-e.hora<RD_ESPERA)continue;
+    const r=m.get(k);if(!r)continue; // ausência não prova perda; não ressuscita itens apagados
+    if(r.texto===e.texto||(e.texto&&r.texto.includes(e.texto)))continue;
+    const tr=Date.parse(r.atualizado),te=Date.parse(e.atualizado)||e.hora;
+    // Data mais nova de outro aparelho é legítima. Sem data, só uma versão ANTIGA conhecida é evidência.
+    const conhecido=r.texto===e.anterior||l.some(a=>rdChave(a)===k&&a.uid!==e.uid&&a.hora<=e.hora&&a.texto===r.texto);
+    if(Number.isFinite(tr)?tr>te||!(tr<te||conhecido):!conhecido)continue;
+    if(!e.perda){e.perda={hora:agora,atual:r.texto};mudou=true}
+  }
+  if(mudou)rdGuardar(l);
+}
+function rdAlertas(){return [...rdUltimas(rdLer()).values()].filter(e=>e.perda&&!e.ignorada&&!e.excluido)}
+function rdIgnorar(uid){const l=rdLer(),e=l.find(e=>e.uid===uid);if(e){e.ignorada=true;rdGuardar(l)}rdPinta()}
+async function rdRestaurar(uid){
+  // Flush do editor pelo caminho existente antes de aplicar a recuperação.
+  if(typeof ntAntes==='function')ntAntes();
+  if(typeof ntTemPendentes==='function'&&ntTemPendentes()&&!await ntSync()){toast('Sincronize as notas pendentes antes de restaurar.');return false}
+  const e=rdAlertas().find(e=>e.uid===uid);if(!e||!rdItens(SM.d).has(rdChave(e))){toast('O item foi excluído ou recebeu outra edição local.');return false}
+  const agora=new Date().toISOString();
+  const ok=await smMudar(d=>{
+    if(e.tipo==='tarefa'){const t=d.tarefas.find(t=>t.id===e.id);if(t){t[e.campo]=e.texto;delete t[e.campo==='texto'?'textoHtml':'detHtml'];if(t.atualizado)t.atualizado=agora}}
+    else if(e.tipo==='pagina'){const p=d.notasPaginas?.paginas.find(p=>p.id===e.id);if(p){p.titulo=e.texto;p.atualizado=agora}}
+    else{const p=e.pagina?d.notasPaginas?.paginas.find(p=>p.id===e.pagina):null,bl=e.pagina?p?.doc?.blocos:d.notasDoc?.blocos;
+      // O editor guarda referência aos blocos mostrados: substituir, nunca mutar essa base.
+      if(bl?.some(b=>b.id===e.id)){const blocos=bl.map(b=>b.id===e.id?{...b,conteudo:rdCopia(e.conteudo),atualizado:agora}:b);if(p){p.doc={...p.doc,blocos};p.atualizado=agora}else d.notasDoc={...d.notasDoc,blocos}}}
+  },'restaurou edição pelo detector');
+  if(typeof ntSincroniza==='function')ntSincroniza();rdPinta();return ok;
+}
+// Ganchos não podem interromper leitura, edição ou gravação se o diário falhar.
+function rdGancho(acao,a,b){
+  try{
+    if(acao==='antes')return rdItens(a);
+    if(acao==='edicao')rdMudou(a,rdItens(b));
+    if(acao==='editor')rdEditor(a);
+    if(acao==='rascunho')rdRascunhoTarefa(a);
+    if(acao==='inicio')RD.enviando++;
+    if(acao==='fim')RD.enviando=Math.max(0,RD.enviando-a);
+    if(acao==='envio')return rdEnvio(a);
+    if(acao==='confirmou')rdConfirmou(a||[],b);
+    if(acao==='leitura'){rdVerifica(typeof a==='string'?JSON.parse(a):a);RD.ultima=Date.now();RD.erro=''}
+    if(acao==='erro')RD.erro=smErroLeitura(a);
+    rdPinta();
+  }catch(e){RD.localErro='Detector indisponível nesta operação. Baixe uma cópia em Ajustes.'}
+}
+function rdEstado(){
+  const pend=RD.enviando||SM.sujo||(typeof ntTemPendentes==='function'&&ntTemPendentes())||(typeof NT!=='undefined'&&NT.sujo)||(typeof NP!=='undefined'&&NP?.sujo);
+  if(navigator.onLine===false||window.BCBR?.semRede||/^Sem conexão/.test(RD.erro))return 'Pendente — sem conexão';
+  if(RD.erro||SM.erro)return RD.erro||SM.erro;
+  if(pend)return 'Enviando…';
+  return RD.ultima?'Salvo ✓':'Aguardando sincronização';
+}
+function rdPinta(){
+  if(document.body?.classList.contains('nt-aba')){const topo=document.querySelector('.rd-topo'),alvo=document.querySelector('.nt-pan.aba .nt-pan-topo')||document.querySelector('.nt-topo');if(topo&&alvo&&topo.parentElement!==alvo)alvo.appendChild(topo)}
+  const el=document.getElementById('rd_sync');if(el){el.textContent=rdEstado();el.title=el.textContent;el.classList.toggle('rd-erro',!!(RD.erro||SM.erro))}
+  const aviso=document.getElementById('rd_aviso');if(aviso){aviso.hidden=!rdAlertas().length&&!RD.localErro;aviso.textContent=RD.localErro||'Uma edição pode ter sido sobrescrita — ver'}
+  const c=document.getElementById('rd_conflitos');if(c)c.textContent='Conflitos ('+(SM.d?.notas_conflitos||[]).length+')';
+}
+function rdJanela(titulo,html){const ov=ntModal('rd-modal',`<div class="nt-modal-t"><b>${esc(titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div>${html}`);ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);ov.querySelector('button')?.focus();return ov}
+async function rdSincronizar(){
+  if(typeof ntAntes==='function')ntAntes();
+  if(SM.sujo)await smMudar(()=>{},'sincronização manual');
+  if(typeof ntSync==='function')await ntSync();
+  await smPuxar();rdPinta();
+}
+function rdSyncAbre(){
+  const ov=rdJanela('Sincronização',`<p>Última sincronização: ${RD.ultima?esc(new Date(RD.ultima).toLocaleString('pt-BR')):'ainda não confirmada nesta sessão'}</p><p>${esc(rdEstado())}</p><button type="button" class="b" data-sync>Sincronizar agora</button>`);
+  ov.querySelector('[data-sync]').onclick=async e=>{e.target.disabled=true;try{await rdSincronizar();ntModalFecha(ov);rdSyncAbre()}finally{e.target.disabled=false}};
+}
+function rdPerdasAbre(){
+  const lista=rdAlertas(),atual=rdItens(SM.d);
+  const ov=rdJanela('Possíveis perdas',`${RD.localErro?'<p>'+esc(RD.localErro)+'</p>':''}${lista.map((e,i)=>`<section><p>${esc(e.tipo+' · '+e.id)} · ${esc(new Date(e.hora).toLocaleString('pt-BR'))}</p><b>Texto da edição confirmada</b><pre>${esc(e.texto)}</pre><b>Texto atual</b><pre>${esc(atual.get(rdChave(e))?.texto??'Item ausente')}</pre><button class="b" data-restaura="${i}">Restaurar</button> <button class="b s" data-ignora="${i}">Ignorar</button></section>`).join('')||'<p>Nenhuma possível perda registrada.</p>'}`);
+  ov.addEventListener('click',async ev=>{const b=ev.target.closest('[data-restaura],[data-ignora]');if(!b)return;b.disabled=true;const restaura=b.hasAttribute('data-restaura'),e=lista[+(restaura?b.dataset.restaura:b.dataset.ignora)];try{if(restaura)await rdRestaurar(e.uid);else rdIgnorar(e.uid);ntModalFecha(ov);rdPerdasAbre()}finally{b.disabled=false}});
+}
+const rdConflitoChave=c=>JSON.stringify([c.id,c.pagina,c.em,c.atualizado,c.conteudo]);
+async function rdConflitoDescarta(c){
+  if(typeof ntTemPendentes==='function'&&ntTemPendentes()&&!await ntSync())return false;
+  const k=rdConflitoChave(c);return smMudar(d=>{d.notas_conflitos=(d.notas_conflitos||[]).filter(x=>rdConflitoChave(x)!==k)},'descartou conflito');
+}
+function rdConflitosAbre(){
+  const lista=SM.d?.notas_conflitos||[],ov=rdJanela('Conflitos ('+lista.length+')',lista.map((c,i)=>`<section><p>${esc(c.pagina||'Notas')} · ${esc(c.id)} · ${esc(c.motivo||c.em||'')}</p><pre tabindex="0">${esc(rdTexto(c.conteudo)||JSON.stringify(c.conteudo))}</pre><button class="b s" data-copia="${i}">Copiar</button> <button class="b s" data-descarta="${i}">Descartar</button><span data-confirma="${i}" hidden> Descartar esta cópia? <button class="b s" data-sim="${i}">Descartar definitivamente</button> <button class="b s" data-nao="${i}">Cancelar</button></span></section>`).join('')||'<p>Nenhum conflito.</p>');
+  ov.addEventListener('click',async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.copia!==undefined){try{await navigator.clipboard.writeText(rdTexto(lista[+b.dataset.copia].conteudo));toast('Texto copiado.')}catch(x){const r=document.createRange();r.selectNodeContents(b.parentElement.querySelector('pre'));const s=getSelection();s.removeAllRanges();s.addRange(r);toast('Texto selecionado: use Copiar.')}}
+    if(b.dataset.descarta!==undefined)ov.querySelector(`[data-confirma="${b.dataset.descarta}"]`).hidden=false;
+    if(b.dataset.nao!==undefined)ov.querySelector(`[data-confirma="${b.dataset.nao}"]`).hidden=true;
+    if(b.dataset.sim!==undefined){b.disabled=true;const ok=await rdConflitoDescarta(lista[+b.dataset.sim]);ntModalFecha(ov);rdPinta();rdConflitosAbre();if(!ok)toast('Descarte pendente de sincronização; confira a conexão.')}
+  });
+}
+function rdBackupHtml(){return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+function rdBaixar(){
+  if(typeof ntAntes==='function')ntAntes();if(typeof pgTituloSalva==='function')pgTituloSalva();
+  if(!SM.d){toast('O plano ainda não está disponível.');return}
+  const url=URL.createObjectURL(new Blob([JSON.stringify(SM.d,null,2)],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='radio-plano-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+window.addEventListener('pageshow',()=>smPuxar());
+window.addEventListener('online',rdPinta);window.addEventListener('offline',rdPinta);
+window.addEventListener('storage',e=>{if(e.key===RD_CHAVE)rdPinta()});
+setInterval(rdPinta,1000);setTimeout(()=>{rdGuardar(rdLer());rdPinta()},0);
 
 
 // Busca global (1.42): Ctrl+P (e Ctrl+K fora do texto das Notas) em qualquer aba. Procura em blocos das Notas, páginas, tarefas, eventos do calendário,
@@ -5392,7 +5569,7 @@ function pacoteErradas(k){
 
 let cfgTab='geral';
 function vConfig(){
-  const tabs=[['geral','Geral'],['agenda','Agenda'],['atalhos','Atalhos'],['sync','Sincronização e backup'],['metodo','Metodologia']];
+  const tabs=[['geral','Geral'],['agenda','Agenda'],['atalhos','Atalhos'],['sync','Backup e recuperação'],['metodo','Metodologia']];
   return `<div class="subtabs">${tabs.map(([k,n])=>`<button class="${cfgTab===k?'on':''}" onclick="cfgTab='${k}';capKey=null;render()">${n}</button>`).join('')}</div>`+({geral:cfgGeral,agenda:vAgenda,atalhos:cfgAtalhos,sync:cfgSync,metodo:cfgMetodo}[cfgTab])();
 }
 function cfgGeral(){
@@ -5417,7 +5594,7 @@ function cfgAtalhos(){
 }
 function cfgSync(){
   return `<div class="card"><h3>Sincronização</h3><p class="mut">${DB?'Seu progresso é salvo automaticamente no GitHub (banco-cbr-app) e aparece igual em todos os aparelhos.':'A sincronização não está disponível nesta janela. O progresso fica só neste navegador; use o backup abaixo.'}</p>
-  <h3>Backup manual</h3><p class="mut">Opcional. Copie o texto para guardar uma cópia ou para restaurar.</p>
+  ${rdBackupHtml()}<h3>Backup manual</h3><p class="mut">Opcional. Copie o texto para guardar uma cópia ou para restaurar.</p>
   <button class="b" onclick="exportar()">Gerar backup</button> <button class="b s" onclick="copiar()">Copiar</button>
   <textarea id="bk" placeholder="O backup aparece aqui. Para importar, cole o texto aqui e clique em Importar."></textarea>
   <p class="row"><button class="b s" onclick="importar()">Importar o texto acima</button> <button class="b s" onclick="zerar()">${zerarOk?'Confirmar: apagar tudo':'Zerar progresso'}</button></p></div>`;

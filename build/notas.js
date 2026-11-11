@@ -73,11 +73,11 @@ function ntFunde(base,local,remoto,agora=new Date().toISOString()){
   }
   return {blocos:ordem.map(i=>res.get(i)),conflitos};
 }
-// Lista de conflitos do plano (SM.d.notas_conflitos): sem repetir (id+data), só os 20 mais recentes.
+// Lista de conflitos do plano: sem repetir. 1.44 parcial: só o usuário descarta cópias.
 function ntJuntaConflitos(a,b){
   const vistos=new Set(),versoes=new Set(),out=[];
   for(const c of [...(a||[]),...(b||[])]){const k=c.id+'|'+c.em,v=c.conteudo===undefined?k:JSON.stringify([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);if(!vistos.has(k)&&!versoes.has(v)){vistos.add(k);versoes.add(v);out.push(c)}}
-  return out.slice(-NT_MAX_CONFLITOS);
+  return out;
 }
 // 1.43: a base de CADA aba fica na memória (NTB); o localStorage só dá a partida ao abrir a aba. Com várias abas abertas, outra aba que sobe ao GitHub
 // regrava a chave compartilhada: se esta aba lesse a base de lá, o que ela ainda não viu pareceria "alteração local" e reverteria o texto da outra.
@@ -336,6 +336,7 @@ function ntSalvaDoc(){
   const ant=NT.shown||SM.d.notasDoc?.blocos||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;   // compara com o que o editor mostrava, não com o plano (que pode ter vindo de outro aparelho)
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
+  if(typeof rdGancho==='function')rdGancho('edicao',rdGancho('antes',{notasDoc:{blocos:ant}}),{notasDoc:{blocos}});
   if(!ntFilaGrava('blocos',ant,blocos)){NT.sujo=true;return}
   NT.shown=blocos;SM.d.notasDoc={v:1,blocos};smGuardaCache();ntSync();
 }
@@ -873,7 +874,7 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;c.sujo=true;clearTimeout(c.timer);c.timer=setTimeout(aoMudar,1000)});
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto')){c.rdMostrado=null;return}c.sujo=true;if(typeof rdGancho==='function')rdGancho('editor',c);clearTimeout(c.timer);c.timer=setTimeout(aoMudar,1000)});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
   for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
@@ -974,6 +975,7 @@ function ntPaginaLink(){
 }
 // Toda mudança nas páginas entra na fila (NT_PEND.paginas), no plano local e sobe pelo mesmo ntSync das notas.
 function pgGrava(l,pastas){
+  if(typeof rdGancho==='function')rdGancho('edicao',rdGancho('antes',{notasPaginas:{paginas:ntPaginas()}}),{notasPaginas:{paginas:l}});
   if(!ntFilaGrava('paginas',ntPaginas(),l,pastas?{pastas,basePastas:ntPastas()}:{}))return false;
   SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l,...(pastas?{pastas}:{})};smGuardaCache();ntSync();ntLateralPinta();ntPaginaLinks();return true;
 }
@@ -1183,7 +1185,7 @@ function ntLateralHtml(){
   };
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} 📁 ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
+  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div><button type="button" class="b nt-pg-novo" id="rd_conflitos" onclick="rdConflitosAbre()">Conflitos (${(SM.d.notas_conflitos||[]).length})</button>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;

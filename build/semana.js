@@ -14,7 +14,7 @@ try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d
 // 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
 // SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
 // locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
-try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d,null,1):null)}catch(e){}
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const SM_MERGE_FORA=new Set(['notasDoc','notasPaginas','notasFrases','notas_conflitos']);
@@ -79,6 +79,25 @@ const smNumSem=iso=>{const x=smDt(smDom(iso)),a=smDt(smDom(`${x.getFullYear()}-0
 function smGuardaCache(){try{localStorage.setItem('sm_cache2',JSON.stringify({sha:SM.sha,d:SM.d}))}catch(e){}}
 
 // ---------- leitura / gravação ----------
+// Contents omite o base64 acima de 1 MB; o blob identificado pelo SHA mantém a mesma versão (inclusive no histórico).
+async function smLerArquivo(path=SM_ARQ,opts={}){
+  const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${path}`,opts);
+  if(f.naoMudou)return f;
+  if(f.encoding==='none'||(!f.content&&f.size>0)){
+    if(!f.sha)throw new Error('arquivo sem SHA');
+    const b=await BCBR.api(`/repos/${BCBR.REPO}/git/blobs/${encodeURIComponent(f.sha)}`);
+    if(b.encoding!=='base64'||!b.content)throw new Error('blob sem conteúdo base64');
+    return {...f,content:b.content,encoding:b.encoding};
+  }
+  return f;
+}
+function smErroLeitura(e){
+  if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
+  if((e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse/i.test(e.resp||e.message||'')))return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+  if(e.status===401||e.status===403)return 'GitHub recusou a chave (401/403) — confira a chave em Ajustes.';
+  const motivo=e.name==='SyntaxError'?'JSON inválido':e.name==='URIError'||e.name==='InvalidCharacterError'?'codificação inválida':e.status?'HTTP '+e.status:String(e.message||'resposta inválida').slice(0,100);
+  return 'Não consegui ler os dados do GitHub ('+motivo+'); mostrando a última cópia do aparelho.';
+}
 function smConverte(v){   // semana/atual.json (v1) -> plano v2
   const dias={};(v.dias||[]).forEach(x=>{dias[x.id]={agenda:x.agenda||''}});
   return {v:2,regras:v.regras||'',subtitulo:v.subtitulo||'',dias,tarefas:v.tarefas||[],notas:v.notas||[]};
@@ -93,21 +112,23 @@ async function smPuxar1(){
   if(SM.d&&typeof ntSync==='function'&&ntTemPendentes()&&!await ntSync())return;
   try{
     const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
-    const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
+    const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
     SM.ok=true;SM.erro='';
     if(f.naoMudou||g!==(SM.gravs||0))return;
-    SM.etag=f.etag;
+    SM.avisoTamanho=f.size>800000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
     if(f.sha!==SM.sha){
       if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
       const texto=smDec(f.content),remoto=JSON.parse(texto);
       SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
       if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
+    SM.etag=f.etag;
   }catch(e){
+    console.warn('Leitura do plano no GitHub',e);
     SM.ok=true;
     if(e.status===404){
       try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_VELHO}`);SM.d=smConverte(JSON.parse(smDec(f.content)))}catch(e2){SM.d={v:2,dias:{},tarefas:[],notas:[]}}
       SM.sha=null;smMudar(()=>{},'calendário do mês (primeira vez)');
-    }else SM.erro='Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
+    }else SM.erro=smErroLeitura(e);
     smRender();
   }
 }
@@ -126,7 +147,7 @@ function smMudar(fn,msg,aoSalvar){
       try{
         grupo.forEach(g=>g.fn(SM.d));
         if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
-        const texto=JSON.stringify(SM.d,null,1),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
+        const texto=JSON.stringify(SM.d),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
         const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
@@ -136,7 +157,7 @@ function smMudar(fn,msg,aoSalvar){
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`);if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
+        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
         SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
       }
     }
@@ -602,7 +623,7 @@ function smFracosCard(){
 function vSemana(){
   if(!SM.ok)return `<div class="card"><p class="mut">Carregando o calendário…</p></div>`;
   if(!SM.d)return `<div class="card"><p class="mut">Calendário indisponível offline neste aparelho.</p></div>`;
-  return `<div class="sm" aria-label="Calendário">${SM.erro?`<p class="sm-err">${esc(SM.erro)}</p>`:''}${SM.avisosAgenda?.length?`<details class="sm-avisos"><summary>Avisos da escala</summary>${SM.avisosAgenda.map(a=>`<p>${esc(a)}</p>`).join('')}</details>`:''}${smCalendario()}${SM.diaEditor?smPainelDia(SM.diaEditor):''}</div>`;
+  return `<div class="sm" aria-label="Calendário">${SM.erro?`<p class="sm-err">${esc(SM.erro)}</p>`:''}${SM.avisoTamanho?`<p class="mut">${esc(SM.avisoTamanho)}</p>`:''}${SM.avisosAgenda?.length?`<details class="sm-avisos"><summary>Avisos da escala</summary>${SM.avisosAgenda.map(a=>`<p>${esc(a)}</p>`).join('')}</details>`:''}${smCalendario()}${SM.diaEditor?smPainelDia(SM.diaEditor):''}</div>`;
 }
 function vTarefas(){
   if(!SM.ok)return `<div class="card"><p class="mut">Carregando o calendário…</p></div>`;
@@ -611,6 +632,7 @@ function vTarefas(){
   const outros=[...new Set(SM.d.tarefas.map(t=>t.dia))].filter(d=>dataTarefaValida(d)&&d>hj).sort();
   return `<div class="sm sm-tarefas" aria-label="Tarefas">
    ${SM.erro?`<p class="sm-err">${esc(SM.erro)}</p>`:''}
+   ${SM.avisoTamanho?`<p class="mut">${esc(SM.avisoTamanho)}</p>`:''}
    ${atr.length?`<div class="card sm-atrasadas"><div class="row"><span class="kick">Atrasadas · ${atr.length}</span><button class="b s sm-ghost" onclick="smRola()">Passar tudo para hoje</button></div><div class="sm-atrasadas-lista">${atr.map(t=>`<div><small>${smRotL(t.dia)}</small>${smItem(t)}</div>`).join('')}</div></div>`:''}
    ${smHojeGrande()}
    ${smSemData()}

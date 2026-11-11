@@ -342,7 +342,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop
 const NT_HIST_POR=30;
 const ntHistApi=(p)=>BCBR.api(`/repos/${BCBR.REPO}/${p}`);
 async function ntHistCommits(pagina){return ntHistApi(`commits?path=${encodeURIComponent(SM_ARQ)}&per_page=${NT_HIST_POR}&page=${pagina}`)}
-async function ntHistVersao(sha){const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}?ref=${encodeURIComponent(sha)}`,{accept:'raw'});return JSON.parse(await r.text())}
+async function ntHistVersao(sha){const r=await smLerArquivo(`${SM_ARQ}?ref=${encodeURIComponent(sha)}`);return JSON.parse(smDec(r.content))}
 // Blocos da versão `d` (documento principal) ou da página `id`.
 const ntHistBlocos=(d,pg)=>pg?(d?.notasPaginas?.paginas||[]).find(p=>p.id===pg)?.doc?.blocos||[]:d?.notasDoc?.blocos||[];
 function ntHistAbre(c){

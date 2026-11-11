@@ -11,6 +11,55 @@ function ntModal(classe,html){
 }
 function ntModalFecha(ov){if(!ov||!ov.isConnected)return;ov.remove();ov.aoFechar?.();try{ov._ant?.focus?.()}catch(e){}}
 
+// 1.44: conflitos/lixeira legíveis, sem limite nem descarte automático.
+const ntConflitosLista=()=>{const d=SM.d||{},desc=new Set(d.notas_conflitos_descartados||[]);return (d.notas_conflitos||[]).filter(c=>!desc.has(ntConflitoId(c)))};
+function ntConflitosAbre(){
+  const lista=ntConflitosLista(),ov=ntModal('nt-conflitos','<div class="row"><b>Conflitos ('+lista.length+')</b><button type="button" class="b" data-fechar>Fechar</button></div><div class="nt-conflitos-lista"></div>');
+  ov.querySelector('[data-fechar]').onclick=()=>ntModalFecha(ov);
+  const corpo=ov.querySelector('.nt-conflitos-lista');
+  for(const c of lista){
+    const el=document.createElement('section');el.className='nt-conflito';
+    el.innerHTML='<p></p><textarea readonly aria-label="Texto preservado"></textarea><button type="button" class="b" data-copiar>Copiar</button> <button type="button" class="b" data-descartar>Descartar</button><span hidden> Descartar esta cópia? <button type="button" class="b" data-sim>Descartar definitivamente</button> <button type="button" class="b" data-nao>Cancelar</button></span>';
+    el.querySelector('p').textContent=[pgAchar(c.pagina)?.titulo||c.pagina||'Notas',c.motivo||'Edição simultânea',c.atualizado||c.em].join(' · ');
+    const campo=el.querySelector('textarea'),textos=[];const ler=n=>{if(n?.text)textos.push(n.text);for(const x of n?.content||[])ler(x)};ler(c.conteudo);
+    campo.value=textos.length?textos.join('\n'):JSON.stringify(c.conteudo,null,2);
+    el.querySelector('[data-copiar]').onclick=async()=>{campo.focus();campo.select();try{await navigator.clipboard.writeText(campo.value);toast('Texto copiado.')}catch(e){toast('Texto selecionado; use Copiar.')}};
+    const conf=el.querySelector('span');el.querySelector('[data-descartar]').onclick=()=>{conf.hidden=false};el.querySelector('[data-nao]').onclick=()=>{conf.hidden=true};
+    el.querySelector('[data-sim]').onclick=()=>{if(ntConflitoDescarta(c)){el.remove();ntLateralPinta()}};
+    corpo.appendChild(el);
+  }
+}
+function ntConflitoDescarta(c){
+  const id=ntConflitoId(c);if(!ntFilaGrava('conflitos',[],[],{descartados:[id]}))return false;
+  ntAplica(SM.d,ntPendentes());smGuardaCache();ntSync();return true;
+}
+const ntLateral144=ntLateralHtml;
+ntLateralHtml=function(){return '<button type="button" class="b nt-conflitos-bt" onclick="ntConflitosAbre()">Conflitos ('+ntConflitosLista().length+')</button>'+ntLateral144()};
+
+function ntSyncTexto(){
+  const n=(ntPendentes()[0]?.filas?.length||0)+(NT.sujo?1:0)+(NP?.sujo?1:0)+(SM.sujo?1:0);
+  if(NT144.erroLocal)return NT144.erroLocal;
+  if(navigator.onLine===false||BCBR.semRede)return 'Pendente ('+n+') — sem conexão';
+  if(SM.erro)return SM.erro;
+  if(NT.sync||SM.salvando||SM.lote.length||SM.puxando||NT144.ocupado)return 'Enviando…';
+  if(n)return 'Pendente ('+n+')';
+  return SM.sha?'Salvo ✓':'Aguardando sincronização…';
+}
+function ntSyncPinta(){
+  const pai=document.querySelector('.nt-pan-topo')||document.querySelector('.brand')?.parentElement;if(!pai)return;
+  let bt=document.getElementById('nt_sync');if(!bt){bt=document.createElement('button');bt.id='nt_sync';bt.type='button';bt.className='nt-sync';bt.onclick=ntSyncDetalhes;pai.appendChild(bt)}
+  bt.textContent=ntSyncTexto();
+  const pesadas=ntPaginas().filter(p=>new Blob([JSON.stringify(p.doc||{})]).size>300000);
+  const aviso=[SM.avisoTamanho,...pesadas.map(p=>'Página “'+(p.titulo||'Sem título')+'” acima de 300 KB.')].filter(Boolean).join(' ');
+  let tam=document.getElementById('nt_tamanho');if(!tam&&aviso){tam=document.createElement('small');tam.id='nt_tamanho';tam.className='nt-tamanho';pai.appendChild(tam)}if(tam)tam.textContent=aviso;
+}
+function ntSyncDetalhes(){
+  const ov=ntModal('nt-sync-detalhes','<b>Sincronização</b><p></p><button type="button" class="b">Sincronizar agora</button>');
+  ov.querySelector('p').textContent=NT144.ultima?'Última sincronização: '+new Date(NT144.ultima).toLocaleString():'Nenhuma sincronização confirmada nesta sessão.';
+  ov.querySelector('button').onclick=async()=>{ntAntes();await ntSync();await smPuxar();ntSyncPinta();ntModalFecha(ov)};
+}
+setInterval(ntSyncPinta,1000);
+
 // ===== Ctrl+F nas Notas: busca própria. Destaque por Decoration.inline, contador n/total, Enter/Shift+Enter, ocorrência em toggle fechado o abre =====
 const NT_BUSCA_PK=()=>NT.buscaPK||(NT.buscaPK=new TT.pm.state.PluginKey('ntBusca'));
 // Sem acento e minúsculas, sempre com o MESMO comprimento do texto (cada caractere vira um só): os índices valem no original.
@@ -342,7 +391,11 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop
 const NT_HIST_POR=30;
 const ntHistApi=(p)=>BCBR.api(`/repos/${BCBR.REPO}/${p}`);
 async function ntHistCommits(pagina){return ntHistApi(`commits?path=${encodeURIComponent(SM_ARQ)}&per_page=${NT_HIST_POR}&page=${pagina}`)}
-async function ntHistVersao(sha){const r=await smLerArquivo(`${SM_ARQ}?ref=${encodeURIComponent(sha)}`);return JSON.parse(smDec(r.content))}
+async function ntHistVersao(sha){
+  const r=await smLerArquivo(`${SM_ARQ}?ref=${encodeURIComponent(sha)}`),d=JSON.parse(smDec(r.content));
+  for(const p of d.notasPaginas?.paginas||[])if(p.rev&&!p.doc)p.doc=(await ntArquivoRev(p.id,p.rev)).doc;
+  return d;
+}
 // Blocos da versão `d` (documento principal) ou da página `id`.
 const ntHistBlocos=(d,pg)=>pg?(d?.notasPaginas?.paginas||[]).find(p=>p.id===pg)?.doc?.blocos||[]:d?.notasDoc?.blocos||[];
 function ntHistAbre(c){

@@ -59,7 +59,7 @@ function ntFunde(base,local,remoto,agora=new Date().toISOString()){
         if(lm&&!rm)v=l;else if(rm&&!lm)v=r;
         else{const localVence=String(l.atualizado||'')>String(r.atualizado||''),perde=localVence?r:l;v=localVence?l:r;conflitos.push({id,em:agora,atualizado:perde.atualizado,conteudo:perde.conteudo})}
       }
-    }else if(l||r){const x=l||r;if(!b||!igual(b,x))v=x}   // novo, ou apagado do outro lado mas editado aqui
+    }else if(l||r){const x=l||r;if(!b||!igual(b,x)){v=x;if(b)conflitos.push({...x,em:agora,motivo:'apagado em '+agora+', editado em '+(x.atualizado||'data desconhecida')})}}   // editar vence apagar
     if(v)res.set(id,v);
   }
   const ids=x=>(x||[]).map(b=>b.id);
@@ -73,11 +73,11 @@ function ntFunde(base,local,remoto,agora=new Date().toISOString()){
   }
   return {blocos:ordem.map(i=>res.get(i)),conflitos};
 }
-// Lista de conflitos do plano (SM.d.notas_conflitos): sem repetir (id+data), só os 20 mais recentes.
+// Conflitos só saem por descarte explícito; nunca cortar automaticamente versões de texto.
 function ntJuntaConflitos(a,b){
-  const vistos=new Set(),versoes=new Set(),out=[];
-  for(const c of [...(a||[]),...(b||[])]){const k=c.id+'|'+c.em,v=c.conteudo===undefined?k:JSON.stringify([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);if(!vistos.has(k)&&!versoes.has(v)){vistos.add(k);versoes.add(v);out.push(c)}}
-  return out.slice(-NT_MAX_CONFLITOS);
+  const versoes=new Set(),out=[];
+  for(const c of [...(a||[]),...(b||[])]){const v=c.conteudo===undefined?JSON.stringify([c.id,c.pagina,c.em]):JSON.stringify([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);if(!versoes.has(v)){versoes.add(v);out.push(c)}}
+  return out;
 }
 // 1.43: a base de CADA aba fica na memória (NTB); o localStorage só dá a partida ao abrir a aba. Com várias abas abertas, outra aba que sobe ao GitHub
 // regrava a chave compartilhada: se esta aba lesse a base de lá, o que ela ainda não viu pareceria "alteração local" e reverteria o texto da outra.
@@ -107,7 +107,7 @@ function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.
 // Campo que mudou só de um lado: fica essa mudança. Dos dois e diferente: vale o de `atualizado` maior (empate: o remoto). Os blocos da página
 // passam por ntFunde (mesma regra das notas). Página apagada de um lado e intacta do outro: apaga; se foi editada do outro lado, a edição fica.
 // Campos desconhecidos (de versões futuras) são preservados: o objeto da página é copiado inteiro, só os campos conhecidos são decididos.
-const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta'];
+const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta','blocosExcluidos'];
 function ntFundePaginas(base,local,remoto,agora=new Date().toISOString(),pastas=false){
   const lim=l=>(Array.isArray(l)?l:[]).filter(p=>p&&typeof p==='object'&&typeof p.id==='string');
   base=lim(base);local=lim(local);remoto=lim(remoto);
@@ -120,15 +120,19 @@ function ntFundePaginas(base,local,remoto,agora=new Date().toISOString(),pastas=
       else{
         const localNovo=String(l.atualizado||'')>String(r.atualizado||'');v={...l,...r};
         for(const k of pastas?['titulo','ordem']:NT_PG_CAMPOS){
+          if(k==='pasta'&&l[k]===undefined&&r[k]===undefined&&b?.[k]===undefined){delete v[k];continue}
           if(k==='pasta'&&(l[k]===undefined||r[k]===undefined)){v[k]=l[k]??r[k]??b?.[k]??'';continue} // aparelho antigo não apaga a classificação
           const lm=!b||!ntIgual(b[k],l[k]),rm=!b||!ntIgual(b[k],r[k]);
           v[k]=lm&&!rm?l[k]:rm&&!lm?r[k]:localNovo?l[k]:r[k];
         }
-        if(!pastas){const f=ntFunde(blocos(b),blocos(l),blocos(r),agora);
-          v.doc={v:1,blocos:f.blocos};conflitos.push(...f.conflitos.map(c=>({...c,pagina:id})));}
+        if(!pastas){
+          if(!blocos(l)||!blocos(r)){if(l.doc||r.doc)v.doc=l.doc||r.doc;else delete v.doc;}
+          else{const f=ntFunde(blocos(b),blocos(l),blocos(r),agora);
+            v.doc={v:1,blocos:f.blocos};conflitos.push(...f.conflitos.map(c=>({...c,pagina:id})));}
+        }
         v.atualizado=localNovo?l.atualizado:r.atualizado;
       }
-    }else if(l||r){const x=l||r;if(!b||!ntIgual(b,x))v=x}
+    }else if(l||r){const x=l||r;const semRev=p=>{const {rev,...resto}=p;return resto};if(!b||!ntIgual(semRev(b),semRev(x))){v=x;if(b&&!pastas)conflitos.push(...(blocos(x)||[]).map(n=>({...n,pagina:id,em:agora,motivo:'apagado em '+agora+', editado em '+(x.atualizado||n.atualizado||'data desconhecida')})))}}
     if(v)res.push(v);
   }
   return {paginas:res,conflitos};
@@ -153,6 +157,222 @@ const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.p
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
 const ntPgOrdem=(a,b)=>(Number(a.ordem)||0)-(Number(b.ordem)||0)||String(a.criado).localeCompare(String(b.criado))||String(a.id).localeCompare(String(b.id));
+
+// 1.44: o plano em memória continua completo para reaproveitar editor/fila/fusão da 1.43.
+// Só a cópia enviada ao GitHub perde doc, depois de PUT + releitura iguais. rev é o SHA imutável.
+const NT144={revs:new Map(),heads:new Map(),inline:false,ocupado:false},NT144_BACK='bcbr_paginas_pre144:',NT144_META='bcbr_paginas_metadados144:';
+const ntCopia=x=>JSON.parse(JSON.stringify(x));
+const ntPgPath=id=>'semana/paginas/'+encodeURIComponent(id)+'.json';
+const nt144Hash=x=>ntLegadoChave(JSON.stringify(x??null)).split(':').pop();
+function ntPgValida(x,id){
+  if(x?.id!==id||!Array.isArray(x.doc?.blocos))throw Error('arquivo da página '+id+' inválido');
+  return x;
+}
+async function ntArquivoAtual(id,condicional=true){
+  const ant=NT144.heads.get(id);
+  try{
+    const f=await smLerArquivo(ntPgPath(id),{etag:condicional?ant?.etag:undefined});
+    if(f.naoMudou){if(!ant)throw Error('página sem cache');return ntCopia(ant)}
+    const r={sha:f.sha,etag:f.etag,d:ntPgValida(JSON.parse(smDec(f.content)),id)};
+    if(!r.sha)throw Error('página sem SHA');
+    NT144.heads.set(id,r);NT144.revs.set(id+':'+r.sha,r.d);return ntCopia(r);
+  }catch(e){if(e.status===404)return null;throw e}
+}
+async function ntArquivoRev(id,rev){
+  const k=id+':'+rev;if(NT144.revs.has(k))return ntCopia(NT144.revs.get(k));
+  const atual=await ntArquivoAtual(id);if(atual?.sha===rev)return atual.d;
+  const f=await BCBR.api(`/repos/${BCBR.REPO}/git/blobs/${encodeURIComponent(rev)}`);
+  if(f.encoding!=='base64'||!f.content)throw Error('revisão da página sem conteúdo');
+  const d=ntPgValida(JSON.parse(smDec(f.content)),id);NT144.revs.set(k,d);return ntCopia(d);
+}
+async function ntArquivosListar(){
+  try{
+    const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/semana/paginas/`,{etag:NT144.listaEtag});
+    if(f.naoMudou)return NT144.lista||[];
+    if(!Array.isArray(f))return []; // clientes/servidores antigos sem listagem
+    NT144.lista=f.filter(x=>x.type==='file'&&x.name?.endsWith('.json')&&x.sha);NT144.listaEtag=f.etag;
+    return NT144.lista;
+  }catch(e){if(e.status===404)return [];throw e}
+}
+function ntArquivosOrfas(d,lista){
+  return lista.some(x=>{const id=decodeURIComponent(x.name.slice(0,-5)),p=d?.notasPaginas?.paginas?.find(p=>p.id===id),ex=d?.notasPaginas?.excluidas?.[id];return p?p.rev!==x.sha:!ex||!!ex.pagina&&ex.rev!==x.sha});
+}
+async function ntArquivosLer(d,lista=[]){
+  let inline=false;
+  // Ausência em um plano escrito pela 1.43 não é uma ordem de apagar página.
+  if(d.notasPaginas){const ps=d.notasPaginas.paginas||[];for(const p of pgBaseLer()||[])if(p.rev&&!ps.some(x=>x.id===p.id)&&!d.notasPaginas.excluidas?.[p.id])ps.push(ntCopia(p));d.notasPaginas.paginas=ps;}
+  for(const x of lista){
+    const id=decodeURIComponent(x.name.slice(0,-5)),ex=d.notasPaginas?.excluidas?.[id];
+    if(!ex&&!d.notasPaginas?.paginas?.some(p=>p.id===id)){
+      const atual=await ntArquivoRev(id,x.sha);
+      d.notasPaginas={...d.notasPaginas,v:1,paginas:[...(d.notasPaginas?.paginas||[]),{titulo:'Página recuperada',...atual.pagina,id,doc:atual.doc,rev:x.sha}]};inline=true;
+    }
+    if(ex?.pagina&&ex.rev!==x.sha&&!d.notasPaginas.paginas.some(p=>p.id===id)){
+      const atual=await ntArquivoRev(id,x.sha);
+      if(!ntIgual(ex.pagina.doc,atual.doc)){d.notasPaginas.paginas.push({...ex.pagina,doc:atual.doc,rev:x.sha});inline=true;
+        d.notas_conflitos=ntJuntaConflitos(d.notas_conflitos,atual.doc.blocos.map(b=>({...b,pagina:id,em:ex.em,motivo:'apagado em '+ex.em+', editado em '+(b.atualizado||'data desconhecida')})));}
+    }
+  }
+  for(const p of d.notasPaginas?.paginas||[]){
+    if(p.doc)inline=true;
+    const head=lista.find(x=>x.name===encodeURIComponent(p.id)+'.json');
+    if(!p.rev){if(!head)continue;p.rev=head.sha;inline=true;}
+    const arq=await ntArquivoRev(p.id,p.rev);
+    // A 1.43 pode devolver doc junto de rev. Sem a base daquela aba, a fusão conservadora
+    // guarda ambas as versões em vez de interpretar ausência como exclusão.
+    const f=p.doc&&!ntIgual(p.doc,arq.doc)?ntFunde(null,p.doc.blocos,arq.doc.blocos):{blocos:arq.doc.blocos,conflitos:[]};
+    // Só a marca explícita da 1.44 pode excluir conteúdo do arquivo referenciado.
+    const marca=p.blocosExcluidos;
+    if(marca){const visto=marca.rev===p.rev?arq:await ntArquivoRev(p.id,marca.rev);f.blocos=f.blocos.filter(b=>{
+      if(!marca.ids.includes(b.id))return true;
+      const hash=marca.hashes?.[b.id]||nt144Hash(visto.doc.blocos.find(x=>x.id===b.id)?.conteudo);
+      if(hash===nt144Hash(b.conteudo))return false;
+      f.conflitos.push({...b,em:marca.em||ntAgora(),motivo:'apagado em '+(marca.em||'data desconhecida')+', editado em '+(b.atualizado||'data desconhecida')});return true;
+    });}
+    if(head&&head.sha!==p.rev){
+      const atual=await ntArquivoRev(p.id,head.sha),novo=ntFunde(arq.doc.blocos,f.blocos,atual.doc.blocos);
+      f.blocos=novo.blocos;f.conflitos.push(...novo.conflitos,...(atual.conflitos||[]));p.rev=head.sha;inline=true;
+    }
+    p.doc={...arq.doc,blocos:f.blocos};
+    d.notas_conflitos=ntJuntaConflitos(d.notas_conflitos,[...(arq.conflitos||[]),...f.conflitos.map(c=>({...c,pagina:p.id}))]);
+  }
+  NT144.inline=inline;
+  ntConflitosProtege(d);
+  NT144.ultima=ntAgora();
+}
+async function ntArquivosHidratar(d){
+  for(const p of d.notasPaginas?.paginas||[])if(p.rev&&!Array.isArray(p.doc?.blocos))p.doc=(await ntArquivoRev(p.id,p.rev)).doc;
+}
+function ntSemLocks(){
+  if(typeof navigator.locks?.request==='function')return false;
+  if(!NT144.avisou){NT144.avisou=true;toast('Páginas guardadas no plano. Para separar os arquivos com segurança, abra o Radio no Chrome atualizado (Web Locks).')}
+  return true;
+}
+function ntArquivosAgendar(){
+  if(ntTemPendentes())return; // a fila já prepara os arquivos e controla o retry
+  if(!SM.d||NT144.ocupado||(!NT144.inline&&!ntPaginas().some(p=>!p.rev)&&!JSON.stringify(SM.d.notasDoc||{}).includes('data:image/')))return;
+  if(ntSemLocks())return;
+  NT144.ocupado=true;
+  smMudar(()=>{},'notas: separar páginas').finally(()=>{NT144.ocupado=false});
+}
+async function ntImagensSeparar(x){
+  if(!x||typeof x!=='object')return;
+  for(const [k,v] of Object.entries(x)){
+    if(k==='src'&&typeof v==='string'&&v.startsWith('data:image/')){
+      const chave='bcbr_imagem144:'+nt144Hash(v),cache=localStorage.getItem(chave);
+      if(cache){x[k]=cache;continue}
+      const m=/^data:(image\/[^;,]+);base64,([\s\S]+)$/.exec(v);if(!m)throw Error('imagem base64 inválida; original preservado');
+      const bin=atob(m[2]),bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+      const nome=await ntImgEnvia(await ntImgComprime(new Blob([bytes],{type:m[1]}))),url='./img/'+nome;
+      localStorage.setItem(chave,url);x[k]=url;
+    }else if(v&&typeof v==='object')await ntImagensSeparar(v);
+  }
+}
+async function ntArquivosPreparar(original){
+  const local=ntCopia(original),paginas=local.notasPaginas?.paginas||[],excluidas=[];
+  ntConflitosProtege(local);
+  if(!paginas.length&&!pgBaseLer()?.length&&!JSON.stringify(local.notasDoc||{}).includes('data:image/'))return {plano:local,local};
+  if(ntSemLocks())return {plano:local,local};
+  return navigator.locks.request('radio-paginas-v144',{mode:'exclusive'},async()=>{
+    // Snapshot imutável ANTES de rede; quota interrompe o envio, nunca é ignorada.
+    const chave=NT144_BACK+nt144Hash(original);
+    if(localStorage.getItem(chave)===null)localStorage.setItem(chave,JSON.stringify(original));
+    // A migração também precisa de uma operação reenviável se o app fechar após o PUT
+    // da página e antes do plano. Usa a fila existente, inclusive no próximo processo.
+    const meta=NT144_META+nt144Hash(original);
+    if(paginas.length&&!ntTemPendentes()&&localStorage.getItem(meta)===null)localStorage.setItem(meta,JSON.stringify({em:Date.now(),base:[],basePaginas:pgBaseLer()||[],paginas,metadados:true}));
+    for(const p of paginas){
+      if(!Array.isArray(p.doc?.blocos))throw Error('página '+p.id+' ainda não foi baixada');
+      const base=p.rev?await ntArquivoRev(p.id,p.rev):null;
+      const conhecidos=base?.conflitos||[],extras=(local.notas_conflitos||[]).filter(c=>c.pagina===p.id);
+      if(base&&ntIgual(base.doc,p.doc)&&extras.every(c=>conhecidos.some(x=>ntConflitoId(x)===ntConflitoId(c)))){
+        local.notas_conflitos=ntJuntaConflitos(local.notas_conflitos,conhecidos);continue;
+      }
+      const atual=await ntArquivoAtual(p.id);
+      const f=atual?ntFunde(base?.doc.blocos,p.doc.blocos,atual.d.doc.blocos):{blocos:p.doc.blocos,conflitos:[]};
+      const apagados=(atual?.d.doc.blocos||[]).filter(b=>!f.blocos.some(n=>n.id===b.id)).map(b=>({...b,pagina:p.id,em:ntAgora(),motivo:'bloco apagado'}));
+      const conflitos=ntJuntaConflitos(atual?.d.conflitos,[...(local.notas_conflitos||[]).filter(c=>c.pagina===p.id),...f.conflitos.map(c=>({...c,pagina:p.id})),...apagados]);
+      const {doc:docPagina,rev:revPagina,blocosExcluidos:marcaPagina,...metadados}=p;
+      const dado={...(atual?.d||{}),v:1,id:p.id,pagina:metadados,doc:{...p.doc,blocos:f.blocos},conflitos};
+      await ntImagensSeparar(dado.doc);
+      let sha=atual?.sha;
+      if(!atual||!ntIgual(dado,atual.d)){
+        const body={message:'notas: página',branch:'main',content:BCBR.b64(JSON.stringify(dado)),...(sha?{sha}:{})};
+        const put=await BCBR.api(`/repos/${BCBR.REPO}/contents/${ntPgPath(p.id)}`,{method:'PUT',body:JSON.stringify(body)});
+        if(!put.content?.sha)throw Error('GitHub não confirmou a página');
+        const lido=await ntArquivoAtual(p.id,false);
+        if(lido?.sha!==put.content.sha||!ntIgual(lido.d,dado))throw Error('releitura da página diferente do envio; original preservado');
+        sha=put.content.sha;
+      }
+      p.doc=dado.doc;p.rev=sha;
+      local.notas_conflitos=ntJuntaConflitos(local.notas_conflitos,conflitos);
+    }
+    // Excluir a página só depois de arquivar inclusive a edição remota mais recente.
+    for(const p of pgBaseLer()||[])if(!paginas.some(n=>n.id===p.id)&&local.notasPaginas?.excluidas?.[p.id]){
+      const atual=p.rev?await ntArquivoAtual(p.id):null,doc=atual?.d.doc||p.doc;
+      local.notas_conflitos=ntJuntaConflitos(local.notas_conflitos,[...(atual?.d.conflitos||[]),...(doc?.blocos||[]).map(b=>({...b,pagina:p.id,em:ntAgora(),motivo:'página apagada'}))]);
+      const marca=local.notasPaginas.excluidas[p.id];
+      if(atual&&!ntIgual(doc,(marca.pagina||p).doc)){
+        paginas.push({...p,doc,rev:atual.sha});
+        local.notas_conflitos=ntJuntaConflitos(local.notas_conflitos,doc.blocos.map(b=>({...b,pagina:p.id,em:marca.em,motivo:'apagado em '+marca.em+', editado em '+(b.atualizado||'data desconhecida')})));
+      }else if(atual)excluidas.push({id:p.id,sha:atual.sha});
+    }
+    await ntImagensSeparar(local.notasDoc);
+    ntConflitosProtege(local);
+    const plano=ntCopia(local);for(const p of plano.notasPaginas?.paginas||[])delete p.doc;
+    return {plano,local,chave,excluidas};
+  });
+}
+function ntArquivosConfirmar(original,salvo){
+  if(SM.d.notasPaginas&&salvo.notasPaginas){
+    const f=ntFundePaginas(original.notasPaginas?.paginas,ntPaginas(),salvo.notasPaginas.paginas);
+    SM.d.notasPaginas={...SM.d.notasPaginas,paginas:f.paginas};
+    SM.d.notas_conflitos=ntJuntaConflitos(SM.d.notas_conflitos,f.conflitos);
+  }
+  if(ntIgual(SM.d.notasDoc,original.notasDoc))SM.d.notasDoc=salvo.notasDoc;
+  if(SM.d.notas_conflitos||salvo.notas_conflitos)SM.d.notas_conflitos=ntJuntaConflitos(SM.d.notas_conflitos,salvo.notas_conflitos);
+  ntConflitosProtege(SM.d);NT144.inline=false;
+  NT144.ultima=new Date().toISOString();
+  // Somente o snapshot efetivamente confirmado. Outros snapshots (interrupções) ficam para recuperação.
+  localStorage.removeItem(NT144_BACK+nt144Hash(original));
+  localStorage.removeItem(NT144_META+nt144Hash(original));
+}
+async function ntArquivosExcluir(lista){
+  for(const p of lista||[])try{
+    const f=await smLerArquivo(),d=JSON.parse(smDec(f.content));
+    if(d.notasPaginas?.paginas?.some(x=>x.id===p.id))continue;
+    // DELETE por SHA: nunca apagar uma edição que chegou depois de arquivar o texto.
+    await BCBR.api(`/repos/${BCBR.REPO}/contents/${ntPgPath(p.id)}`,{method:'DELETE',body:JSON.stringify({message:'notas: página na lixeira',sha:p.sha,branch:'main'})});
+    NT144.heads.delete(p.id);
+  }catch(e){if(e.status!==404)console.warn('Página mantida por segurança; exclusão adiada',e)}
+}
+// Arquivo local por versão de conflito evita que a aba 1.43 (limite de 20) apague cópias já vistas.
+const ntConflitoId=c=>nt144Hash([c.id,c.pagina,c.motivo,c.atualizado,ntCanon(c.conteudo)]);
+function ntConflitosProtege(d){
+  const prefixo='bcbr_conflito144:',desc=new Set(d.notas_conflitos_descartados||[]),lista=[];
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(prefixo)){const c=JSON.parse(localStorage.getItem(k));if(!desc.has(ntConflitoId(c)))lista.push(c)}}
+  const todos=ntJuntaConflitos(d.notas_conflitos,lista).filter(c=>!desc.has(ntConflitoId(c)));
+  if(todos.length||d.notas_conflitos)d.notas_conflitos=todos;
+  for(const c of todos){const k=prefixo+ntConflitoId(c);if(localStorage.getItem(k)===null)localStorage.setItem(k,JSON.stringify(c))}
+}
+// Rascunho por editor/aba: substitui apenas sua própria cópia cumulativa, sincronamente.
+// O debounce promove para a fila imutável existente. Recuperação usa chave por revisão.
+function ntRascunhoGrava(c,titulo=false){
+  if(!SM.d)return;
+  const base=c.shown||[],blocos=ntBlocos(c.ed.getJSON(),base),em=Date.now();
+  let op={base,blocos,em};
+  if(c.pagina){const paginas=ntCopia(ntPaginas()),p=paginas.find(p=>p.id===c.pagina);if(!p)op={base:[],conflitos:blocos.map(b=>({...b,pagina:c.pagina,em:ntAgora(),motivo:'página apagada em outro aparelho'})),em};else{if(titulo)p.titulo=c.titulo.value;else p.doc={v:1,blocos};p.atualizado=ntAgora();op={base:ntCopia(ntPaginas()),paginas,em}}}
+  const campo=titulo?'rascunhoTitulo':'rascunho';c[campo]=c[campo]||'bcbr_rascunho144:'+ntNovoId();
+  try{localStorage.setItem(c[campo],JSON.stringify(op));NT144.erroLocal=''}catch(e){NT144.erroLocal='Sem espaço para guardar o texto neste aparelho. Mantenha esta aba aberta e copie o texto.';toast(NT144.erroLocal)}
+}
+function ntRascunhoLimpa(c){if(c?.rascunho&&!c.sujo)localStorage.removeItem(c.rascunho)}
+function ntRascunhosRecupera(){
+  const chaves=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith('bcbr_rascunho144:'))chaves.push(k)}
+  for(const k of chaves){const raw=localStorage.getItem(k),hash=nt144Hash(raw);if(localStorage.getItem('bcbr_rascunho144_ok:'+hash))continue;
+    const op=JSON.parse(raw),dest=NT_PEND+':rascunho:'+hash;
+    if(localStorage.getItem(dest)===null)localStorage.setItem(dest,JSON.stringify({...op,rascunhoHash:hash}));
+  }
+}
 
 // Texto antigo (1.37/1.38) -> blocos do editor: "- "/"• " listas, "> " toggles (recuo = dentro), "[img:arquivo]" imagem, resto parágrafos.
 const ntRecuo=l=>/^[ \t]*/.exec(l)[0].replace(/\t/g,'  ').length;
@@ -249,13 +469,15 @@ function ntPendentes(){
   try{
     if(ntMigraLegado()||NT.legado)return [];
     const filas=[];
-    const chaves=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(NT_PEND+':'))chaves.push(k)}
+    const chaves=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(NT_PEND+':')||k?.startsWith(NT144_META))chaves.push(k)}
     for(const k of chaves){const raw=localStorage.getItem(k);if(raw===null)continue;try{const op=JSON.parse(raw);if(!Array.isArray(op?.base)||!Number.isFinite(op.em)||!Number.isFinite(new Date(op.em).getTime())||!['blocos','paginas','frases','pastas','conflitos'].some(c=>Array.isArray(op[c])))throw Error('formato');filas.push({k,raw,op})}catch(e){filas.push({k,raw,op:ntFilaInvalida(k,raw)})}}
     filas.sort((a,b)=>a.op.em-b.op.em||a.k.localeCompare(b.k));
     if(!filas.length)return [];
     const res={blocos:ntBaseLer()||SM.d?.notasDoc?.blocos||[],paginas:pgBaseLer()||ntPaginas(),frases:frBaseLer()||SM.d?.notasFrases||[],pastas:ptBaseLer()||ntPastas(),filas};
     for(const {op} of filas){
       const em=new Date(op.em).toISOString();let f;
+      res.descartados=[...new Set([...(res.descartados||[]),...(op.descartados||[])])];
+      res.excluidas={...res.excluidas,...op.excluidas};
       res.conflitos=ntJuntaConflitos(res.conflitos,op.conflitos);
       if(op.blocos) {f=ntFunde(op.base,op.blocos,res.blocos,em);res.blocos=f.blocos;res.conflitos=ntJuntaConflitos(res.conflitos,f.conflitos)}
       if(op.paginas){f=ntFundePaginas(op.basePaginas||op.base,op.paginas,res.paginas,em);res.paginas=f.paginas;res.conflitos=ntJuntaConflitos(res.conflitos,f.conflitos)}
@@ -289,6 +511,7 @@ function ntAplica(d,ops){
       p.paginas=f.paginas;p.conflitos=ntJuntaConflitos(p.conflitos,f.conflitos);confl+=f.conflitos.length;
     }
     d.notasPaginas={...d.notasPaginas,v:1,paginas:p.paginas};
+    if(Object.keys(p.excluidas||{}).length)d.notasPaginas.excluidas={...d.notasPaginas.excluidas,...p.excluidas};
   }
   if(Array.isArray(p.frases)){   // frases-padrão pendentes: funde com as do GitHub
     if(Array.isArray(d.notasFrases)&&JSON.stringify(d.notasFrases)!==JSON.stringify(p.frases))p.frases=ntFundeFrases(frBaseLer(),p.frases,d.notasFrases);
@@ -301,9 +524,10 @@ function ntAplica(d,ops){
   if(confl&&typeof toast==='function')toast('Nota editada nos dois aparelhos: guardei a versão mais antiga em notas_conflitos.');
   d.notasDoc={v:1,blocos:p.blocos};
   if(p.conflitos?.length)d.notas_conflitos=ntJuntaConflitos(d.notas_conflitos,p.conflitos);
+  if(p.descartados?.length){d.notas_conflitos_descartados=[...new Set([...(d.notas_conflitos_descartados||[]),...p.descartados])];d.notas_conflitos=(d.notas_conflitos||[]).filter(c=>!d.notas_conflitos_descartados.includes(ntConflitoId(c)))}
 }
 // O que está sendo digitado entra na fila (e no plano local) ANTES de qualquer plano do GitHub ser aplicado.
-function ntAntes(){if(NT.ed&&NT.sujo)ntSalvaDoc();if(NP?.ed&&NP.sujo)pgSalvaDoc()}
+function ntAntes(){if(NT.ed&&NT.sujo)ntSalvaDoc();if(NP?.ed&&NP.sujo)pgSalvaDoc();if(NP?.tituloSujo)pgTituloSalva()}
 // `d` = plano recém-baixado do GitHub, já em SM.d: funde o pendente, guarda a base e mostra no editor só o que mudou.
 function ntRecebe(d){
   const espera=ntMigraLegado();if(espera)return espera.then(()=>{if(!NT.legado)ntRecebe(d)});if(NT.legado)return;
@@ -311,33 +535,35 @@ function ntRecebe(d){
   ntBaseSalva(r,rp,rf,pt||null);
   ntSincroniza();
 }
-const ntConfirmada=(salvo,op)=>JSON.stringify(salvo.notasDoc?.blocos)===JSON.stringify(op.blocos)&&(!Array.isArray(op.paginas)||JSON.stringify(salvo.notasPaginas?.paginas)===JSON.stringify(op.paginas))&&(!Array.isArray(op.frases)||JSON.stringify(salvo.notasFrases)===JSON.stringify(op.frases))&&(!Array.isArray(op.pastas)||JSON.stringify(salvo.notasPaginas?.pastas)===JSON.stringify(op.pastas))&&(op.conflitos||[]).every(c=>(salvo.notas_conflitos||[]).some(s=>ntIgual({...s,em:null},{...c,em:null})));
-function ntSync(){
-  const espera=ntMigraLegado();if(espera)return espera.then(()=>NT.legado?false:ntSync());if(NT.legado)return Promise.resolve(false);
+const ntConfirmada=(salvo,op)=>ntIgual(salvo.notasDoc?.blocos,op.blocos)&&(!Array.isArray(op.paginas)||ntIgual(salvo.notasPaginas?.paginas,op.paginas))&&(!Array.isArray(op.frases)||ntIgual(salvo.notasFrases,op.frases))&&(!Array.isArray(op.pastas)||ntIgual(salvo.notasPaginas?.pastas,op.pastas))&&(op.conflitos||[]).every(c=>(salvo.notas_conflitos||[]).some(s=>ntIgual({...s,em:null},{...c,em:null})));
+function ntSync(forcar=true){
+  const espera=ntMigraLegado();if(espera)return espera.then(()=>NT.legado?false:ntSync(forcar));if(NT.legado)return Promise.resolve(false);
   if(NT.sync)return NT.sync;
+  if(!forcar&&Date.now()<(NT.proxima||0))return Promise.resolve(false);
   const ops=ntPendentes();if(!ops.length||!SM.d)return Promise.resolve(!ops.length);
   NT.sync=smMudar(d=>ntAplica(d,ntPendentes()),'notas',salvo=>{
     // Só limpa se o que subiu é o mesmo documento que estava pendente (edição nova durante o envio continua na fila).
-    const atual=ntPendentes()[0];if(atual&&ntConfirmada(salvo,atual)){
+    const atual=ntPendentes()[0];if(atual&&ntConfirmada(salvo,atual)&&(atual.descartados||[]).every(id=>salvo.notas_conflitos_descartados?.includes(id))){
       for(const f of atual.filas||[])if(localStorage.getItem(f.k)===f.raw){
         if(typeof f.op.legadoRaw==='string'){
           const hash=ntLegadoChave(f.op.legadoRaw).split(':').pop();
           localStorage.setItem(NT_LEGADO_OK,JSON.stringify([...(ntLsLista(NT_LEGADO_OK)||[]).filter(h=>h!==hash),hash].slice(-20)));
         }
+        if(f.op.rascunhoHash)localStorage.setItem('bcbr_rascunho144_ok:'+f.op.rascunhoHash,'1');
         localStorage.removeItem(f.k);
       }
     }
-  }).finally(()=>{NT.sync=null;if(ntTemPendentes()&&!SM.erro){clearTimeout(NT.retry);NT.retry=setTimeout(ntSync,700)}});
+  }).then(ok=>{NT.falhas=ok?0:(NT.falhas||0)+1;return ok}).finally(()=>{NT.sync=null;const espera=NT.falhas?Math.min(60000,1000*2**Math.min(NT.falhas-1,6)):700;NT.proxima=NT.falhas?Date.now()+espera:0;if(ntTemPendentes()){clearTimeout(NT.retry);NT.retry=setTimeout(()=>ntSync(false),espera)}});
   return NT.sync;
 }
 // Chamado ~1 s depois da última digitação.
-function ntSalvaDoc(){
+function ntSalvaDoc(enviar=true){
   clearTimeout(NT.timer);if(!NT.ed||!SM.d)return;
   const ant=NT.shown||SM.d.notasDoc?.blocos||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;   // compara com o que o editor mostrava, não com o plano (que pode ter vindo de outro aparelho)
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
   if(!ntFilaGrava('blocos',ant,blocos)){NT.sujo=true;return}
-  NT.shown=blocos;SM.d.notasDoc={v:1,blocos};smGuardaCache();ntSync();
+  NT.shown=blocos;SM.d.notasDoc={v:1,blocos};smGuardaCache();ntRascunhoLimpa(NT);if(enviar)ntSync();
 }
 
 // ===== Estado aberto/fechado dos toggles: por aparelho (localStorage), fora do documento =====
@@ -855,7 +1081,7 @@ function ntGuardaRuins(ruins,motivo='bloco inválido',pagina){
   if(!ruins.length)return;
   const novos=ruins.map((b,i)=>({id:String(b?.id||'sem-id-'+i),em:String(b?.atualizado||'invalido'),motivo,...(pagina?{pagina}:{}),conteudo:b?.conteudo??null}));
   const todos=ntJuntaConflitos(SM.d.notas_conflitos,novos);
-  if(JSON.stringify(todos)!==JSON.stringify(SM.d.notas_conflitos||[]))smMudar(d=>{d.notas_conflitos=ntJuntaConflitos(d.notas_conflitos,novos)},'notas: '+motivo+' guardado');
+  if(JSON.stringify(todos)!==JSON.stringify(SM.d.notas_conflitos||[])&&ntFilaGrava('conflitos',[],novos)){SM.d.notas_conflitos=todos;smGuardaCache();ntSync()}
 }
 // Cria o editor do contexto `c` (página principal ou painel) com os `blocos`; `aoMudar` roda ~1 s depois da última digitação.
 function ntEditor(c,blocos,aoMudar){
@@ -873,7 +1099,7 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;c.sujo=true;clearTimeout(c.timer);c.timer=setTimeout(aoMudar,1000)});
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;c.sujo=true;clearTimeout(c.timer);ntRascunhoGrava(c);c.timer=setTimeout(aoMudar,1000)});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
   for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
@@ -973,11 +1199,19 @@ function ntPaginaLink(){
   });
 }
 // Toda mudança nas páginas entra na fila (NT_PEND.paginas), no plano local e sobe pelo mesmo ntSync das notas.
-function pgGrava(l,pastas){
-  if(!ntFilaGrava('paginas',ntPaginas(),l,pastas?{pastas,basePastas:ntPastas()}:{}))return false;
-  SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l,...(pastas?{pastas}:{})};smGuardaCache();ntSync();ntLateralPinta();ntPaginaLinks();return true;
+function pgGrava(l,pastas,enviar=true){
+  const excluidas={...SM.d.notasPaginas?.excluidas};
+  for(const p of ntPaginas()){
+    const novo=l.find(n=>n.id===p.id);
+    if(!novo)excluidas[p.id]={rev:p.rev||null,em:ntAgora(),pagina:ntCopia(p)};
+    else if(p.rev&&p.doc&&novo.doc){const ids=[...new Set([...(p.blocosExcluidos?.rev===p.rev?p.blocosExcluidos.ids:[]),...p.doc.blocos.map(b=>b.id)])].filter(id=>!novo.doc.blocos.some(n=>n.id===id));if(ids.length)novo.blocosExcluidos={rev:p.rev,ids,em:ntAgora(),hashes:Object.fromEntries(ids.map(id=>{const b=p.doc.blocos.find(b=>b.id===id);return [id,b?nt144Hash(b.conteudo):p.blocosExcluidos?.hashes?.[id]]}))};else delete novo.blocosExcluidos;}
+  }
+  const conflitos=ntPaginas().filter(p=>!l.some(n=>n.id===p.id)).flatMap(p=>(p.doc?.blocos||[]).map(b=>({...b,pagina:p.id,em:ntAgora(),motivo:'página apagada'})));
+  if(!ntFilaGrava('paginas',ntPaginas(),l,{...(pastas?{pastas,basePastas:ntPastas()}:{}),conflitos,excluidas}))return false;
+  SM.d.notas_conflitos=ntJuntaConflitos(SM.d.notas_conflitos,conflitos);
+  SM.d.notasPaginas={...SM.d.notasPaginas,v:1,paginas:l,...(Object.keys(excluidas).length?{excluidas}:{}),...(pastas?{pastas}:{})};smGuardaCache();if(enviar)ntSync();ntLateralPinta();ntPaginaLinks();return true;
 }
-function pgMuda(fn){if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntPaginas()));fn(l);return pgGrava(l)}
+function pgMuda(fn,enviar=true){if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntPaginas()));fn(l);return pgGrava(l,undefined,enviar)}
 function ntPastasMuda(fn){
   if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntPastas()));fn(l);
   if(!ntFilaGrava('pastas',ntPastas(),l))return false;
@@ -1034,7 +1268,7 @@ function ntPaginaMove(id,ref,depois,pasta){
   });
 }
 // Salva o texto do painel (1 s depois de parar de digitar, ao fechar ou antes de entrar um plano remoto).
-function pgSalvaDoc(){
+function pgSalvaDoc(enviar=true){
   const c=NP;if(!c?.ed||!SM.d)return;clearTimeout(c.timer);
   const p=pgAchar(c.pagina);
   if(!p){   // página apagada em outro aparelho enquanto se digitava nela: o que foi digitado vai para notas_conflitos
@@ -1046,19 +1280,20 @@ function pgSalvaDoc(){
   if(JSON.stringify(blocos)===JSON.stringify(ant))return;
   ntLembSincroniza(ant,blocos);
   const agora=ntAgora();
-  if(pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.doc={v:1,blocos};x.atualizado=agora}}))c.shown=blocos;else c.sujo=true;
+  if(pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.doc={v:1,blocos};x.atualizado=agora}},enviar))c.shown=blocos;else c.sujo=true;
+  ntRascunhoLimpa(c);
 }
 function pgTituloSalva(){
   const c=NP;if(!c?.titulo)return;clearTimeout(c.tituloTimer);
   const p=pgAchar(c.pagina),v=c.titulo.value;if(!p||(p.titulo||'')===v)return;
-  const agora=ntAgora();pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.titulo=v;x.atualizado=agora}});
+  const agora=ntAgora();if(pgMuda(l=>{const x=l.find(y=>y.id===c.pagina);if(x){x.titulo=v;x.atualizado=agora}})){c.tituloSujo=false;if(c.rascunhoTitulo)localStorage.removeItem(c.rascunhoTitulo)}
 }
 // Chega plano de outro aparelho: o painel aberto recebe só os blocos que mudaram (ou fecha, se a página foi excluída lá).
 function pgSincroniza(){
   const c=NP;if(!c?.ed)return;
   const p=pgAchar(c.pagina);
   if(!p){const resgatou=c.sujo||c.resgatou;if(c.sujo)pgSalvaDoc();ntPainelFecha(true);if(!resgatou)toast('A página foi excluída em outro aparelho.');return}   // (com texto digitado, o aviso do resgate já diz o que houve)
-  if(c.titulo&&document.activeElement!==c.titulo&&c.titulo.value!==(p.titulo||''))c.titulo.value=p.titulo||'';
+  if(c.titulo&&!c.tituloSujo&&document.activeElement!==c.titulo&&c.titulo.value!==(p.titulo||''))c.titulo.value=p.titulo||'';
   ntPainelPinta();if(c.sujo)return;
   const alvo=Array.isArray(p.doc?.blocos)?p.doc.blocos:[];if(JSON.stringify(alvo)===JSON.stringify(c.shown))return;
   try{ntAplicaNoEditor(c,alvo);c.shown=alvo}
@@ -1092,7 +1327,7 @@ function ntPainelAbre(id,aba=false){
     else if(a==='exc-nao'){conf.hidden=true;exc.hidden=false}
     else if(a==='exc-sim')ntPaginaExclui(c.pagina);
   });
-  c.titulo.addEventListener('input',()=>{if(c.aba)document.title=c.titulo.value||'Sem título';clearTimeout(c.tituloTimer);c.tituloTimer=setTimeout(pgTituloSalva,600)});
+  c.titulo.addEventListener('input',()=>{if(c.aba)document.title=c.titulo.value||'Sem título';c.tituloSujo=true;ntRascunhoGrava(c,true);clearTimeout(c.tituloTimer);c.tituloTimer=setTimeout(pgTituloSalva,600)});
   c.titulo.addEventListener('blur',pgTituloSalva);
   c.titulo.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();c.ed.commands.focus('start')}});
   ntPainelPinta();ntLateralPinta();
@@ -1280,6 +1515,7 @@ document.addEventListener('pointerdown',e=>{
 });
 function ntFilaInicia(){
   if(NT.legado)return;
+  try{ntRascunhosRecupera()}catch(e){NT144.erroLocal='Não consegui recuperar o rascunho local: '+e.message;toast(NT144.erroLocal);return}
   if(SM.d){if(!ntBaseLer()&&!ntTemPendentes())ntBaseSalva(SM.d.notasDoc?.blocos);else if(!pgBaseLer()&&!ntTemPendentes())pgBaseSalva(ntPaginas());if(!frBaseLer()&&!ntTemPendentes())frBaseSalva(SM.d.notasFrases||[]);ntAplica(SM.d,ntPendentes());smGuardaCache()}
 }
 // smCarga já capturou smPuxar; seu corpo chama smPuxar1 dinamicamente. A barreira fica aqui para não alterar a Semana.
@@ -1291,11 +1527,14 @@ const ntFilaInicio=ntMigraLegado();if(ntFilaInicio)ntFilaInicio.then(ntFilaInici
 window.addEventListener('online',()=>{ntSync().then(()=>smPuxar())});
 // Outra aba do navegador gravou (ou terminou de enviar) a fila: funde com o que esta aba tem e mostra no editor sem recarregar.
 window.addEventListener('storage',async e=>{
-  if(e.key!==NT_PEND&&!e.key?.startsWith(NT_PEND+':'))return;
+  if(e.key!==NT_PEND&&!e.key?.startsWith(NT_PEND+':')&&!e.key?.startsWith(NT144_META))return;
   await ntMigraLegado();if(NT.legado)return;
   if(SM.d){ntAntes();ntAplica(SM.d,ntPendentes());ntSincroniza()}
   smRender();
   if(e.newValue==null&&SM.d&&!ntTemPendentes())Promise.resolve(NT.sync).then(()=>smPuxar()).catch(()=>{});   // busca depois do PUT local; também resolve SM.sujo desta aba
 });
-window.addEventListener('beforeunload',()=>{if(NT.sujo)ntSalvaDoc();if(NP?.sujo)pgSalvaDoc();if(NP)pgTituloSalva()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){if(NT.sujo)ntSalvaDoc();if(NP?.sujo)pgSalvaDoc();if(NP)pgTituloSalva()}});
+function ntAoSair(){ntAntes();if(NP)pgTituloSalva();ntSync()}
+window.addEventListener('beforeunload',ntAoSair);
+window.addEventListener('pagehide',ntAoSair);
+window.addEventListener('pageshow',()=>smPuxar());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)ntAoSair()});

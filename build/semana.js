@@ -36,7 +36,7 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
     }
     return o;
   }
-  const objs=a=>Array.isArray(a)&&a.length>0&&a.every(smPlano),temId=x=>typeof x.id==='string';
+  const objs=a=>Array.isArray(a)&&a.every(smPlano),temId=x=>typeof x.id==='string';
   if(objs(l)&&objs(r)&&(b===undefined||Array.isArray(b))&&(l.some(temId)||r.some(temId))){
     const bl=Array.isArray(b)?b:[],B=new Map(bl.filter(temId).map(x=>[x.id,x])),Lm=new Map(l.filter(temId).map(x=>[x.id,x])),Rm=new Map(r.filter(temId).map(x=>[x.id,x])),out=[];
     const novoLocal=x=>!sb||(parseInt(x.id.slice(1,9),36)>=sb.desde);   // sem base: só o que nasceu depois de ficar sujo
@@ -55,6 +55,20 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
 }
 // Funde o plano remoto com o local (SM.d) usando a base guardada; sem base, o modo cauteloso acima.
 const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
+// Operações duráveis por alteração, sem serializar funções/closures. Notas usam sua própria fila.
+const SM_PEND='sm_operacao144:',SM_OPS=new Map();
+const smSemNotas=d=>Object.fromEntries(Object.entries(d).filter(([k])=>!SM_MERGE_FORA.has(k)));
+function smPendentes(){
+  const ops=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(SM_PEND)){const raw=localStorage.getItem(k);ops.push({k,raw,...JSON.parse(raw)})}}
+  return ops.sort((a,b)=>a.em-b.em||a.k.localeCompare(b.k));
+}
+function smReaplica(){const ops=smPendentes();for(const op of ops)if(!SM_OPS.has(op.k))SM.d=smMerge3(op.base,op.local,SM.d);return ops;}
+function smAplicaOperacao(item){
+  const base=JSON.parse(JSON.stringify(smSemNotas(SM.d)));item.fn(SM.d);
+  const local=smSemNotas(SM.d);
+  if(!smIgual(base,local))localStorage.setItem(item.k,JSON.stringify({em:item.em,base,local}));
+}
+try{if(smPendentes().length){if(SM.d)smReaplica();SM.sujo=true}}catch(e){SM.erro='Não consegui ler as operações locais; cópia preservada.'}
 function smSujo(sim){
   SM.sujo=sim;
   try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
@@ -62,6 +76,7 @@ function smSujo(sim){
 // Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
 function smEnviaSujo(){
   if(!SM.d||!SM.sujo||SM.enviandoSujo||navigator.onLine===false)return;
+  if(typeof ntTemPendentes==='function'&&ntTemPendentes())return; // a fila de notas controla sua espera crescente
   SM.enviandoSujo=true;smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false});
 }
 const smDec=s=>decodeURIComponent(escape(atob(String(s).replace(/\n/g,''))));
@@ -109,28 +124,37 @@ async function smPuxar(){
 }
 async function smPuxar1(){
   smAgendaPuxar();
-  if(SM.d&&typeof ntSync==='function'&&ntTemPendentes()&&!await ntSync())return;
+  let planoLido=false;
   try{
     const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
-    const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
+    const hidratar=typeof NT144!=='undefined'&&!NT144.ultima&&SM.d?.notasPaginas?.paginas?.some(p=>p.rev);
+    const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha&&!hidratar?SM.etag||'':undefined});
+    planoLido=true;
     SM.ok=true;SM.erro='';
-    if(f.naoMudou||g!==(SM.gravs||0))return;
-    SM.avisoTamanho=f.size>800000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
-    if(f.sha!==SM.sha){
-      if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
-      const texto=smDec(f.content),remoto=JSON.parse(texto);
+    const lista=typeof ntArquivosListar==='function'?await ntArquivosListar():[];
+    const orfas=typeof ntArquivosOrfas==='function'&&ntArquivosOrfas(SM.d,lista);
+    if((f.naoMudou&&!orfas)||g!==(SM.gravs||0)){if(typeof ntTemPendentes==='function'&&ntTemPendentes())await ntSync(false);return;}
+    SM.avisoTamanho=f.size>700000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
+    if(orfas||f.sha!==SM.sha||hidratar||SM.d?.notasPaginas?.paginas?.some(p=>p.rev&&!p.doc)){
+      const texto=f.naoMudou?SM.base||JSON.stringify(SM.d):smDec(f.content),remoto=JSON.parse(texto);
+      if(typeof ntArquivosLer==='function')await ntArquivosLer(remoto,lista);
+      if(g!==(SM.gravs||0))return;
+      if(typeof ntAntes==='function')ntAntes();   // sem await entre persistir a digitação e aplicar o remoto
       SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
-      if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
-    SM.etag=f.etag;
+      smReaplica();
+      if(typeof ntRecebe==='function')ntRecebe(SM.d);if(f.sha)SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
+    if(f.etag)SM.etag=f.etag;
+    if(typeof ntArquivosAgendar==='function')ntArquivosAgendar();
   }catch(e){
     console.warn('Leitura do plano no GitHub',e);
     SM.ok=true;
-    if(e.status===404){
+    if(e.status===404&&!planoLido){
       try{const f=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_VELHO}`);SM.d=smConverte(JSON.parse(smDec(f.content)))}catch(e2){SM.d={v:2,dias:{},tarefas:[],notas:[]}}
       SM.sha=null;smMudar(()=>{},'calendário do mês (primeira vez)');
     }else SM.erro=smErroLeitura(e);
     smRender();
   }
+  if(SM.d&&typeof ntSync==='function'&&ntTemPendentes())await ntSync(false);
 }
 function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   // aba de uma página (?pagina=<id>): o resto do app não é desenhado
   if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
@@ -138,30 +162,45 @@ function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   //
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
 function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
-  if(!SM.d)return Promise.resolve(false);fn(SM.d);smGuardaCache();smRender();smNativoTarefas();
-  const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
+  if(!SM.d)return Promise.resolve(false);
+  const item={fn,aoSalvar,msg,feito:false,ok:false,k:SM_PEND+smId(),em:Date.now()};
+  try{item.em=Math.max(item.em,...smPendentes().map(op=>op.em+1));smAplicaOperacao(item);SM_OPS.set(item.k,item);}
+  catch(e){SM.erro='Não consegui persistir a alteração no aparelho; mantenha a aba aberta e copie o texto.';smSujo(true);smRender();return Promise.resolve(false)}
+  smGuardaCache();smRender();smNativoTarefas();
+  SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
-    const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});return ok};
+    SM.salvando=true;
+    const grupo=SM.lote.splice(0),fim=ok=>{SM.salvando=false;grupo.forEach(g=>{g.feito=true;g.ok=ok;SM_OPS.delete(g.k)});return ok};
     for(let t=0;t<6;t++){
       try{
-        grupo.forEach(g=>g.fn(SM.d));
-        if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
-        const texto=JSON.stringify(SM.d),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
-        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
         SM.gravs=(SM.gravs||0)+1;
+        // Captura síncrona: edições que chegam durante a rede pertencem ao próximo PUT.
+        const operacoes=smReaplica();
+        [...grupo,...SM.lote].forEach(g=>g.fn(SM.d));
+        if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
+        const original=JSON.parse(JSON.stringify(SM.d)),shaPlano=SM.sha;
+        if(typeof ntArquivosHidratar==='function')await ntArquivosHidratar(original);
+        const preparo=typeof ntArquivosPreparar==='function'?await ntArquivosPreparar(original):{plano:original,local:original};
+        const texto=JSON.stringify(preparo.plano),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(shaPlano)body.sha=shaPlano;
+        const salvo=original,blocos=preparo.local.notasDoc?.blocos,pags=preparo.local.notasPaginas?.paginas||[],pastas=preparo.local.notasPaginas?.pastas,frases=preparo.local.notasFrases||[];
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
+        if(!r.content?.sha)throw Error('GitHub não confirmou o SHA do plano');
+        for(const op of operacoes)if(localStorage.getItem(op.k)===op.raw)localStorage.removeItem(op.k);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
-        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
+        if(typeof ntArquivosConfirmar==='function')ntArquivosConfirmar(original,preparo.local);
+        const tamanho=body.content.length*3/4-(body.content.endsWith('==')?2:body.content.endsWith('=')?1:0);SM.avisoTamanho=tamanho>700000?'Dados grandes ('+(tamanho/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
+        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;smSujo(smPendentes().length>0);smGuardaCache();smNativoTarefas();
         if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags,frases,pastas||null);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
+        if(typeof ntArquivosExcluir==='function')ntArquivosExcluir(preparo.excluidas);
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){}continue}
-        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
+        if(e.status===409||e.status===422){try{const f=await smLerArquivo();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof ntArquivosLer==='function')await ntArquivosLer(remoto);if(typeof ntAntes==='function')ntAntes();SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;smReaplica();[...grupo,...SM.lote].forEach(smAplicaOperacao);if(typeof ntRecebe==='function')ntRecebe(SM.d);smGuardaCache()}catch(e2){SM.erro=smErroLeitura(e2);smSujo(true);return fim(false)}continue}
+        SM.erro=smErroLeitura(e).replace('Não consegui ler os dados','Não consegui salvar os dados');smSujo(true);smRender();return fim(false);
       }
     }
-    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smRender();return fim(false);
+    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smSujo(true);smRender();return fim(false);
   };
   SM.fila=SM.fila.then(tarefa);return SM.fila;
 }

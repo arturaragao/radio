@@ -30,6 +30,8 @@ http.createServer((req, res) => {
   if (u === '/__cota') { const r = new URL(req.url, 'http://x').searchParams.get('rest'); cota = r == null || r === '' ? null : +r; return j({ cota }); }
   if (u.startsWith('/api/')) {
     if(SIMULADO){
+      if(MEM&&u.includes('/git/blobs/')){const h=hist.find(x=>x.sha===u.split('/git/blobs/')[1]);if(h)return j({sha:h.sha,encoding:'base64',content:h.b64})}
+      if(MEM&&req.method==='DELETE'){let b='';req.on('data',c=>b+=c);req.on('end',()=>{const o=JSON.parse(b),rel=u.replace(/^.*contents\//,''),atual=mem.get(rel);if(!atual)return j({},404);if(o.sha!==atual.sha)return j({},409);mem.delete(rel);j({commit:{sha:'delete'+(++n)}})});return}
       if(req.method==='PUT'){
         if(!MEM){req.resume();return j({content:{sha:'fake'+(++n)}})}
         let b='';req.on('data',c=>b+=c);req.on('end',()=>{const o=JSON.parse(b),rel=u.replace(/^.*contents\//,''),atual=mem.get(rel);

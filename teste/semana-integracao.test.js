@@ -8,11 +8,14 @@ assert.ok(fixos.includes('RI_DIARIA=50'));
 const fonte=fixos+'\n'+['interpretar','semana','notas','notas2','busca'].map(n=>fs.readFileSync(require.resolve('../build/'+n+'.js'),'utf8')).join('\n');
 const copia=x=>JSON.parse(JSON.stringify(x));
 const mutacoesLegadas=[];
+const arquivos144=new WeakMap();
 afterEach(()=>assert.deepEqual(mutacoesLegadas.splice(0),[],'1.43 nunca escreve nem apaga chaves da 1.42'));
 function auditaLegado(acao,k){if(k==='bcbr_notasdoc_pendente'||/^bcbr_notas(?:pag|frases|pastas)?_base$/.test(k))mutacoesLegadas.push([acao,k])}
 async function app(tarefas=[],nativo=false,armazenamento=null,offline=false,remotoSalvo=null,opcoes={}){
   const inicial={v:2,dias:{},tarefas:copia(tarefas)},salvos=[],avisos=[],recebidos=[],confirmados=[],elementos=new Map(),tempos=[],teclas=[],mem=armazenamento||new Map([['sm_cache2',JSON.stringify({sha:'s0',d:inicial})]]);
   const estado={remoto:copia(remotoSalvo||inicial),pendentes:[],conflito:false,falhar:offline};
+  if(!arquivos144.has(mem))arquivos144.set(mem,new Map());const arquivos=arquivos144.get(mem);
+  const hidrata=d=>{const out=copia(d);for(const p of out.notasPaginas?.paginas||[])if(!p.doc&&p.rev&&arquivos.has(p.rev))p.doc=copia(arquivos.get(p.rev).d.doc);return out};
   const el=tag=>({tagName:tag.toUpperCase(),children:[],querySelector(){return null},querySelectorAll(){return []},setAttribute(k,v){this[k]=v},append(...xs){this.children.push(...xs)},remove(){elementos.delete(this.id)}});
   const document={visibilityState:'visible',addEventListener(){},querySelector(){return null},querySelectorAll(){return []},getElementById:id=>elementos.get(id)||null,createElement:el,body:{appendChild(x){elementos.set(x.id,x)},classList:{remove(){},add(){}}}};
   const B={tarefas:json=>recebidos.push(JSON.parse(json)),pendentes:()=>JSON.stringify(estado.pendentes),confirmar:json=>confirmados.push(JSON.parse(json)),dados(){}};
@@ -27,9 +30,19 @@ async function app(tarefas=[],nativo=false,armazenamento=null,offline=false,remo
         if(opt?.method==='PUT'){
           if(estado.conflito){estado.conflito=false;estado.remoto.tarefas.push({id:'outro',texto:'Outro aparelho',dia:'2026-10-27'});throw Object.assign(new Error('conflito'),{status:409})}
           if(estado.falhar)throw Object.assign(new Error('offline'),{status:503});
-          estado.remoto=JSON.parse(Buffer.from(JSON.parse(opt.body).content,'base64').toString());salvos.push(copia(estado.remoto));return{content:{sha:'s'+salvos.length}};
+          estado.remoto=JSON.parse(Buffer.from(JSON.parse(opt.body).content,'base64').toString());salvos.push(hidrata(estado.remoto));return{content:{sha:'s'+salvos.length}};
         }
         return{sha:salvos.length?'s'+salvos.length:'s0',content:Buffer.from(JSON.stringify(estado.remoto)).toString('base64')};
+      }
+      if(path.includes('/contents/semana/paginas/')||path.includes('/git/blobs/')){
+        const rel=path.split('/contents/')[1]||path.split('/git/blobs/')[1],atual=arquivos.get(rel);
+        if(opt?.method==='PUT'){
+          if(estado.falhar)throw Object.assign(new Error('offline'),{status:503});
+          const body=JSON.parse(opt.body);if(body.sha!==atual?.sha)throw Object.assign(new Error('conflito página'),{status:409});
+          const d=JSON.parse(Buffer.from(body.content,'base64').toString()),sha=require('node:crypto').createHash('sha1').update(JSON.stringify(d)).digest('hex'),x={sha,d};arquivos.set(rel,x);arquivos.set(sha,x);return {content:{sha}};
+        }
+        if(opt?.method==='DELETE'){arquivos.delete(rel);return {commit:{sha:'apagado'}}}
+        if(atual)return {sha:atual.sha,encoding:'base64',content:Buffer.from(JSON.stringify(atual.d)).toString('base64')};
       }
       if(path.endsWith('semana/agenda.json')&&estado.agenda)return {sha:'agenda'+JSON.stringify(estado.agenda).length,content:Buffer.from(JSON.stringify(estado.agenda)).toString('base64')};
       throw Object.assign(new Error('não existe'),{status:404});
@@ -650,7 +663,7 @@ test('Notas 1.39: salva pela fila do plano, sobrevive offline/reload, concilia 4
   const b=await app([],false,a.mem,true);assert.equal(vm.runInContext('SM.d.notasDoc.blocos[0].id',b.c),'b1');
   assert.equal(vm.runInContext('ntTemPendentes()',b.c),true);
   // volta a conexão com conflito 409 (outro aparelho mexeu em tarefas): nada se perde
-  b.estado.falhar=false;b.estado.conflito=true;await b.c.smPuxar();
+  b.estado.falhar=false;b.estado.conflito=true;await b.c.ntSync();await b.c.smPuxar(); // evento online força envio; poll respeita o backoff (relógio deste mock é fixo)
   assert.equal(vm.runInContext('ntTemPendentes()',b.c),false,'confirmado');
   const salvo=b.salvos.at(-1);assert.equal(salvo.notasDoc.blocos[0].id,'b1');assert.ok(salvo.tarefas.some(t=>t.id==='outro'),'tarefa do outro aparelho preservada');
   // edição durante o PUT continua pendente e sobe depois
@@ -701,9 +714,9 @@ test('Notas 1.40: ntFunde — mesmo bloco editado nos dois lados: vence o atuali
   assert.deepEqual(lista(r),['x:remoto']);assert.equal(r.conflitos[0].conteudo.content[0].text,'local');
   // o mesmo texto dos dois lados não é conflito
   assert.deepEqual(copia(a.c.ntFunde(base,[bp('x','igual','2026-11-02T00:00:00Z')],[bp('x','igual','2026-11-03T00:00:00Z')])).conflitos,[]);
-  // lista de conflitos: máx. 20, sem repetir
+  // 1.44: nenhuma versão é apagada automaticamente; repetição continua deduplicada.
   const muitos=Array.from({length:25},(_,i)=>({id:'c',em:'e'+i}));
-  assert.equal(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])).length,20);
+  assert.equal(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])).length,25);
   const c=r.conflitos[0];assert.equal(copia(a.c.ntJuntaConflitos([c],[{...c,em:'outra tentativa'}])).length,1,'repetir a fusão não duplica a mesma versão');
 });
 test('Notas 1.40: ntFunde — apagado de um lado e intacto do outro apaga; apagado de um e editado do outro fica o editado',async()=>{
@@ -965,7 +978,7 @@ test('Notas 1.43: fila compartilhada não sobrescreve edições; entradas confir
 function locksLegado(){
   let fila=Promise.resolve(),ativos=0;const l={chamadas:0,depois:null};
   l.request=(nome,op,fn)=>{
-    assert.equal(nome,'radio-notas-migra-legado');assert.equal(op.mode,'exclusive');l.chamadas++;
+    assert.ok(['radio-notas-migra-legado','radio-paginas-v144'].includes(nome));assert.equal(op.mode,'exclusive');if(nome==='radio-notas-migra-legado')l.chamadas++;
     const p=fila.then(async()=>{assert.equal(++ativos,1);try{return await fn()}finally{ativos--;l.depois?.()}});
     fila=p.catch(()=>{});return p;
   };return l;
@@ -1121,7 +1134,7 @@ test('Notas 1.43 D2: Restaurar offline conserva legado e fila, envia ao reconect
   const salvo=b.salvos.at(-1);assert.ok(salvo,'PUT ao reconectar');
   for(const id of ['x','nova','brecuperada'])assert.ok(salvo.notasDoc.blocos.some(b=>b.id===id),'preserva '+id);
   assert.equal(salvo.notasDoc.blocos.find(b=>b.id==='x').conteudo.content[0].text,'Local');
-  assert.deepEqual(salvo.notasPaginas,base.notasPaginas);assert.deepEqual(salvo.notasFrases,base.notasFrases);
+  assert.deepEqual({...salvo.notasPaginas,paginas:salvo.notasPaginas.paginas.map(({rev,...p})=>p)},base.notasPaginas);assert.deepEqual(salvo.notasFrases,base.notasFrases);
   confirmaLegado(b,JSON.stringify(legado));assert.equal(b.c.ntTemPendentes(),false);
 });
 for(const comLocks of [false,true])test('Notas 1.43 bases separadas: A sincroniza antes de B migrar, locks em A '+comLocks,async()=>{
@@ -1241,7 +1254,7 @@ for(const navigator of [{},{locks:{}}])test('Notas 1.43 sem Web Locks: preserva 
   a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.length,1);
   assert.deepEqual(lista(a.salvos[0].notasDoc),['x:Nova','y:Y']);assert.equal(a.c.ntTemPendentes(),false);
   assert.equal(mem.get('bcbr_notasdoc_pendente'),raw);
-  assert.deepEqual(a.avisos,['Há uma edição antiga das Notas guardada neste aparelho. Abra o Radio no Chrome atualizado para recuperá-la.']);
+  assert.deepEqual(a.avisos,['Há uma edição antiga das Notas guardada neste aparelho. Abra o Radio no Chrome atualizado para recuperá-la.','Páginas guardadas no plano. Para separar os arquivos com segurança, abra o Radio no Chrome atualizado (Web Locks).']);
 });
 
 test('Notas 1.43 sem Web Locks: intercalação com migração travada não sobrescreve bases nem apaga remoto no reload',async()=>{

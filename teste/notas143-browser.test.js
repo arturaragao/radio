@@ -130,7 +130,9 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
     await call('Emulation.setTouchEmulationEnabled',{enabled:false});await call('Emulation.setDeviceMetricsOverride',{width:1000,height:900,deviceScaleFactor:1,mobile:false});
   });
 
-  await t.test('6: links/botões, duas abas da mesma origem, edições simultâneas offline, mesma página, reload e SW com ?pagina=',async()=>{
+  await t.test('6: links/botões, duas abas da mesma origem, edições simultâneas offline, mesma página, reload e SW com ?pagina=',async t=>{
+    const abas=new Set(),fecha=async tab=>{await tab.fecha();abas.delete(tab)};
+    t.after(async()=>{for(const tab of abas)await fecha(tab);await ev('if(window.__api)BCBR.api=window.__api');await call('Page.bringToFront')});
     await reset(par('principal'));await ev('NT.sujo=true;ntSalvaDoc()');assert.ok(await confirmado());
     const ids=await ev("(()=>{const a=ntPaginaCria(),b=ntPaginaCria();pgMuda(l=>{for(const [id,t] of [[a,'Alfa'],[b,'Beta']]){const p=l.find(p=>p.id===id);p.titulo=t;p.doc={v:1,blocos:['um','dois'].map((s,i)=>({id:id+i,atualizado:ntAgora(),conteudo:{type:'paragraph',attrs:{id:id+i},content:[{type:'text',text:s}]}}))}}});return [a,b]})()");
     assert.ok(await confirmado());
@@ -139,7 +141,7 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
     const targets=async()=> (await call('Target.getTargets')).targetInfos.filter(t=>t.type==='page');
     const abriu=async acao=>{const antes=new Set((await targets()).map(t=>t.targetId));await acao();let alvo;for(let i=0;i<50;i++){alvo=(await targets()).find(t=>!antes.has(t.targetId));if(alvo)break;await espera(100)}assert.ok(alvo,'o Chrome abriu uma aba real');return alvo};
     let alvo=await abriu(()=>click(`.nt-pg-it[data-pg="${ids[0]}"] .nt-pg-aba`));assert.equal(alvo.url,url(ids[0]));
-    const A=await C.novaAba(alvo.targetId);
+    const A=await C.novaAba(alvo.targetId);abas.add(A);
     const aguarda=async(tab,q)=>{for(let i=0;i<150;i++){if(await tab.ev(q).catch(()=>false))return;await espera(100)}assert.fail('não ocorreu: '+q)};
     await aguarda(A,'!!NP?.ed');assert.equal(await A.ev('document.title'),'Alfa');
     assert.equal(await A.ev("getComputedStyle(document.querySelector('main')).display"),'none');
@@ -151,27 +153,41 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
       assert.equal(alvo.url,url(ids[1]));const temp=await C.novaAba(alvo.targetId);await temp.fecha();await call('Page.bringToFront');
     }
     await ev(`ntPainelAbre('${ids[1]}')`);alvo=await abriu(()=>click('#nt_pan [data-a=aba]'));assert.equal(alvo.url,url(ids[1]));
-    const B=await C.novaAba(alvo.targetId);await aguarda(B,'!!NP?.ed');
+    const B=await C.novaAba(alvo.targetId);abas.add(B);await aguarda(B,'!!NP?.ed');
     assert.equal(await ev('NP===null'),true,'painel salva e fecha ao abrir a aba');
-    const offline=tab=>tab.ev("window.__api=BCBR.api;BCBR.api=(p,o)=>o?.method==='PUT'?Promise.reject(new Error('offline fictício')):window.__api(p,o)");
-    await offline(A);await offline(B);
+    const offline=(tab,segurar=false)=>tab.ev(`window.__api=BCBR.api;window.__putsOffline=0;
+      window.__esperaPut=${segurar?"new Promise(r=>window.__liberaPut=r)":"Promise.resolve()"};
+      BCBR.api=(p,o)=>{if(o?.method!=='PUT')return window.__api(p,o);window.__putsOffline++;return window.__esperaPut.then(()=>{throw new Error('offline fictício')})};0`);
+    // Todas as abas ficam sem PUT; a aba principal também pode enviar a fila compartilhada.
+    // Só B segura a resposta: segurar A e B juntas bloquearia a segunda no Web Lock.
+    await offline(C);await offline(A);await offline(B,true);
     const edita=(tab,indice,txt)=>tab.ev(`(()=>{let pos=0;NP.ed.state.doc.forEach((n,p,i)=>{if(i===${indice})pos=p+1});NP.ed.commands.insertContentAt(pos,${JSON.stringify(txt)});pgSalvaDoc()})()`);
     await Promise.all([edita(A,0,'A1 '),edita(B,0,'B1 ')]);
     await aguarda(A,`pgAchar('${ids[1]}').doc.blocos[0].conteudo.content[0].text==='B1 um'`);
     await aguarda(B,`pgAchar('${ids[0]}').doc.blocos[0].conteudo.content[0].text==='A1 um'`);
     assert.equal(await A.ev('ntTemPendentes()'),true,'fila offline permanece');
+    // storage confirma a fusão local, não a conclusão do PUT. Mantém a resposta em voo
+    // até conferir a cópia persistida e só então rejeita e aguarda o tratamento do erro.
+    await aguarda(B,'window.__putsOffline>0');
+    const fila=()=>B.ev('ntPendentes().flatMap(op=>op.filas.map(f=>({k:f.k,raw:f.raw})))');
+    const antesDaFalha=await fila();
+    assert.ok(antesDaFalha.length>=2,'as duas edições estão persistidas antes da resposta');
+    for(const texto of ['A1 um','B1 um'])assert.ok(antesDaFalha.some(f=>f.raw.includes(texto)),texto+' está na fila');
+    assert.equal(await B.ev('window.__liberaPut();NT.sync'),false,'o envio automático terminou com falha');
     assert.equal(await B.ev('SM.sujo'),true,'falha do PUT marca sujo');
+    assert.equal(await B.ev('ntTemPendentes()'),true,'falha mantém pendência');
+    assert.deepEqual(await fila(),antesDaFalha,'PUT rejeitado não remove nem altera as entradas');
     // B passa a editar a MESMA página de A, sem conexão. Blocos diferentes ficam no editor das duas abas.
     await B.abre(url(ids[0]));await aguarda(B,'!!NP?.ed');await offline(B);
     await Promise.all([edita(A,0,'A2 '),edita(B,1,'B2 ')]);
     for(const tab of [A,B])await aguarda(tab,"NP.ed.state.doc.textContent==='A2 A1 umB2 dois'");
-    for(const tab of [A,B])await tab.ev('BCBR.api=window.__api');
+    for(const tab of [C,A,B])await tab.ev('BCBR.api=window.__api');
     await A.ev('ntSync()');await B.ev('ntSync()');
     for(const tab of [A,B])await aguarda(tab,'!ntTemPendentes()&&!NT.sync&&!SM.sujo');
     await A.ev("NP.titulo.value='Alfa editada';NP.titulo.dispatchEvent(new Event('input',{bubbles:true}));NP.titulo.blur();pgTituloSalva()");
     await aguarda(B,"document.title==='Alfa editada'");assert.equal(await A.ev('document.title'),'Alfa editada');
     await A.abre(url(ids[0]));await aguarda(A,'!!NP?.ed');assert.equal(await A.ev('NP.ed.state.doc.textContent'),'A2 A1 umB2 dois');
-    const remoto=await A.ev("BCBR.api('/repos/'+BCBR.REPO+'/contents/'+SM_ARQ).then(r=>JSON.parse(smDec(r.content)))");
+    const remoto=await A.ev("BCBR.api('/repos/'+BCBR.REPO+'/contents/'+SM_ARQ).then(async r=>{const d=JSON.parse(smDec(r.content));for(const p of d.notasPaginas.paginas)if(!p.doc)p.doc=(await ntArquivoRev(p.id,p.rev)).doc;return d})");
     assert.equal(remoto.notasPaginas.paginas.find(p=>p.id===ids[1]).doc.blocos[0].conteudo.content[0].text,'B1 um','outra página também subiu');
     await A.ev("navigator.serviceWorker.ready.then(()=>true)");await aguarda(A,'!!navigator.serviceWorker.controller');
     await A.call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:false});
@@ -179,11 +195,11 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
     await A.call('Network.enable');await A.call('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
     await A.abre(url(ids[0]));await aguarda(A,'!!NP?.ed');assert.equal(await A.ev('NP.ed.state.doc.textContent'),'A2 A1 umB2 dois','SW serviu endereço com query offline');
     await A.call('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
-    await A.fecha();await B.fecha();await call('Page.bringToFront');
+    await fecha(A);await fecha(B);await call('Page.bringToFront');
     alvo=await abriu(()=>click('#nt_aba_bt'));assert.equal(alvo.url,url('notas'));
-    const principal=await C.novaAba(alvo.targetId);await aguarda(principal,"typeof NT!=='undefined'&&!!NT.ed");
+    const principal=await C.novaAba(alvo.targetId);abas.add(principal);await aguarda(principal,"typeof NT!=='undefined'&&!!NT.ed");
     assert.equal(await principal.ev('document.title'),'Notas');assert.equal(await principal.ev('NT.ed.state.doc.textContent'),'principal');
-    assert.deepEqual(A.erros,[]);assert.deepEqual(B.erros,[]);assert.deepEqual(principal.erros,[]);await principal.fecha();
+    assert.deepEqual(A.erros,[]);assert.deepEqual(B.erros,[]);assert.deepEqual(principal.erros,[]);await fecha(principal);
   });
   await t.test('6 mesmo bloco: duas abas antigas gravam offline sem receber storage; uma versão vence e a outra fica guardada uma única vez',async()=>{
     // Empate não garante convergência antes do pull: o terceiro argumento (remoto) vence.

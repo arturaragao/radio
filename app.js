@@ -1,4 +1,4 @@
-// Banco CBR app 1.46.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.47.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // ===== INTERPRETAR O TEXTO DE UMA TAREFA (pt-BR, sem API) — 1.17.0 =====
 // interpretarTarefa(texto, hoje) -> [{texto,dia,hora,urg,area,prioridade,etiquetas,repetir}]
 // Pura com hoje explícito; sem hoje usa a data local por compatibilidade com chamadas antigas.
@@ -1620,7 +1620,7 @@ function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.
 // Campo que mudou só de um lado: fica essa mudança. Dos dois e diferente: vale o de `atualizado` maior (empate: o remoto). Os blocos da página
 // passam por ntFunde (mesma regra das notas). Página apagada de um lado e intacta do outro: apaga; se foi editada do outro lado, a edição fica.
 // Campos desconhecidos (de versões futuras) são preservados: o objeto da página é copiado inteiro, só os campos conhecidos são decididos.
-const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta'];
+const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta','origem'];
 function ntFundePaginas(base,local,remoto,agora=new Date().toISOString(),pastas=false){
   const lim=l=>(Array.isArray(l)?l:[]).filter(p=>p&&typeof p==='object'&&typeof p.id==='string');
   base=lim(base);local=lim(local);remoto=lim(remoto);
@@ -2715,13 +2715,14 @@ function ntPaginaMenu(id,x,y){
   if(!pgAchar(id))return;
   ntPgMenuFecha?.();
   const m=document.createElement('div');m.id='nt_pg_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Página');
-  m.innerHTML='<button type="button" role="menuitem" data-excluir>Excluir</button>';
+  m.innerHTML='<button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
   document.body.appendChild(m);
   const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);document.removeEventListener('keydown',tecla,true);ntPgMenuFecha=null};ntPgMenuFecha=fecha;
   const fora=e=>{if(!m.contains(e.target))fecha()},tecla=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fecha()}};
   document.addEventListener('pointerdown',fora,true);document.addEventListener('keydown',tecla,true);
   const posiciona=()=>{m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px'};
   m.onclick=e=>{
+    if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();
@@ -3401,6 +3402,20 @@ function ntNotionRef(base,ref){
   try{return ntZipCaminho(base.slice(0,base.lastIndexOf('/')+1)+decodeURIComponent(ref.split(/[?#]/)[0]))}catch(e){return ''}
 }
 const ntNotionNome=s=>s.split('/').pop().replace(/\.html?$/i,'').replace(/[ _-]?[a-f0-9]{32}$/i,'').trim()||'Página importada';
+const ntNotionId=s=>{const m=String(s||'').match(/(?:^|[^a-f0-9])([a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12})(?=$|[^a-f0-9])/i);return m?m[1].replaceAll('-','').toLowerCase():''};
+const ntNotionHash=async raw=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(x=>x.toString(16).padStart(2,'0')).join('');
+// Importações anteriores à 1.47 não têm hashes: comparar o JPEG já guardado após a mesma compressão.
+async function ntNotionImagensAnteriores(id,checa){
+  const fontes=new Set(),mapa=new Map(),visita=n=>{if(n?.type==='image'&&/^\.\/img\/[\w.-]+$/.test(n.attrs?.src||''))fontes.add(n.attrs.src);for(const f of n?.content||[])visita(f)};
+  for(const b of pgAchar(id)?.doc?.blocos||[])visita(b.conteudo);
+  for(const src of fontes){
+    checa();try{
+      let r;try{r=await(await caches.open('bcbr-img')).match(src)}catch(e){}
+      if(!r)r=await fetch(src,{signal:AbortSignal.timeout(10000)});
+      if(r.ok){const raw=await r.arrayBuffer();if(raw.byteLength<=NT_IMG_LIM)mapa.set(await ntNotionHash(raw),src)}
+    }catch(e){}checa();
+  }return mapa;
+}
 function ntNotionConverte(html,caminho,paginas=new Map()){
   // DOMParser não injeta nada na página ativa. Nenhum elemento deste documento é adotado no DOM vivo.
   const d=new DOMParser().parseFromString(html,'text/html');
@@ -3470,45 +3485,185 @@ function ntNotionConverte(html,caminho,paginas=new Map()){
     }flush();return out;
   };
   const raiz=d.querySelector('.page-body')||d.querySelector('article')||d.body;
-  return {titulo,doc:{type:'doc',content:naoVazio(blocos(raiz))},imagens,simplificados};
+  const notionId=ntNotionId(caminho.split('/').pop())||ntNotionId(d.querySelector('article[id],.page[id],body[id]')?.id);
+  return {titulo,notionId,doc:{type:'doc',content:naoVazio(blocos(raiz))},imagens,simplificados};
 }
-function ntNotionEscolhe(){
-  const i=document.createElement('input');i.type='file';i.accept='.zip,.html,.htm';i.className='nt-notion-arquivo';i.hidden=true;i.onchange=()=>{const f=i.files[0];i.remove();if(f)ntNotionImporta(f)};i.oncancel=()=>i.remove();document.body.appendChild(i);i.click();
+function ntNotionEscolhe(alvo=''){
+  const i=document.createElement('input');i.type='file';i.accept=alvo?'.zip':'.zip,.html,.htm';i.className='nt-notion-arquivo';i.hidden=true;i.onchange=()=>{const f=i.files[0];i.remove();if(f)ntNotionImporta(f,alvo)};i.oncancel=()=>i.remove();document.body.appendChild(i);i.click();
 }
-async function ntNotionImporta(arquivo){
+// A origem serve para reconhecer o export e reaproveitar bytes já enviados; não é uma base de sincronização.
+// LCS por bloco de topo: âncoras por texto normalizado; entre âncoras, casar pela posição e pelo tipo.
+function ntNotionTexto(n){return n?.text||((n?.content||[]).map(ntNotionTexto).join(' '))}
+function ntNotionChave(n){
+  const texto=ntNotionTexto(n).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  return n.type+'|'+(texto||n.attrs?.src||JSON.stringify(ntNotionSemIds(n)));
+}
+function ntNotionSemIds(n){
+  if(Array.isArray(n))return n.map(ntNotionSemIds);
+  if(!n||typeof n!=='object')return n;
+  const o={};for(const [k,v] of Object.entries(n))if(k!=='id')o[k]=ntNotionSemIds(v);return ntCanon(o);
+}
+function ntNotionDiff(antes,depois){
+  const a=antes.map(b=>ntNotionChave(b.conteudo)),b=depois.map(ntNotionChave),n=a.length,m=b.length;
+  if((n+1)*(m+1)>16000000)throw Error('Página grande demais para comparar neste aparelho (limite de 16 milhões de pares de blocos).');
+  const l=Array.from({length:n+1},()=>new Uint32Array(m+1));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)l[i][j]=a[i]===b[j]?1+l[i+1][j+1]:Math.max(l[i+1][j],l[i][j+1]);
+  const pares=[];let i=0,j=0;
+  while(i<n&&j<m){if(a[i]===b[j]){pares.push([i++,j++])}else if(l[i+1][j]>=l[i][j+1])i++;else j++}
+  pares.push([n,m]);const out=[];i=0;j=0;
+  const poe=(ant,dep)=>out.push({tipo:!ant?'adicionado':!dep?'removido':ntIgual(ntNotionSemIds(ant.conteudo),ntNotionSemIds(dep))?'igual':'alterado',antes:ant||null,depois:dep||null,aplicar:true});
+  for(const [ai,bj] of pares){
+    while(i<ai||j<bj){
+      if(i<ai&&j<bj&&antes[i].conteudo.type===depois[j].type)poe(antes[i++],depois[j++]);
+      else if(i<ai)poe(antes[i++],null);else poe(null,depois[j++]);
+    }
+    if(ai<n){poe(antes[i++],depois[j++])}
+  }
+  return out;
+}
+// Preserva IDs do bloco e dos filhos reconhecidos (inclusive toggles); IDs do export nunca entram na fila como novas identidades do mesmo bloco.
+function ntNotionMantemIds(antes,depois){
+  const n=JSON.parse(JSON.stringify(depois));
+  if(antes?.attrs?.id)n.attrs={...n.attrs,id:antes.attrs.id};
+  const usados=new Set(),filhos=antes?.content||[];
+  if(n.content)n.content=n.content.map((f,i)=>{
+    let j=filhos.findIndex((a,j)=>!usados.has(j)&&ntNotionChave(a)===ntNotionChave(f));
+    if(j<0&&filhos[i]?.type===f.type&&!usados.has(i))j=i;
+    if(j>=0)usados.add(j);return ntNotionMantemIds(j>=0?filhos[j]:null,f);
+  });
+  return n;
+}
+function ntNotionCombina(diff,agora=ntAgora()){
+  return diff.flatMap(r=>{
+    if(r.tipo==='igual'||!r.aplicar)return r.antes?[r.antes]:[];
+    if(!r.depois)return [];
+    const conteudo=ntNotionMantemIds(r.antes?.conteudo,r.depois),id=r.antes?.id||ntNovoId();
+    conteudo.attrs={...conteudo.attrs,id};return [{id,atualizado:agora,conteudo}];
+  });
+}
+function ntNotionAplicar(id,base,diff,origem){
+  if(NP?.pagina===id&&NP.sujo)pgSalvaDoc();
+  const p=pgAchar(id);if(!p||NP?.pagina===id&&NP.sujo)throw Error('Não consegui salvar a edição atual. A atualização não foi aplicada.');
+  if(!ntIgual(p.doc,base))throw Error('A página mudou durante a revisão. Cancele e compare novamente para incluir essa edição.');
+  if(!diff.some(r=>r.tipo!=='igual'&&r.aplicar))return false;
+  const agora=ntAgora(),blocos=ntNotionCombina(diff,agora);
+  if(!blocos.length)blocos.push(...ntBlocos({content:[ntPar('')]},[],agora));
+  const ctx=NP?.pagina===id?NP:null,schema=(ctx?.ed||NT.ed)?.state.schema;
+  if(!schema)throw Error('Abra as Notas antes de aplicar.');schema.nodeFromJSON(ntDocumento(blocos)).check();
+  const copia={...JSON.parse(JSON.stringify(p)),id:ntNovoId().replace(/^b/,'p'),titulo:(p.titulo||'Sem título')+' (antes de atualizar '+new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+')',fixada:false,criado:agora,atualizado:agora,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+10,copiaDe:id};
+  delete copia.origem;
+  // Uma edição normal de páginas grava atomicamente a cópia completa e a combinação. Sem mudança na fila/sync.
+  if(!pgMuda(l=>{l.push(copia);const x=l.find(p=>p.id===id);x.doc={v:1,blocos};x.origem={...origem,imagens:{...p.origem?.imagens,...origem.imagens}};x.atualizado=agora}))throw Error('Sem espaço para guardar a cópia de segurança. A atualização não foi aplicada.');
+  if(ctx?.ed){ntAplicaNoEditor(ctx,blocos,true);ctx.shown=blocos;ctx.sujo=false;clearTimeout(ctx.timer)}
+  return copia.id;
+}
+function ntNotionRevisa(id,p,resumo){
+  if(NP?.pagina===id&&NP.sujo)pgSalvaDoc();
+  if(NP?.pagina===id&&NP.sujo)throw Error('Não consegui salvar a edição atual. Libere espaço antes de comparar.');
+  const atual=pgAchar(id);if(!atual)throw Error('Página não encontrada.');
+  const base=JSON.parse(JSON.stringify(atual.doc||{v:1,blocos:[]})),conteudo=[...p.doc.content];
+  // TrailingNode mantém um parágrafo vazio de edição após imagens/toggles. Não é uma remoção no export.
+  const fim=base.blocos?.at(-1)?.conteudo,vazio=n=>n?.type==='paragraph'&&!n.content?.length;
+  if(vazio(fim)&&!vazio(conteudo.at(-1)))conteudo.push(fim);
+  const diff=ntNotionDiff(base.blocos||[],conteudo);
+  const ov=ntModal('nt-notion-diff',`<div class="nt-modal-t"><b>Atualizar do Notion: ${esc(atual.titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><p>Compare com suas edições atuais. Aplicar cria uma cópia da página para desfazer.</p><p role="status">${resumo.enviadas} imagens enviadas; ${resumo.reutilizadas} reutilizadas; ${resumo.falhas} falhas; ${resumo.simplificados} itens simplificados.</p><div class="nt-diff-lista"></div><div class="nt-diff-acoes"><button type="button" class="b" data-tudo>Aplicar tudo</button><button type="button" class="b" data-selecao>Aplicar selecionados</button><button type="button" class="b s" data-cancelar>Cancelar</button></div>`);
+  const lista=ov.querySelector('.nt-diff-lista'),schema=(NP?.ed||NT.ed).state.schema,serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
+  const mostra=(pai,no,classe,rotulo)=>{
+    if(!no)return;const area=document.createElement('div');area.className='nt-diff-versao '+classe;
+    const label=document.createElement('b');label.textContent=rotulo;area.appendChild(label);
+    const el=document.createElement('div');el.className='nt-ed nt-diff-conteudo';el.appendChild(serializer.serializeNode(schema.nodeFromJSON(no)));area.appendChild(el);pai.appendChild(area);
+  };
+  diff.forEach((r,i)=>{
+    const row=document.createElement('section');row.className='nt-diff-bloco '+r.tipo;row.dataset.i=i;
+    const tit=document.createElement('b');tit.textContent={igual:'Sem alteração',adicionado:'Adicionado',removido:'Removido',alterado:'Alterado'}[r.tipo];row.appendChild(tit);
+    if(r.tipo!=='adicionado')mostra(row,r.antes.conteudo,r.tipo==='igual'?'':'nt-diff-antes',r.tipo==='igual'?'Atual':'Antes');
+    if(r.tipo==='adicionado'||r.tipo==='alterado')mostra(row,r.depois,'nt-diff-depois','Depois');
+    if(r.tipo!=='igual'){
+      const botoes=document.createElement('div');botoes.innerHTML='<button type="button" class="b s" data-aplicar aria-pressed="true">Aplicar bloco</button> <button type="button" class="b s" data-ignorar aria-pressed="false">Ignorar bloco</button>';row.appendChild(botoes);
+    }lista.appendChild(row);
+  });
+  const fecha=()=>ntModalFecha(ov);ov.querySelector('.nt-x').onclick=fecha;ov.querySelector('[data-cancelar]').onclick=fecha;
+  lista.onclick=e=>{
+    const b=e.target.closest('[data-aplicar],[data-ignorar]');if(!b)return;
+    const row=b.closest('[data-i]'),r=diff[+row.dataset.i];r.aplicar=b.hasAttribute('data-aplicar');row.classList.toggle('ignorado',!r.aplicar);
+    row.querySelector('[data-aplicar]').setAttribute('aria-pressed',String(r.aplicar));row.querySelector('[data-ignorar]').setAttribute('aria-pressed',String(!r.aplicar));
+  };
+  const aplica=tudo=>{try{if(tudo)diff.forEach(r=>r.aplicar=true);const copia=ntNotionAplicar(id,base,diff,p.origem);if(copia){fecha();toast('Página atualizada. A cópia “antes de atualizar” está na lateral.')}else ov.querySelector('[role=status]').textContent='Nenhuma alteração selecionada.'}catch(e){ov.querySelector('[role=status]').textContent=e.message}};
+  ov.querySelector('[data-tudo]').onclick=()=>aplica(true);ov.querySelector('[data-selecao]').onclick=()=>aplica(false);
+  return {...resumo,diferencas:diff.map(r=>r.tipo)};
+}
+async function ntNotionImporta(arquivo,alvo=''){
   if(NT.importando){toast('Já existe uma importação em andamento.');return}
   NT.importando=true;let cancelado=false;
   const ov=ntModal('nt-importa','<h3>Importar do Notion</h3><p class="nt-importa-status" role="status">Lendo arquivo…</p><div class="nt-importa-acoes"><button type="button" class="b">Cancelar</button></div>'),status=ov.querySelector('[role=status]'),acoes=ov.querySelector('.nt-importa-acoes');
   ov.aoFechar=()=>{cancelado=true};acoes.querySelector('button').onclick=()=>{cancelado=true;status.textContent='Cancelando…'};
   const checa=()=>{if(cancelado)throw Error('Importação cancelada.')};
-  let enviadas=0,falhas=0,simplificados=0;
+  let enviadas=0,falhas=0,simplificados=0,reutilizadas=0;
   try{
+    if(alvo&&!pgAchar(alvo))throw Error('Página não encontrada.');
+    if(alvo&&!/\.zip$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip para atualizar.');
     if(arquivo.size>NT_ZIP_MAX)throw Error('O arquivo deve ter no máximo 200 MB.');
     const zip=/\.zip$/i.test(arquivo.name),arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
     if(!zip&&!/\.html?$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip ou .html.');
     const htmls=[...arqs].filter(([k])=>/\.html?$/i.test(k)).sort(([a],[b])=>a.split('/').length-b.split('/').length||a.localeCompare(b));
     if(!htmls.length)throw Error('Nenhuma página HTML encontrada no arquivo.');
-    const ids=new Map(htmls.map(([k])=>[k,ntNovoId().replace(/^b/,'p')])),pags=htmls.map(([k,v])=>({...ntNotionConverte(new TextDecoder().decode(v),k,ids),id:ids.get(k)}));
+    const ids=new Map(htmls.map(([k])=>[k,ntNovoId().replace(/^b/,'p')]));
+    if(alvo){
+      ids.clear();
+      for(const [k,v] of htmls){const r=ntNotionConverte(new TextDecoder().decode(v),k),p=ntPaginas().filter(p=>p.origem?.tipo==='notion-zip'&&(r.notionId?p.origem.notionId===r.notionId:p.origem.titulo===r.titulo));if(p.length===1)ids.set(k,p[0].id)}
+    }
+    let pags=htmls.map(([k,v])=>({...ntNotionConverte(new TextDecoder().decode(v),k,ids),id:ids.get(k),caminho:k}));
+    if(alvo){
+      const atual=pgAchar(alvo),id=atual.origem?.notionId,candidatas=pags.filter(p=>id?p.notionId===id:ntNorma(p.titulo)===ntNorma(atual.origem?.titulo||atual.titulo));
+      let escolhida=candidatas.length===1?candidatas[0]:null;
+      if(!escolhida){
+        status.textContent='Escolha a página do ZIP que deve atualizar esta página.';
+        escolhida=await new Promise(resolve=>{
+          const sel=document.createElement('select');sel.setAttribute('aria-label','Página do ZIP');
+          pags.forEach((p,i)=>{const op=document.createElement('option');op.value=i;op.textContent=p.titulo+' — '+p.caminho;sel.appendChild(op)});
+          const b=document.createElement('button');b.type='button';b.className='b';b.textContent='Comparar página';b.onclick=()=>resolve(pags[+sel.value]);acoes.append(sel,b);
+          const cancela=()=>{cancelado=true;resolve(null)};acoes.querySelector('button').onclick=cancela;ov.aoFechar=cancela;
+        });checa();acoes.querySelectorAll('select,button:not(:first-child)').forEach(e=>e.remove());
+      }
+      ids.set(escolhida.caminho,alvo);
+      const entrada=htmls.find(([k])=>k===escolhida.caminho);
+      pags=[{...ntNotionConverte(new TextDecoder().decode(entrada[1]),entrada[0],ids),id:alvo}];
+    }
     for(const p of pags)for(const img of p.imagens){const b=arqs.get(img.caminho);if(b?.length>NT_IMG_LIM)throw Error('Cada imagem deve ter no máximo 25 MB.')}
     let soTexto=false;
     if((navigator.onLine===false||BCBR.semRede)&&pags.some(p=>p.imagens.length)){
       status.textContent='As imagens precisam de conexão. Deseja importar só o texto?';
       soTexto=await new Promise(resolve=>{const b=document.createElement('button');b.type='button';b.className='b';b.textContent='Importar só o texto';b.onclick=()=>{b.remove();resolve(true)};acoes.appendChild(b);const cancela=()=>{cancelado=true;resolve(false)};acoes.querySelector('button').onclick=cancela;ov.aoFechar=cancela});checa();
     }
+    const cache=new Map(Object.entries(alvo?pgAchar(alvo).origem?.imagens||{}:{}));let anteriores=null;
     for(let i=0;i<pags.length;i++){
       const p=pags[i];simplificados+=p.simplificados;checa();status.textContent=`Importando… página ${i+1}/${pags.length}, imagem 0/${p.imagens.length}`;
+      p.hashes={};
       for(let j=0;j<p.imagens.length;j++){
         checa();status.textContent=`Importando… página ${i+1}/${pags.length}, imagem ${j+1}/${p.imagens.length}`;
         const img=p.imagens[j],raw=arqs.get(img.caminho);
-        if(soTexto||!raw){falhas++;continue}
-        try{const nome=await ntImgEnvia(await ntImgComprime(new Blob([raw])));Object.keys(img.no).forEach(k=>delete img.no[k]);Object.assign(img.no,{type:'image',attrs:{src:'./img/'+nome}});enviadas++}catch(e){falhas++}
+        if(!raw){falhas++;continue}
+        try{
+          const hash=await ntNotionHash(raw);checa();let src=cache.get(hash);
+          if(src&&!/^\.\/img\/[\w.-]+$/.test(src))src=null;
+          if(!src&&!soTexto){
+            const blob=await ntImgComprime(new Blob([raw]));checa();
+            if(alvo){anteriores??=await ntNotionImagensAnteriores(alvo,checa);src=anteriores.get(await ntNotionHash(await blob.arrayBuffer()))}
+            if(!src){checa();src='./img/'+await ntImgEnvia(blob);enviadas++}else reutilizadas++;
+            cache.set(hash,src);
+          }else if(src)reutilizadas++;
+          else{falhas++;continue}
+          p.hashes[hash]=src;Object.keys(img.no).forEach(k=>delete img.no[k]);Object.assign(img.no,{type:'image',attrs:{src}});
+        }catch(e){checa();falhas++}
       }
     }
     checa();
     const agora=ntAgora(),pasta=pags.length>1?{id:ntNovoId().replace(/^b/,'f'),titulo:pags[0].titulo,ordem:Math.max(0,...ntPastas().map(f=>+f.ordem||0))+10,criado:agora,atualizado:agora}:null;
     // Validar tudo antes de gravar: sem página parcialmente importada por HTML/ZIP inválido.
-    for(const p of pags)NT.ed.state.schema.nodeFromJSON(p.doc).check();
-    const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));
+    const schema=(NP?.ed||NT.ed)?.state.schema;if(!schema)throw Error('Abra as Notas antes de importar.');
+    for(const p of pags){const no=schema.nodeFromJSON(p.doc);no.check();p.doc=no.toJSON();p.origem={tipo:'notion-zip',titulo:p.titulo,importadoEm:agora,...(p.notionId?{notionId:p.notionId}:{}),imagens:p.hashes}}
+    if(alvo){const r=ntNotionRevisa(alvo,pags[0],{enviadas,falhas,simplificados,reutilizadas});ov.aoFechar=null;ntModalFecha(ov);return r}
+    const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,origem:p.origem,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));
     if(!pgGrava([...ntPaginas(),...novas],pasta?[...ntPastas(),pasta]:undefined))throw Error('Sem espaço para salvar a importação neste aparelho.');
     status.textContent=`${novas.length} páginas criadas; ${enviadas} imagens enviadas, ${falhas} falhas; ${simplificados} itens simplificados.`;
     acoes.replaceChildren();const fim=document.createElement('button');fim.type='button';fim.className='b';fim.textContent='Concluir';fim.onclick=()=>ntModalFecha(ov);acoes.appendChild(fim);ov.aoFechar=null;ntPainelAbre(novas[0].id);

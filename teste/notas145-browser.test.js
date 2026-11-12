@@ -15,7 +15,8 @@ test('Radio 1.45: lateral, exclusão, listas e atalhos no Chrome',{timeout:18000
     assert.equal(await C.confirmado(),true);
     const item=id=>`.nt-pg-it[data-pg="${id}"]`;
     const direito=async id=>{const r=await rect(item(id)+' .nt-pg-nome');for(const type of ['mousePressed','mouseReleased'])await C.call('Input.dispatchMouseEvent',{type,x:r.x,y:r.y,button:'right',clickCount:1})};
-    await direito(ids[0]);assert.equal(await ev("document.querySelector('#nt_pg_menu button').textContent"),'Excluir');
+    await direito(ids[0]);assert.equal(await ev("document.querySelector('#nt_pg_menu [data-excluir]').textContent"),'Excluir');
+    assert.equal(await ev("document.querySelector('#nt_pg_menu [data-notion]').textContent"),'Atualizar do Notion (.zip)');
     await click('#nt_pg_menu [data-excluir]');assert.equal(await ev(`!!pgAchar('${ids[0]}')`),true,'a primeira ação só pede confirmação');
     await click('#nt_pg_menu [data-nao]');assert.equal(await ev(`!!pgAchar('${ids[0]}')`),true);
     await click(item(ids[0])+' .nt-pg-alca');assert.equal(await ev("!!document.querySelector('#nt_pg_menu')"),true);

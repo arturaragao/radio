@@ -107,7 +107,7 @@ function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.
 // Campo que mudou só de um lado: fica essa mudança. Dos dois e diferente: vale o de `atualizado` maior (empate: o remoto). Os blocos da página
 // passam por ntFunde (mesma regra das notas). Página apagada de um lado e intacta do outro: apaga; se foi editada do outro lado, a edição fica.
 // Campos desconhecidos (de versões futuras) são preservados: o objeto da página é copiado inteiro, só os campos conhecidos são decididos.
-const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta'];
+const NT_PG_CAMPOS=['titulo','fixada','ordem','pasta','origem'];
 function ntFundePaginas(base,local,remoto,agora=new Date().toISOString(),pastas=false){
   const lim=l=>(Array.isArray(l)?l:[]).filter(p=>p&&typeof p==='object'&&typeof p.id==='string');
   base=lim(base);local=lim(local);remoto=lim(remoto);
@@ -1202,13 +1202,14 @@ function ntPaginaMenu(id,x,y){
   if(!pgAchar(id))return;
   ntPgMenuFecha?.();
   const m=document.createElement('div');m.id='nt_pg_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Página');
-  m.innerHTML='<button type="button" role="menuitem" data-excluir>Excluir</button>';
+  m.innerHTML='<button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
   document.body.appendChild(m);
   const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);document.removeEventListener('keydown',tecla,true);ntPgMenuFecha=null};ntPgMenuFecha=fecha;
   const fora=e=>{if(!m.contains(e.target))fecha()},tecla=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fecha()}};
   document.addEventListener('pointerdown',fora,true);document.addEventListener('keydown',tecla,true);
   const posiciona=()=>{m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px'};
   m.onclick=e=>{
+    if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();

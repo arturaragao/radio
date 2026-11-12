@@ -2,10 +2,16 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.44.0"
+VERSAO = "1.45.0"
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
 js = js.split("<script>", 1)[1].rsplit("</script>", 1)[0]
 head = open(f"{R}/fonte/artefato-head.html", encoding="utf8").read()
+
+# 1.45.0: estado de salvamento na mesma linha do titulo, ao lado da sincronizacao.
+rd_inline = '<button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincroniza\u00e7\u00e3o</button>'
+head = head.replace('<div class="hr">', '<div class="hr">' + rd_inline, 1)
+head = head.replace('<div class="rd-topo">' + rd_inline + '<button', '<div class="rd-topo"><button', 1)
+assert head.count('id="rd_sync"') == 1
 
 def troca(a, b, n=1):
     global js

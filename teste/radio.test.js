@@ -44,7 +44,7 @@ test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legív
 
 test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; nada técnico foi renomeado',()=>{
   const index=ler('index.html'),man=JSON.parse(ler('manifest.webmanifest'));
-  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1\.44\.0<\/small><\/div>/);
+  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1\.45\.0<\/small><\/div>/);
   assert.equal(man.name,'Radio');assert.equal(man.short_name,'Radio');assert.equal(man.theme_color,'#2f2923');assert.equal(man.background_color,'#221e1a');
   assert.match(index,/<meta name="theme-color" content="#2f2923" media="\(prefers-color-scheme: dark\)">/);
   assert.match(index,/<meta name="theme-color" content="#4a3320" media="\(prefers-color-scheme: light\)">/);
@@ -64,4 +64,14 @@ test('Paleta de cores 1.43: as variáveis de cor valem na barra (a paleta fica f
     assert.ok(razao(borda,t.card)>=3,`${nome}: contorno da amostra sobre --card = ${razao(borda,t.card).toFixed(2)}`);
     assert.ok(razao(borda,t.bg)>=3,`${nome}: contorno da amostra sobre --bg = ${razao(borda,t.bg).toFixed(2)}`);
   }
+});
+
+test('1.45: Salvo e sincronizacao ficam na mesma linha do titulo, inclusive no celular',()=>{
+  const index=ler('index.html'),css=ler('build/extra.css');
+  const hr=index.match(/<div class="hr">([\s\S]*?)<\/div><\/div>\s*<div class="rd-topo">/)?.[1];
+  assert.ok(hr,'linha do cabecalho encontrada');
+  assert.match(hr,/id="sync"/);assert.match(hr,/id="rd_sync"/);
+  assert.doesNotMatch(index,/<div class="rd-topo"><button type="button" id="rd_sync"/);
+  assert.match(css,/\.hr #rd_sync[^}]*white-space:nowrap/);
+  assert.match(css,/@media\(max-width:520px\)[\s\S]*?\.hr\{gap:6px;min-width:0\}/);
 });

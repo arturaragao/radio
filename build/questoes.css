@@ -4,4 +4,7 @@
 .gal.gsel .galm{outline:3px solid var(--pri);outline-offset:2px}
 .qatalhos{display:flex;flex-wrap:wrap;gap:4px 14px;margin:18px 0 8px;font-size:.72rem;color:var(--mut);line-height:1.6}
 .qatalhos kbd{display:inline-block;min-width:1.4em;padding:0 4px;margin-right:2px;border:1px solid var(--bd);border-radius:4px;background:var(--card2);font:inherit;font-size:.7rem;text-align:center}
-@media(max-width:700px){.qatalhos{display:none}}
+.qatalhos-rodape{margin-top:18px}
+.qatalhos-bt{border:0;background:none;color:var(--mut);font:inherit;font-size:.75rem;padding:4px 6px;border-radius:4px;cursor:pointer}
+.qatalhos-bt:hover,.qatalhos-bt:focus-visible{background:var(--card2);color:var(--tx)}
+.qatalhos[hidden]{display:none}

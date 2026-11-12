@@ -38,11 +38,19 @@ function qBarra(){
   const eu=L.find(b=>b.k===at),nome=eu?`${eu.nome} · ${eu.feitas}/${eu.n}`:'Bloco atual';
   return `<div class="qblocos"><span class="mut">Bloco:</span><select aria-label="Trocar de bloco de questões" onchange="qTroca(this.value);this.blur()"><option value="">${esc(nome)}</option>${outros.map(b=>`<option value="${b.k}">→ ${b.nome} · ${b.feitas}/${b.n}${qDt(b.u)}</option>`).join('')}</select></div>`;
 }
+const Q_ATALHOS='bcbr_q_atalhos';
+let qAtalhosVisiveis=(()=>{try{return localStorage.getItem(Q_ATALHOS)==='1'}catch(e){return false}})();
+function qAtalhosAlterna(bt){
+  qAtalhosVisiveis=!qAtalhosVisiveis;
+  try{localStorage.setItem(Q_ATALHOS,qAtalhosVisiveis?'1':'0')}catch(e){}
+  bt.setAttribute('aria-expanded',String(qAtalhosVisiveis));
+  document.getElementById('q_atalhos').hidden=!qAtalhosVisiveis;
+}
 function qAtalhos(){
   if(!sess||sess.qEdit)return'';
   const K=n=>`<kbd>${esc(keyLab(n))}</kbd>`,it=(k,t)=>`<span>${k} ${t}</span>`;
   const alts=['a1','a2','a3','a4','a5'].map(K).join('');
-  return `<div class="qatalhos" aria-label="Atalhos do teclado">
+  return `<div class="qatalhos-rodape"><button type="button" class="qatalhos-bt" aria-expanded="${qAtalhosVisiveis}" aria-controls="q_atalhos" onclick="qAtalhosAlterna(this)">Atalhos</button><div class="qatalhos" id="q_atalhos" aria-label="Atalhos do teclado"${qAtalhosVisiveis?'':' hidden'}>
   ${it('<kbd>←</kbd><kbd>→</kbd>','questão anterior/próxima')}
   ${it('<kbd>↑</kbd><kbd>↓</kbd>','alternativas (dá a volta; ↑ na A vai para a imagem) · depois de responder: rola a página')}
   ${it(alts,'alternativas A–E')}
@@ -55,7 +63,7 @@ function qAtalhos(){
   ${it('<kbd>←</kbd><kbd>→</kbd>','com imagem selecionada: troca a imagem (<kbd>↓</kbd> ou <kbd>Esc</kbd> volta)')}
   ${it(K('zin')+K('zout')+K('zfit'),'imagem aberta: aumenta / diminui / ajusta')}
   ${it('<kbd>Tab</kbd><kbd>Shift+Tab</kbd>','próxima / aba anterior')}
-  </div>`;
+  </div></div>`;
 }
 function vQuizQ(){const h=vQuiz();if(tela!=='quiz'||!sess||sess.qEdit)return h;return qBarra()+h+qAtalhos()}
 

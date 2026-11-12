@@ -135,7 +135,7 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
     const ids=await ev("(()=>{const a=ntPaginaCria(),b=ntPaginaCria();pgMuda(l=>{for(const [id,t] of [[a,'Alfa'],[b,'Beta']]){const p=l.find(p=>p.id===id);p.titulo=t;p.doc={v:1,blocos:['um','dois'].map((s,i)=>({id:id+i,atualizado:ntAgora(),conteudo:{type:'paragraph',attrs:{id:id+i},content:[{type:'text',text:s}]}}))}}});return [a,b]})()");
     assert.ok(await confirmado());
     if(!await ev('ntLateralAberta()'))await click('#nt_lat_bt');
-    const url=id=>C.URL_+'?pagina='+id;
+    const url=id=>C.URL_+(id==='notas'?'?aba=notas':'?pagina='+id);
     const targets=async()=> (await call('Target.getTargets')).targetInfos.filter(t=>t.type==='page');
     const abriu=async acao=>{const antes=new Set((await targets()).map(t=>t.targetId));await acao();let alvo;for(let i=0;i<50;i++){alvo=(await targets()).find(t=>!antes.has(t.targetId));if(alvo)break;await espera(100)}assert.ok(alvo,'o Chrome abriu uma aba real');return alvo};
     let alvo=await abriu(()=>click(`.nt-pg-it[data-pg="${ids[0]}"] .nt-pg-aba`));assert.equal(alvo.url,url(ids[0]));

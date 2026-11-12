@@ -9,6 +9,10 @@ const literal=/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
 const strings=s=>[...s.matchAll(literal)].map(m=>vm.runInNewContext(m[0]));
 const lerExpr=s=>s.replace(/open\(f"\{R\}\/([^"\n]+)", encoding="utf8"\)\.read\(\)/g,(_,p)=>JSON.stringify(ler(p)));
 let js=ler('fonte/artefato-app.js').split('<script>')[1].split('</script>')[0],head=ler('fonte/artefato-head.html'),i0,i1,ini,fim;
+const rdInline='<button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincroniza\u00e7\u00e3o</button>';
+head=head.replace('<div class="hr">','<div class="hr">'+rdInline);
+head=head.replace('<div class="rd-topo">'+rdInline+'<button','<div class="rd-topo"><button');
+assert.equal((head.match(/id="rd_sync"/g)||[]).length,1);
 const troca=(a,b,n=1)=>{assert.equal(js.split(a).length-1,n,'troca: '+a.slice(0,80));js=js.split(a).join(b)};
 const expr=s=>{
   s=lerExpr(s);

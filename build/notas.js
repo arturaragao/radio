@@ -798,6 +798,12 @@ function ntAlca(c){
   c.alcaMostra=mostra;
   c.el.addEventListener('mousemove',e=>{
     if(!c.ed||e.target.closest('.nt-alca,.nt-menu-bloco'))return;
+    // A margem da lista não é um bloco do ProseMirror. Preserve o alvo no
+    // caminho entre o texto e a alça, inclusive nos níveis aninhados.
+    if(!al.hidden){
+      const a=al.getBoundingClientRect(),dom=c.ed.view.nodeDOM(c.alvo);
+      if(dom instanceof Element&&e.clientY>=a.top&&e.clientY<=a.bottom&&e.clientX>=a.left&&e.clientX<=Math.max(a.right,dom.getBoundingClientRect().left+4))return;
+    }
     const v=c.ed.view,pm=v.dom.getBoundingClientRect(),x=Math.min(Math.max(e.clientX,pm.left+40),pm.right-2);
     const r=v.posAtCoords({left:x,top:e.clientY});if(!r)return;
     mostra(r.inside>=0?ntBlocoPos(c.ed.state.doc,r.inside):ntBlocoEm(c.ed.state.doc,r.pos));
@@ -1073,7 +1079,7 @@ function ntPainelPinta(){
 }
 function ntPainelAbre(id,aba=false){
   if(!SM.d||!window.TT)return;const p=pgAchar(id);if(!p){toast('Página não encontrada.');return}
-  if(NP?.aba&&NP.pagina!==id){ntAbaAbre(id);return}   // aba de uma página: as outras páginas abrem cada uma na sua aba
+  if(NP?.aba)aba=true;   // a lateral troca a página nesta mesma aba
   if(NP){if(NP.pagina===id)return;ntPainelFecha()}
   ntAntes();if(matchMedia('(max-width:700px)').matches&&NT.latMov)ntLateralAlterna();
   const v=ntValidos(p.doc?.blocos);ntGuardaRuins(v.ruins);
@@ -1081,6 +1087,13 @@ function ntPainelAbre(id,aba=false){
   ov.id='nt_pan';ov.className='nt-pan'+(aba?' aba':'');ov.setAttribute('role','dialog');ov.setAttribute('aria-modal','true');ov.setAttribute('aria-label','Página');
   ov.innerHTML=`<div class="nt-pan-c"><div class="nt-pan-topo"><div class="nt-pan-barra"></div><button type="button" class="nt-pan-b" data-a="aba" title="Abrir em nova aba do navegador" aria-label="Abrir em nova aba">↗</button><button type="button" class="nt-pan-b" data-a="pin" aria-label="Fixar página">📌</button><span class="nt-pan-exc"><button type="button" class="nt-pan-b" data-a="exc" title="Excluir página" aria-label="Excluir página">🗑</button><span class="nt-pan-conf" hidden>Excluir esta página? <button type="button" class="nt-pan-b ruim" data-a="exc-sim">Excluir</button><button type="button" class="nt-pan-b" data-a="exc-nao">Cancelar</button></span></span><button type="button" class="nt-pan-b" data-a="fecha" title="Fechar (Esc)" aria-label="Fechar página">✕</button></div><div class="nt-pan-corpo"><input type="text" class="nt-pan-titulo" placeholder="Sem título" aria-label="Título da página" maxlength="200" autocomplete="off"><div class="nt-pan-ed"></div></div></div>`;
   document.body.appendChild(ov);document.body.style.overflow='hidden';
+  if(aba){
+    document.getElementById('nt_aba_fim')?.remove();
+    const corpo=ov.querySelector('.nt-pan-corpo');corpo.classList.add('nt-conteudo');
+    corpo.outerHTML=ntLateralEstrutura(corpo.outerHTML);
+    ov.querySelector('.nt-pan-topo').insertAdjacentHTML('afterbegin',ntLateralBotao());
+    history.replaceState(null,'',ntAbaUrl(id));
+  }
   c.titulo=ov.querySelector('.nt-pan-titulo');c.titulo.value=p.titulo||'';
   ntEditor(c,v.bons,pgSalvaDoc);ov.querySelector('.nt-pan-ed').appendChild(c.el);ov.querySelector('.nt-pan-barra').appendChild(ntBarra(c));ntBarraPinta(c);
   let abaixo=false;
@@ -1112,8 +1125,8 @@ function ntPainelFecha(sem){
 }
 // ===== Abas do navegador (1.43): ./?pagina=<id> abre o app direto numa página, em tela inteira; ./?pagina=notas, a página principal =====
 // Várias abas dividem o localStorage (fila NT_PEND): o evento `storage` (abaixo) funde o que a outra aba gravou, a base de fusão é por aba (NTB).
-const NTA=(()=>{try{return new URLSearchParams(location.search).get('pagina')||''}catch(e){return ''}})();
-const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
+const NTA=(()=>{try{const q=new URLSearchParams(location.search);return q.get('pagina')||(q.get('aba')==='notas'?'notas':'')}catch(e){return ''}})();
+const ntAbaUrl=id=>new URL(id==='notas'?'./?aba=notas':'./?pagina='+encodeURIComponent(id),location.href).href;
 function ntAbaAbre(id){ntAntes();if(NP)pgTituloSalva();window.open(ntAbaUrl(id),'_blank','noopener')}   // (o que está sendo digitado entra na fila antes: a aba nova abre com ele)
 function ntPgClique(e,id){if(e.ctrlKey||e.metaKey||e.shiftKey||e.button){ntAntes();if(NP)pgTituloSalva();return true}ntPainelAbre(id);return false}   // Ctrl+clique e clique do meio: o navegador abre o endereço da página numa aba
 function ntAbaMsg(txt){
@@ -1151,6 +1164,13 @@ function ntLateralAlterna(){
   if(ntMovel())NT.latMov=!off;else try{localStorage.setItem(NT_LAT,off?'0':'1')}catch(e){}
   document.getElementById('nt_lat_bt')?.setAttribute('aria-expanded',String(!off));
 }
+// Ao cruzar o breakpoint, aplique a preferência do modo de destino. Uma
+// lateral de desktop aberta não pode cobrir o botão de abertura no celular.
+if(typeof matchMedia==='function')matchMedia('(max-width:700px)').addEventListener?.('change',()=>{
+  const corpo=document.querySelector('.nt-corpo');if(!corpo)return;
+  const aberta=ntLateralAberta();corpo.classList.toggle('lat-off',!aberta);corpo.classList.remove('lat-hover');
+  document.getElementById('nt_lat_bt')?.setAttribute('aria-expanded',String(aberta));
+});
 let ntLatT=0;
 document.addEventListener('pointerover',e=>{
   if(e.pointerType!=='mouse')return;
@@ -1158,7 +1178,7 @@ document.addEventListener('pointerover',e=>{
   const em=e.target.closest?.('#nt_lat_bt,#nt_lat,#nt_lat_rz');
   if(em){
     clearTimeout(ntLatT);
-    if(em.id==='nt_lat_bt'&&corpo.classList.contains('lat-off')&&!corpo.classList.contains('lat-hover')&&!ntMovel()&&!document.body.classList.contains('nt-aba')){
+    if(em.id==='nt_lat_bt'&&corpo.classList.contains('lat-off')&&!corpo.classList.contains('lat-hover')&&!ntMovel()){
       corpo.style.setProperty('--nt-lat-x',corpo.getBoundingClientRect().left+'px');corpo.classList.add('lat-hover');
     }
     return;
@@ -1175,9 +1195,32 @@ document.addEventListener('pointerdown',e=>{   // arrastar a margem direita da b
   rz.addEventListener('pointermove',mv);rz.addEventListener('pointerup',fim);rz.addEventListener('pointercancel',fim);
 });
 document.addEventListener('dblclick',e=>{if(!e.target.closest?.('#nt_lat_rz'))return;try{localStorage.removeItem(NT_LATW)}catch(x){}document.querySelector('.nt-corpo')?.style.setProperty('--nt-lat-w','230px')});
+function ntLateralBotao(){return `<button type="button" class="nt-pan-b nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${ntLateralAberta()}">☰</button>`}
+function ntLateralEstrutura(conteudo){return `<div class="nt-corpo${ntLateralAberta()?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div>${conteudo}</div>`}
+let ntPgMenuFecha=null;
+function ntPaginaMenu(id,x,y){
+  if(!pgAchar(id))return;
+  ntPgMenuFecha?.();
+  const m=document.createElement('div');m.id='nt_pg_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Página');
+  m.innerHTML='<button type="button" role="menuitem" data-excluir>Excluir</button>';
+  document.body.appendChild(m);
+  const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);document.removeEventListener('keydown',tecla,true);ntPgMenuFecha=null};ntPgMenuFecha=fecha;
+  const fora=e=>{if(!m.contains(e.target))fecha()},tecla=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fecha()}};
+  document.addEventListener('pointerdown',fora,true);document.addEventListener('keydown',tecla,true);
+  const posiciona=()=>{m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px'};
+  m.onclick=e=>{
+    if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
+    else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
+    else if(e.target.closest('[data-nao]'))fecha();
+  };
+  posiciona();m.querySelector('button').focus();
+}
+document.addEventListener('contextmenu',e=>{const it=e.target.closest?.('#nt_lat .nt-pg-it');if(!it)return;e.preventDefault();ntPaginaMenu(it.dataset.pg,e.clientX,e.clientY)});
+document.addEventListener('click',e=>{const al=e.target.closest?.('.nt-pg-it .nt-pg-alca');if(!al||ntEngole)return;e.preventDefault();const r=al.getBoundingClientRect();ntPaginaMenu(al.closest('.nt-pg-it').dataset.pg,r.left,r.bottom)});
+document.addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key)||!e.target.matches?.('.nt-pg-it .nt-pg-alca'))return;e.preventDefault();e.target.click()});
 function ntLateralHtml(){
   const l=[...ntPaginas()].sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
-  const item=p=>`<div class="nt-pg-it${NP?.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" title="Arrastar para mudar a ordem" aria-hidden="true">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(p.id))}" draggable="false" onclick="return ntPgClique(event,'${esc(p.id)}')">📄 ${esc(p.titulo||'Sem título')}</a><button type="button" class="nt-pg-mover" title="Mover para…" aria-label="Mover ${esc(p.titulo||'Sem título')} para…" onclick="ntPaginaMoverMenu('${esc(p.id)}')">↪</button><button type="button" class="nt-pg-aba" title="Abrir em nova aba" aria-label="Abrir ${esc(p.titulo||'Sem título')} em nova aba" onclick="ntAbaAbre('${esc(p.id)}')">↗</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
+  const item=p=>`<div class="nt-pg-it${NP?.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" role="button" tabindex="0" title="Arrastar para mudar a ordem; clique para opções" aria-label="Opções da página">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(p.id))}" draggable="false" onclick="return ntPgClique(event,'${esc(p.id)}')">📄 ${esc(p.titulo||'Sem título')}</a><button type="button" class="nt-pg-mover" title="Mover para…" aria-label="Mover ${esc(p.titulo||'Sem título')} para…" onclick="ntPaginaMoverMenu('${esc(p.id)}')">↪</button><button type="button" class="nt-pg-aba" title="Abrir em nova aba" aria-label="Abrir ${esc(p.titulo||'Sem título')} em nova aba" onclick="ntAbaAbre('${esc(p.id)}')">↗</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
   const f=NT.pastaForm,form=id=>{
     if(!f||f.id!==id)return '';
     if(f.a==='excluir')return `<div class="nt-pt-form">Excluir pasta? As páginas ficam fora dela. <button type="button" onclick="ntPastaExclui('${esc(id)}')">Excluir</button><button type="button" onclick="NT.pastaForm=null;ntLateralPinta()">Cancelar</button></div>`;
@@ -1185,7 +1228,7 @@ function ntLateralHtml(){
   };
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} 📁 ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<button type="button" class="b nt-pg-novo" onclick="ntPaginaNova()">+ Nova página</button><button type="button" class="b nt-pg-novo" onclick="ntPastaForm('','criar')">+ Nova pasta</button><button type="button" class="b nt-pg-novo" onclick="ntNotionEscolhe()">Importar do Notion</button>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div><button type="button" class="b nt-pg-novo" id="rd_conflitos" onclick="rdConflitosAbre()">Conflitos (${(SM.d.notas_conflitos||[]).length})</button>`;
+  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div><button type="button" class="b nt-pg-novo" id="rd_conflitos" onclick="rdConflitosAbre()">Conflitos (${(SM.d.notas_conflitos||[]).length})</button>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;

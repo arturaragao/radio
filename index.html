@@ -1,4 +1,6 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}.versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
+.hr #rd_sync{background:transparent;color:inherit;border:0;padding:0;font:inherit;font-size:.74rem;opacity:.85;display:flex;align-items:center;white-space:nowrap;cursor:pointer;max-width:100%}
+.hr #rd_sync.rd-erro{color:var(--bad,#ff7272)}
 .rd-topo{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;font-size:.75rem}
 .rd-topo button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:3px 7px;font:inherit;cursor:pointer;max-width:100%;text-align:left}
 .rd-topo .rd-erro{color:var(--bad,#ff7272)}
@@ -96,7 +98,7 @@ body.emquiz:is(.lay-ajustada,.lay-otimizado) .gal .galm{min-height:0}
 .hiper{margin:8px 0;padding:10px 12px;border-radius:10px;border:1px solid var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent);font-size:.92rem}
 
 .tg{padding:4px 9px;font-size:.95rem;line-height:1}
-@media(max-width:520px){.hb{flex-wrap:nowrap;gap:8px}.brand{min-width:0;overflow:hidden;text-overflow:ellipsis}.versao{margin-left:2px}}
+@media(max-width:520px){.hb{flex-wrap:nowrap;gap:8px}.brand{min-width:0;overflow:hidden;text-overflow:ellipsis}.hr{gap:6px;min-width:0}.hr #rd_sync{font-size:.68rem}.versao{margin-left:2px}}
 /* PersonalRad 1.23: cores das alternativas herdadas de .ok/.bad. */
 .pr-percentual{white-space:nowrap;margin-left:.4em;font-weight:600}
 .pr-aviso{color:var(--warn);display:inline-block;margin:6px 0}
@@ -570,7 +572,10 @@ body.smd-on .smd-alvo{outline:2px solid var(--pri)!important;outline-offset:-2px
 .gal.gsel .galm{outline:3px solid var(--pri);outline-offset:2px}
 .qatalhos{display:flex;flex-wrap:wrap;gap:4px 14px;margin:18px 0 8px;font-size:.72rem;color:var(--mut);line-height:1.6}
 .qatalhos kbd{display:inline-block;min-width:1.4em;padding:0 4px;margin-right:2px;border:1px solid var(--bd);border-radius:4px;background:var(--card2);font:inherit;font-size:.7rem;text-align:center}
-@media(max-width:700px){.qatalhos{display:none}}
+.qatalhos-rodape{margin-top:18px}
+.qatalhos-bt{border:0;background:none;color:var(--mut);font:inherit;font-size:.75rem;padding:4px 6px;border-radius:4px;cursor:pointer}
+.qatalhos-bt:hover,.qatalhos-bt:focus-visible{background:var(--card2);color:var(--tx)}
+.qatalhos[hidden]{display:none}
 /* reordenar cartões arrastando (build/layout.js) */
 #app .card{-webkit-touch-callout:none}
 body.ly-on{user-select:none;-webkit-user-select:none;cursor:grabbing}
@@ -689,6 +694,11 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-corpo.lat-off.lat-hover .nt-lat-rz{display:block;position:fixed;left:calc(var(--nt-lat-x,0px) + var(--nt-lat-w,230px) - 4px);margin:0;z-index:61}
 .nt-lat-s{margin:12px 0 4px;font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mut)}
 .nt-pg-novo{width:100%;padding:7px 10px;font-size:.88rem}
+.nt-lat-acoes{display:flex;align-items:center;gap:2px;overflow-x:auto}
+.nt-lat-acoes button{flex:none;white-space:nowrap;width:auto;border:0;background:none;color:var(--mut);font:inherit;font-size:.72rem;padding:4px;border-radius:4px;cursor:pointer}
+.nt-lat-acoes button:hover,.nt-lat-acoes button:focus-visible{background:var(--card2);color:var(--tx)}
+.nt-pg-menu{position:fixed;z-index:1200;max-width:calc(100vw - 8px)}
+.nt-pg-menu>span{padding:6px 10px;font-size:.85rem}
 .nt-pg-mover,.nt-pt-cab button{border:0;background:none;color:var(--tx);padding:6px;cursor:pointer;border-radius:5px}
 .nt-pg-mover{flex:none;font-size:.85rem}
 .nt-pt{margin:5px 0;border-radius:6px}.nt-pt-cab{display:flex;align-items:center;user-select:none}.nt-pt-cab:hover{background:var(--card2)}
@@ -705,6 +715,7 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-pg-it.alvo-antes{box-shadow:0 -2px 0 var(--pri)}.nt-pg-it.alvo-depois{box-shadow:0 2px 0 var(--pri)}
 .nt-pg-alca{flex:none;width:18px;text-align:center;color:var(--mut);font-size:.8rem;letter-spacing:-2px;cursor:grab;opacity:0;touch-action:none}
 .nt-pg-it:hover .nt-pg-alca{opacity:.8}
+.nt-pg-alca:focus-visible{opacity:1;outline:2px solid var(--pri)}
 .nt-pg-nome{flex:1;min-width:0;display:block;text-align:left;border:0;background:none;color:var(--tx);font:inherit;font-size:.9rem;padding:7px 4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none;-webkit-user-drag:none}
 .nt-pg-aba{flex:none;border:0;background:none;color:var(--tx);font-size:.85rem;padding:6px;border-radius:5px;cursor:pointer;opacity:0}
 .nt-pg-it:hover .nt-pg-aba,.nt-pg-aba:focus-visible{opacity:.9}
@@ -758,10 +769,16 @@ body:has(.nt-pan,.nt-atalhos) #toast{z-index:1000}   /* o aviso aparece por cima
 /* 1.43: aba própria do navegador (./?pagina=<id>): só o editor, em tela inteira */
 .nt-aba-bt{flex:none}
 body.nt-aba>header,body.nt-aba .qa-fab{display:none}
-body.nt-aba .nt-lat,body.nt-aba .nt-lat-rz,body.nt-aba .nt-lat-bt,body.nt-aba .nt-lat-fundo,body.nt-aba .nt-aba-bt{display:none!important}
+body.nt-aba .nt-aba-bt{display:none}
 body.nt-aba-pg>main{display:none}
 .nt-pan.aba{background:var(--bg)}
 .nt-pan.aba .nt-pan-c{width:100vw;height:100vh;height:100dvh;border:0;border-radius:0;box-shadow:none}
+.nt-pan.aba{--nt-top:0px}
+.nt-pan.aba .nt-corpo{flex:1;min-height:0;align-items:stretch}
+.nt-pan.aba .nt-lat{top:0;max-height:calc(100dvh - 58px)}
+.nt-pan.aba .nt-corpo.lat-hover .nt-lat{top:58px}
+.nt-pan.aba .nt-lat-rz{top:0;height:auto}
+.nt-pan.aba .nt-corpo.lat-hover .nt-lat-rz{top:58px;height:calc(100dvh - 58px)}
 .nt-pan.aba .nt-pan-corpo{padding-left:max(28px,calc((100vw - 1100px)/2));padding-right:max(28px,calc((100vw - 1100px)/2))}
 .nt-pan.aba [data-a="fecha"],.nt-pan.aba [data-a="aba"]{display:none}
 .nt-aba-fim{position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--bg);color:var(--tx);text-align:center;padding:20px}
@@ -1044,13 +1061,13 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.44.0</small></div>
-<div class="hr"><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
-<div class="rd-topo"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.45.0</small></div>
+<div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
+<div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
 <main id="app"></main>
 <div id="toast"></div>
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.44.0"</script><script src="shim.js?v=1.44.0"></script>
+<script>window.BCBR_VERSAO="1.45.0"</script><script src="shim.js?v=1.45.0"></script>
 </body></html>

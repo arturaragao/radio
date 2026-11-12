@@ -804,8 +804,10 @@ async function ntPainelAbre(id){
     try{p=await SyncNotas.abrirPagina(id)}catch(e){
       const est=SyncNotas.estado(),semNotas=est.indiceConhecido&&!est.paginas.some(x=>x.id==='notas');
       if(id!=='notas'||(!semNotas&&(e.status!==404||est.erro||SM.erro)))throw e;
-      const doc={v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
-      SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:ntAgora()});
+      // 1.49.1: com notasDoc antigo ainda no plano, a página nasce dele (nunca vazia por cima do legado).
+      const leg=SM.d?.notasDoc?.blocos?.length?JSON.parse(JSON.stringify(SM.d.notasDoc)):null;
+      const doc=leg||{v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
+      SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:leg?(leg.atualizado||leg.blocos.reduce((a,b)=>String(b.atualizado||'')>a?String(b.atualizado):a,'')||ntAgora()):ntAgora()});
       p=await SyncNotas.abrirPagina(id);
     }
     if(NT.visita!==visita)return;

@@ -338,23 +338,100 @@ function ntLembreteEdita(c,dom,pos){
 }
 document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop,.nt-lemb'))document.querySelector('.nt-lemb-pop')?.remove()});
 
-// ===== Histórico de versões: o plano já é versionado no GitHub (commits do arquivo). Só leitura; restaurar = NOVA edição =====
+// ===== Versões (1.49.1, estilo Notion): lista por dia à direita, gravações seguidas do mesmo aparelho juntas (~10 min),
+// página renderizada com o que muda em relação à atual (verde = volta ao restaurar; vermelho riscado = sai). Restaurar = gravação nova.
+// Depois dos commits do arquivo da página, "Versões mais antigas" lê o histórico anterior à 1.48 (semana/plano.json), sob demanda.
+const ntHistTexto=b=>ntNotionTexto(b?.conteudo||b).replace(/\s+/g,' ').trim();
+function ntHistResumo(novo,antigo){
+  if(!antigo)return 'versão inicial';
+  const A=new Map((antigo.doc?.blocos||[]).map(b=>[b.id,b])),N=new Map((novo.doc?.blocos||[]).map(b=>[b.id,b]));
+  const mais=[...N.keys()].filter(k=>!A.has(k)).length,menos=[...A.keys()].filter(k=>!N.has(k)).length,
+    edit=[...N.values()].filter(b=>A.has(b.id)&&JSON.stringify(A.get(b.id).conteudo)!==JSON.stringify(b.conteudo)),r=[];
+  if(mais)r.push('+'+mais+(mais>1?' blocos':' bloco'));if(menos)r.push('−'+menos+(menos>1?' blocos':' bloco'));
+  if(edit.length===1)r.push('editou “'+(ntHistTexto(edit[0]).slice(0,28)||'bloco')+'”');else if(edit.length)r.push('editou '+edit.length+' blocos');
+  if(!r.length&&(novo.titulo||'')!==(antigo.titulo||''))r.push('título: “'+(novo.titulo||'Sem título').slice(0,28)+'”');
+  return r.join(' · ')||'sem mudança no texto';
+}
+// Ordem da versão; blocos que só existem na atual entram riscados logo após o vizinho anterior.
+function ntHistComparar(versao,atual){
+  const V=versao||[],C=atual||[],cv=new Map(C.map(b=>[b.id,b])),vv=new Set(V.map(b=>b.id));
+  const out=V.map(b=>({b,tipo:!cv.has(b.id)?'adicionado':JSON.stringify(cv.get(b.id).conteudo)===JSON.stringify(b.conteudo)?'igual':'alterado',atual:cv.get(b.id)}));
+  let ant=null;
+  for(const b of C){
+    if(vv.has(b.id)){ant=b.id;continue}
+    let k=ant===null?0:out.findIndex(x=>x.b.id===ant&&x.tipo!=='removido')+1;while(out[k]?.tipo==='removido')k++;
+    out.splice(k,0,{b,tipo:'removido'});
+  }
+  return out;
+}
+const ntHistDia=d=>{const h=new Date(),o=new Date(h);o.setDate(h.getDate()-1);const ig=(a,b)=>a.toDateString()===b.toDateString();
+  return ig(d,h)?'Hoje':ig(d,o)?'Ontem':d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',...(d.getFullYear()!==h.getFullYear()?{year:'numeric'}:{})})};
+const ntHistHora=d=>d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 function ntHistAbre(c=NT){
-  const id=c.pagina||'notas',ov=ntModal('nt-hist','<div class="nt-modal-t"><b>Versões</b><button class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-hist-lista"></div><button class="b s" data-mais>Carregar mais</button><p class="nt-hist-msg"></p><div class="nt-hist-prev"></div><button class="b" data-restaurar disabled>Restaurar</button>');
-  const lista=ov.querySelector('.nt-hist-lista'),msg=ov.querySelector('.nt-hist-msg'),prev=ov.querySelector('.nt-hist-prev'),rest=ov.querySelector('[data-restaurar]');
-  let pagina=0,ref=null,ed=null,visita=0;ov.aoFechar=()=>ed?.destroy();
+  const id=c.pagina||'notas';
+  const ov=ntModal('nt-hist',`<div class="nt-modal-t"><b>Versões</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-hist-g"><div class="nt-hist-ver"><div class="nt-hist-bar"><b class="nt-hist-tit">Escolha uma versão</b><span class="nt-hist-leg"><span class="adicionado">volta</span> <span class="removido">sai</span></span><button type="button" class="b" data-restaurar disabled>Restaurar esta versão</button></div><p class="nt-hist-msg" role="status"></p><div class="nt-hist-prev"></div></div><div class="nt-hist-l" aria-label="Lista de versões"><div class="nt-hist-lista"></div><button type="button" class="b s" data-mais>Versões mais antigas</button></div></div>`);
+  const lista=ov.querySelector('.nt-hist-lista'),msg=ov.querySelector('.nt-hist-msg'),prev=ov.querySelector('.nt-hist-prev'),rest=ov.querySelector('[data-restaurar]'),mais=ov.querySelector('[data-mais]'),tit=ov.querySelector('.nt-hist-tit');
+  const schema=ntSchema(),ser=schema&&TT.pm.model.DOMSerializer.fromSchema(schema);
+  let fonte='pagina',pag=0,fim=false,ocupado=false,escolhida=null,visita=0;const itens=[];   // {sha,data,plano,p}
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
-  const carregar=async()=>{const mais=ov.querySelector('[data-mais]');mais.disabled=true;try{
-    const l=await SyncNotas.versoes(id,{pagina:pagina+1});pagina++;
-    for(const commit of l){const bt=document.createElement('button');bt.className='b s';bt.textContent=(commit.commit?.author?.date||'')+' · '+(commit.commit?.message||commit.sha);lista.appendChild(bt);
-      bt.onclick=async()=>{const n=++visita;ref=null;rest.disabled=true;try{const p=await SyncNotas.versoes(id,{ref:commit.sha});if(n!==visita||!ov.isConnected)return;ed?.destroy();prev.replaceChildren();const el=document.createElement('div');el.className='nt-ed';prev.appendChild(el);
-        ed=new TT.Editor({element:el,extensions:ntExtensoes({pagina:id,el}),content:ntDocumento(p.doc.blocos),editable:false});ref=commit.sha;rest.disabled=false;msg.textContent='Pré-visualização. Restaurar cria uma nova gravação.';
-      }catch(e){msg.textContent=e.message}}}
-    mais.hidden=l.length<30;if(!l.length&&!lista.children.length)msg.textContent='Nenhuma versão gravada.';
-  }catch(e){msg.textContent=e.message}finally{mais.disabled=false}};
-  ov.querySelector('[data-mais]').onclick=carregar;
-  rest.onclick=async()=>{rest.disabled=true;try{ntAntes();const ok=await SyncNotas.restaurar(id,ref);if(!ok){msg.textContent='Restauração na fila; aguardando conexão.';return}if(NT.pagina===id)await ntSincroniza();ntModalFecha(ov)}catch(e){msg.textContent=e.message}finally{rest.disabled=false}};
-  carregar();return ov;
+  const atual=()=>NT.pagina===id&&NT.ed?ntBlocos(NT.ed.getJSON(),NT.shown||[]):(pgAchar(id)?.doc?.blocos||[]);
+  const render=b=>{const el=document.createElement('div');el.className='nt-ed nt-hist-bloco-c';
+    try{el.appendChild(ser.serializeNode(schema.nodeFromJSON(b.conteudo)))}catch(e){el.textContent=ntHistTexto(b)}return el};
+  const copiar=async(el,t)=>{
+    try{if(window.ClipboardItem&&navigator.clipboard?.write)await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([el.innerHTML],{type:'text/html'}),'text/plain':new Blob([t],{type:'text/plain'})})]);else await navigator.clipboard.writeText(t);msg.textContent='Bloco copiado. Cole na página com Ctrl+V.'}
+    catch(e){msg.textContent='Não consegui copiar; selecione o texto e use Ctrl+C.'}
+  };
+  const mostra=it=>{
+    ++visita;escolhida=it;lista.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));it.el?.classList.add('on');
+    tit.textContent=it.rotulo||'';prev.replaceChildren();
+    const comp=ntHistComparar(it.p.doc?.blocos,atual()),muda=comp.filter(x=>x.tipo!=='igual').length;
+    const h=document.createElement('h2');h.className='nt-hist-ptit';h.textContent=it.p.titulo||'Sem título';prev.appendChild(h);
+    for(const x of comp){
+      const sec=document.createElement('section');sec.className='nt-hist-bloco '+x.tipo;
+      if(x.tipo==='alterado'){const r=render(x.atual);r.classList.add('antes');sec.appendChild(r)}
+      const el=render(x.b);sec.appendChild(el);
+      if(x.tipo!=='removido'&&ntHistTexto(x.b)){const bt=document.createElement('button');bt.type='button';bt.className='b s nt-hist-copia';bt.textContent='Copiar bloco';bt.onclick=()=>copiar(el,el.innerText||ntHistTexto(x.b));sec.appendChild(bt)}
+      prev.appendChild(sec);
+    }
+    msg.textContent=muda?muda+(muda>1?' blocos diferentes':' bloco diferente')+' da versão atual.':'Igual à versão atual.';
+    rest.disabled=false;
+  };
+  const pinta=()=>{   // grupo = mesmo aparelho e mesma fonte, intervalo ≤10 min entre gravações seguidas
+    const grupos=[];
+    for(const it of itens){const g=grupos.at(-1),u=g?.at(-1);
+      if(g&&u.plano===it.plano&&(u.p.aparelhoId||'')===(it.p.aparelhoId||'')&&u.data-it.data<=600000)g.push(it);else grupos.push([it])}
+    lista.replaceChildren();let dia='';
+    grupos.forEach((g,k)=>{
+      const top=g[0],d=ntHistDia(top.data),ant=grupos[k+1]?.[0];
+      if(d!==dia){dia=d;const h=document.createElement('div');h.className='nt-hist-dia';h.textContent=d;lista.appendChild(h)}
+      top.rotulo=d+' · '+ntHistHora(top.data);
+      const resumo=ant?ntHistResumo(top.p,ant.p):fim?'versão inicial':(g.length>1?ntHistResumo(top.p,g.at(-1).p):'');
+      const bt=document.createElement('button');bt.type='button';bt.className='nt-hist-it'+(escolhida===top?' on':'');
+      bt.innerHTML=`<b>${ntHistHora(top.data)}${g.length>1?` <small>(${g.length} gravações)</small>`:''}</b><small>${esc(resumo)}${top.plano?' · antes da 1.48':''}</small>`;
+      bt.onclick=()=>mostra(top);top.el=bt;lista.appendChild(bt);
+    });
+    mais.hidden=fim;if(!itens.length&&fim)msg.textContent='Nenhuma versão gravada.';
+  };
+  const carregar=async()=>{
+    if(ocupado||fim||!ov.isConnected)return;ocupado=true;mais.disabled=true;msg.textContent='Carregando versões…';let denovo=false;
+    try{
+      const plano=fonte==='plano',l=await SyncNotas.versoes(id,{pagina:pag+1,plano,porPagina:plano?10:30});pag++;
+      if(!plano&&l.length<30){fonte='plano';pag=0;denovo=!l.length}else if(plano&&l.length<10)fim=true;
+      const fila=[...l];
+      await Promise.all(Array.from({length:4},async()=>{for(let cm;(cm=fila.shift());){
+        try{const p=await SyncNotas.versoes(id,{ref:cm.sha,plano});if(p?.doc)itens.push({sha:cm.sha,plano,data:new Date(cm.commit?.author?.date||cm.commit?.committer?.date||0),p})}catch(e){}
+      }}));
+      itens.sort((a,b)=>(a.plano-b.plano)||(b.data-a.data));
+      // o plano mudava a cada tarefa: só fica a versão em que o documento da página mudou
+      for(let k=itens.length-1;k>0;k--)if(itens[k].plano&&itens[k-1].plano&&JSON.stringify(itens[k].p.doc)===JSON.stringify(itens[k-1].p.doc))itens.splice(k-1,1);
+      msg.textContent='';pinta();
+    }catch(e){msg.textContent=e.message}finally{ocupado=false;mais.disabled=false}
+    if(denovo)return carregar();
+  };
+  mais.onclick=carregar;
+  ov.querySelector('.nt-hist-l').addEventListener('scroll',e=>{const l=e.currentTarget;if(l.scrollTop+l.clientHeight>=l.scrollHeight-40)carregar()});
+  rest.onclick=async()=>{if(!escolhida)return;rest.disabled=true;try{ntAntes();const ok=await SyncNotas.restaurar(id,escolhida.sha,escolhida.plano);if(!ok){msg.textContent='Restauração na fila; aguardando conexão.';return}if(NT.pagina===id)await ntSincroniza();ntModalFecha(ov)}catch(e){msg.textContent=e.message}finally{rest.disabled=false}};
+  carregar().then(()=>{if(itens[0]&&ov.isConnected&&!escolhida)mostra(itens[0])});return ov;
 }
 const ntFrases=()=>Array.isArray(SM.d?.notasFrases)?SM.d.notasFrases:[];
 function frGrava(l){

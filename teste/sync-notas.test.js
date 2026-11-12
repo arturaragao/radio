@@ -150,3 +150,51 @@ test('1.48: pendência 1.42 já confirmada pela 1.43 (recibo legado_ok) não é 
   a.storage.setItem('bcbr_notasdoc_pendente',raw);a.storage.setItem('bcbr_notasdoc_pendente_v143_legado_ok',JSON.stringify([h.toString(16)]));
   await a.s.receberLegado();assert.equal(a.g.calls.filter(c=>c.method==='PUT').length,0);assert.equal(a.storage.getItem('bcbr_notasdoc_pendente'),raw);
 });
+// ===== 1.49.1: regressões da perda real (12/11) =====
+const bloco=(id,text,atualizado='2026-11-11T09:00:00Z')=>({id,atualizado,conteudo:{type:'paragraph',content:[{type:'text',text}]}});
+const vazia=atualizado=>({id:'notas',titulo:'Notas',pasta:'',ordem:0,atualizado,doc:{v:1,blocos:[{id:'bvazio',atualizado,conteudo:{type:'paragraph'}}]}});
+const textos=d=>d.doc.blocos.map(b=>b.conteudo.content?.[0]?.text).filter(Boolean);
+test('1.49.1 caso real: aparelho cria "notas" vazia (mais nova) e a migração depois NÃO perde o notasDoc; plano só limpa após conferir ids',async()=>{
+  const a=setup(),legado={v:1,blocos:['um','dois','três','quatro','cinco'].map((t,i)=>bloco('b'+i,'texto '+t,'2026-11-11T20:00:00Z'))};
+  const plano={v:2,tarefas:[{id:'t'}],notasDoc:legado},sha=a.g.seed('semana/plano.json',plano);
+  // 07:06 — outro aparelho grava notas.json vazia com atualizado 10:05Z (mais novo que o legado)
+  const b=setup(a.g,armazenamento(),{aparelhoId:'outro'});b.s.salvarPagina(vazia('2026-11-12T10:05:00Z'));assert.equal(await b.s.enviar(),true);
+  assert.equal(textos(a.g.files.get(path('notas')).d).length,0);
+  // 07:13 — migração
+  const r=await a.s.integrarPlano(plano,sha);
+  assert.deepEqual(textos(a.g.files.get(path('notas')).d),['texto um','texto dois','texto três','texto quatro','texto cinco']);
+  assert.equal(r.d.notasDoc,undefined);assert.equal(a.g.files.get('semana/plano.json').d.notasDoc,undefined);assert.deepEqual(r.d.tarefas,[{id:'t'}]);
+  // e o aparelho vazio que salvar de novo (base antiga) não apaga nada
+  b.s.salvarPagina(vazia('2026-11-12T10:30:00Z'));assert.equal(await b.s.enviar(),true);
+  assert.equal(textos(a.g.files.get(path('notas')).d).length,5);
+});
+test('1.49.1: se a página não confirma todos os blocos legados, o plano mantém o notasDoc',async()=>{
+  const a=setup(),legado={v:1,blocos:[bloco('b0','importante')]},plano={v:2,notasDoc:legado},sha=a.g.seed('semana/plano.json',plano);
+  a.g.hook=async c=>{if(c.method==='PUT'&&c.path===path('notas'))throw Object.assign(Error('HTTP 500'),{status:500})};
+  await assert.rejects(a.s.integrarPlano(plano,sha));assert.ok(a.g.files.get('semana/plano.json').d.notasDoc,'legado preservado');
+});
+test('1.49.1: 409 com remoto mais rico une blocos por id (local editado + bloco só do remoto)',async()=>{
+  const a=setup(),p={...page('p'),doc:{v:1,blocos:[bloco('A','original')]}};a.s.salvarPagina(p);await a.s.enviar();
+  const b=setup(a.g,armazenamento(),{aparelhoId:'b'});await b.s.listarPaginas();const pb=await b.s.abrirPagina('p');
+  b.s.salvarPagina({...pb,doc:{v:1,blocos:[...pb.doc.blocos,bloco('B','só no outro aparelho','2026-11-12T08:00:00Z')]}});await b.s.enviar();
+  a.s.salvarPagina({...p,doc:{v:1,blocos:[bloco('A','original editado','2026-11-12T08:05:00Z')]}});assert.equal(await a.s.enviar(),true);
+  assert.ok(a.g.calls.some(c=>c.method==='PUT'&&c.path===path('p'))&&a.g.calls.filter(c=>c.method==='GET'&&c.path===path('p')).length>=1);
+  assert.deepEqual(textos(a.g.files.get(path('p')).d),['original editado','só no outro aparelho']);
+});
+test('1.49.1: página nova vazia nunca sobrescreve remoto com conteúdo',async()=>{
+  const a=setup();a.g.seed(path('notas'),{...vazia('2026-11-01T00:00:00Z'),doc:{v:1,blocos:[bloco('x','conteúdo real')]}});
+  a.s.salvarPagina(vazia('2026-11-12T12:00:00Z'));assert.equal(await a.s.enviar(),true);
+  assert.deepEqual(textos(a.g.files.get(path('notas')).d),['conteúdo real']);
+});
+test('1.49.1: gravação que reduziria >50% do texto sem apagar nesta sessão guarda antes a versão remota em cópias recuperadas',async()=>{
+  const g=github(),st=armazenamento();g.seed(path('p'),{...page('p'),doc:{v:1,blocos:[bloco('A','x'.repeat(1000))]}});
+  const velho=setup(g,st);velho.s.salvarPagina({...page('p'),doc:{v:1,blocos:[bloco('A','curto','2026-11-12T09:00:00Z')]}});   // ficou na fila de outra sessão
+  const novo=setup(g,st);assert.equal(await novo.s.enviar(),true);
+  assert.deepEqual(textos(g.files.get(path('p')).d),['curto']);
+  const rec=g.files.get(path('notas-recuperadas')).d;assert.ok(textos(rec).includes('x'.repeat(1000)),'versão remota guardada');
+  assert.ok(g.files.get('notas/indice.json').d.some(x=>x.id==='notas-recuperadas'));
+  // apagar de propósito nesta sessão não gera cópia
+  const n=g.files.get(path('notas-recuperadas')).d.doc.blocos.length;const pa=await novo.s.abrirPagina('p');
+  novo.s.salvarPagina({...pa,doc:{v:1,blocos:[bloco('A','',new Date().toISOString())]}});await novo.s.enviar();
+  assert.equal(g.files.get(path('notas-recuperadas')).d.doc.blocos.length,n);
+});

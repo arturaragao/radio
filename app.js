@@ -1,17 +1,21 @@
-// Banco CBR app 1.49.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.49.1 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
  * abrirPagina(id): Promise<página> — GET apenas se o SHA mudou; registra a página aberta.
  * salvarPagina(páginaOuPatch): boolean — enfileira imediatamente; debounce 1500 ms.
  *   Sem doc, hidrata antes de aplicar os campos. {id, excluida:true} retira do índice.
- * versoes(id, {pagina?, ref?}): commits paginados ou página naquela revisão.
- * restaurar(id, ref): nova gravação da revisão, com data/aparelho atuais.
+ * versoes(id, {pagina?, ref?, plano?}): commits paginados ou página naquela revisão (plano: histórico antes da 1.48).
+ * restaurar(id, ref, plano?): nova gravação da revisão, com data/aparelho atuais.
  * estado(): {paginas, abertas, pendentes, volatil, erro, ultima, enviando} (cópias).
  * Infraestrutura (só semana.js): enviar() drena a fila; integrarPlano(d,sha) migra
  * com CAS e devolve {d,sha}; receberLegado(storage) importa pendências antigas.
  * Cache é opcional, assíncrono, nunca bloqueia a fila ou emite avisos de quota.
  * Confirmação = PUT da página + PUT do índice. Falha deixa a entrada pendente.
+ * 1.49.1 (perda real 12/11): nunca descartar texto. Com base desconhecida/≠ remoto, após 409, na migração e na fila
+ *   antiga, os blocos são UNIDOS por id (mesmo id → o mais novo; bloco só do remoto fica). Página vazia não apaga remoto
+ *   com conteúdo. Migração só limpa o plano após reler cada arquivo e achar todos os ids. PUT que reduziria >50% do texto
+ *   sem o usuário ter reduzido nesta sessão guarda antes a versão remota em "notas-recuperadas".
  */
 function criarSyncNotas(o){
   const clone=x=>x==null?x:JSON.parse(JSON.stringify(x)),prefixo='bcbr_paginas_pendentes_v2:',
@@ -58,7 +62,7 @@ function criarSyncNotas(o){
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
     if(atual&&meta?.sha&&shas.get(id)===meta.sha&&!e)return clone(atual);
     let p,f=null;
-    try{f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);cache('notas:pagina:'+id,{sha:f.sha,p})}
+    try{f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);tamanhos.set(id,textoDe(f.d.doc));cache('notas:pagina:'+id,{sha:f.sha,p})}
     catch(x){const c=await cacheLer('notas:pagina:'+id);if(!c?.p)throw x;p=c.p}
     if(f?.d){
       const noIndice=indice.find(x=>x.id===id);
@@ -76,6 +80,7 @@ function criarSyncNotas(o){
       novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho};
     if(novo.origem===null)delete novo.origem;
     const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
+    if(p.doc&&anterior.doc&&textoDe(p.doc)<textoDe(anterior.doc))apagou.add(p.id);
     pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);
     if(novo.excluida)abertas.delete(p.id);else if(abertas.has(p.id)||novo.doc)abertas.set(p.id,clone(novo));
     const duravel=persistir(e);clearTimeout(timer);timer=setTimeout(()=>enviar(),duravel?(o.atraso??1500):0);mudou();return true;
@@ -91,16 +96,46 @@ function criarSyncNotas(o){
       }catch(e){if(!conflito(e))throw e}
     }throw Error('Índice ocupado; a página permanece na fila.');
   }
-  async function gravar(p,soMaisNovo=false){
-    let f=null,sha=shas.get(p.id);if(soMaisNovo||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+  // 1.49.1: nunca descartar texto. União por id: bloco só do remoto fica; mesmo id → o de `atualizado` mais novo.
+  const textoDe=x=>{let n=0;const v=y=>{if(Array.isArray(y))y.forEach(v);else if(y&&typeof y==='object'){if(typeof y.text==='string')n+=y.text.length;if(y.type==='image')n+=50;Object.values(y).forEach(v)}};v(x);return n};
+  const blocosDe=d=>Array.isArray(d?.blocos)?d.blocos:[];
+  const docVazio=d=>blocosDe(d).every(b=>b?.conteudo?.type==='paragraph'&&!textoDe(b.conteudo));
+  const chaveB=b=>b?.id||JSON.stringify(b?.conteudo);
+  function unirBlocos(local,remoto){
+    if(docVazio({blocos:local}))return clone(remoto);if(docVazio({blocos:remoto}))return clone(local);
+    const R=new Map(remoto.map(b=>[chaveB(b),b])),res=local.map(b=>{const r=R.get(chaveB(b));return clone(r&&String(r.atualizado||'')>String(b.atualizado||'')?r:b)});
+    let ant=null;for(const r of remoto){const k=chaveB(r),i=res.findIndex(b=>chaveB(b)===k);
+      if(i>=0){ant=k;continue}const a=ant===null?-1:res.findIndex(b=>chaveB(b)===ant);res.splice(a+1,0,clone(r));ant=k}
+    return res;
+  }
+  const apagou=new Set(),tamanhos=new Map();   // apagou: o usuário reduziu o texto nesta sessão (intencional); tamanhos: texto do último remoto conhecido
+  async function guardarCopia(id,f){   // rede de segurança: versão remota inteira vai para "Notas — cópias recuperadas"
+    const tag=String(f.sha||Date.now()).slice(0,8),blocos=blocosDe(f.d.doc).map(b=>({...clone(b),id:'rec-'+tag+'-'+(b.id||Math.random().toString(36).slice(2))}));
+    blocos.unshift({id:'rec-'+tag,atualizado:new Date().toISOString(),conteudo:{type:'paragraph',content:[{type:'text',text:'Cópia automática de “'+(f.d.titulo||id)+'” antes de uma gravação que reduziria o texto ('+new Date().toLocaleString('pt-BR')+')'}]}});
+    await gravar({id:'notas-recuperadas',titulo:'Notas — cópias recuperadas',pasta:'',ordem:0,atualizado:new Date().toISOString(),doc:{v:1,blocos},aparelhoId:aparelho},true);
+  }
+  async function gravar(p,uniao=false){
+    let f=null,sha=shas.get(p.id);if(uniao||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+    let unir=uniao||(!!f&&shas.get(p.id)!==f.sha);   // base desconhecida/diferente do remoto
     for(let t=0;t<8;t++){
-      if(soMaisNovo&&f?.d&&String(f.d.atualizado||'')>=String(p.atualizado||''))return atualizarIndice(p.id);
-      const completo={...(f?.d||{}),...p};delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)))delete completo.origem;
+      let completo={...(f?.d||{}),...p};
+      if(f?.d&&uniao&&String(f.d.atualizado||'')>=String(p.atualizado||''))completo={...p,...f.d};   // metadados: o mais novo
+      delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)&&!(uniao&&completo===f?.d)))delete completo.origem;
+      if(p.doc&&f?.d?.doc&&unir)completo.doc={...p.doc,blocos:unirBlocos(blocosDe(p.doc),blocosDe(f.d.doc))};
       if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
-      try{sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);return await atualizarIndice(p.id)}
-      catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha}
+      if(f?.d&&!f.d.excluida&&(uniao||docVazio(completo.doc))&&JSON.stringify(completo.doc)===JSON.stringify(f.d.doc))return atualizarIndice(p.id);   // nada a acrescentar
+      if(f?.d&&!f.d.excluida&&docVazio(completo.doc)&&!docVazio(f.d.doc))completo.doc=clone(f.d.doc);   // página vazia nunca apaga remoto com conteúdo
+      try{
+        if(!f&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&textoDe(completo.doc)<(tamanhos.get(p.id)||0)*0.5){f=await ler(caminho(p.id));if(f.sha!==sha){unir=true;continue}}
+        const antes=f?.d?.doc?textoDe(f.d.doc):0;
+        if(antes>0&&textoDe(completo.doc)<antes*0.5&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&!f.d.excluida)await guardarCopia(p.id,f);
+        sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);tamanhos.set(p.id,textoDe(completo.doc));return await atualizarIndice(p.id);
+      }catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha;unir=true}
     }throw Error('Página ocupada; alteração permanece na fila.');
   }
+  // Remove legado só depois de reler cada arquivo e achar todos os ids de bloco.
+  async function confirmaBlocos(p){const f=await ler(caminho(p.id)),ids=new Set(blocosDe(f.d?.doc).map(chaveB));
+    if(!blocosDe(p.doc).every(b=>docVazio({blocos:[b]})||ids.has(chaveB(b))))throw Error('Migração incompleta; plano preservado.')}
   async function enviar(){
     clearTimeout(timer);if(voo)return voo;
     const executar=async()=>{carregarFila();try{
@@ -114,8 +149,15 @@ function criarSyncNotas(o){
     }catch(e){erro=e.message;return false}};
     voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
   }
-  async function versoes(id,opt={}){if(opt.ref)return (await ler(caminho(id)+'?ref='+encodeURIComponent(opt.ref))).d;return api('commits?path='+encodeURIComponent(caminho(id))+'&per_page=30&page='+(opt.pagina||1))}
-  async function restaurar(id,ref){const p=await versoes(id,{ref});if(!p?.doc)throw Error('Versão não encontrada');salvarPagina({...p,id,excluida:false,atualizado:new Date().toISOString()});return enviar()}
+  // Versões: commits do arquivo da página; {plano:true} lê o histórico anterior à 1.48 (notasDoc / notasPaginas em semana/plano.json).
+  async function versoes(id,opt={}){
+    const arq=opt.plano?'semana/plano.json':caminho(id);
+    if(!opt.ref)return api('commits?path='+encodeURIComponent(arq)+'&per_page='+(opt.porPagina||30)+'&page='+(opt.pagina||1));
+    const d=(await ler(arq+'?ref='+encodeURIComponent(opt.ref))).d;if(!opt.plano)return d;
+    if(id==='notas')return d?.notasDoc?{id,titulo:'Notas',doc:d.notasDoc,atualizado:d.notasDoc.atualizado||carimbo(d.notasDoc)}:null;
+    const p=(d?.notasPaginas?.paginas||[]).find(x=>x?.id===id);return p?.doc?p:null;
+  }
+  async function restaurar(id,ref,plano=false){const p=await versoes(id,{ref,plano});if(!p?.doc)throw Error('Versão não encontrada');salvarPagina({...p,id,excluida:false,atualizado:new Date().toISOString()});return enviar()}
   const carimbo=doc=>(doc?.blocos||[]).reduce((a,b)=>String(b.atualizado||'')>a?String(b.atualizado):a,'');
   const maiorData=(...ds)=>ds.filter(Boolean).map(String).sort().at(-1)||'';   // sem data: o arquivo remoto, se existir, vence
   const lerLista=k=>{try{const v=JSON.parse(o.storage?.getItem(k)||'null');return Array.isArray(v)?v:null}catch(e){return null}};
@@ -132,7 +174,7 @@ function criarSyncNotas(o){
     if(migrando){await migrando;const f=await ler('semana/plano.json');return integrarPlano(f.d,f.sha)}
     if(!paginasLegadas(d).length)return {d,sha};
     migrando=(async()=>{for(let t=0;t<8;t++){
-      for(const p of paginasLegadas(d))await gravar({...p,aparelhoId:p.aparelhoId||aparelho},true);
+      for(const p of paginasLegadas(d)){await gravar({...p,aparelhoId:p.aparelhoId||aparelho},true);await confirmaBlocos(p)}
       const limpo=clone(d);delete limpo.notasDoc;delete limpo.notas;delete limpo.notas_v138;delete limpo.notas_conflitos;
       if(limpo.notasPaginas){delete limpo.notasPaginas.paginas;if(!Object.keys(limpo.notasPaginas).some(k=>k!=='v'))delete limpo.notasPaginas}
       limpo.paginasEmArquivos=2;
@@ -2543,8 +2585,10 @@ async function ntPainelAbre(id){
     try{p=await SyncNotas.abrirPagina(id)}catch(e){
       const est=SyncNotas.estado(),semNotas=est.indiceConhecido&&!est.paginas.some(x=>x.id==='notas');
       if(id!=='notas'||(!semNotas&&(e.status!==404||est.erro||SM.erro)))throw e;
-      const doc={v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
-      SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:ntAgora()});
+      // 1.49.1: com notasDoc antigo ainda no plano, a página nasce dele (nunca vazia por cima do legado).
+      const leg=SM.d?.notasDoc?.blocos?.length?JSON.parse(JSON.stringify(SM.d.notasDoc)):null;
+      const doc=leg||{v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
+      SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:leg?(leg.atualizado||leg.blocos.reduce((a,b)=>String(b.atualizado||'')>a?String(b.atualizado):a,'')||ntAgora()):ntAgora()});
       p=await SyncNotas.abrirPagina(id);
     }
     if(NT.visita!==visita)return;
@@ -3078,23 +3122,100 @@ function ntLembreteEdita(c,dom,pos){
 }
 document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop,.nt-lemb'))document.querySelector('.nt-lemb-pop')?.remove()});
 
-// ===== Histórico de versões: o plano já é versionado no GitHub (commits do arquivo). Só leitura; restaurar = NOVA edição =====
+// ===== Versões (1.49.1, estilo Notion): lista por dia à direita, gravações seguidas do mesmo aparelho juntas (~10 min),
+// página renderizada com o que muda em relação à atual (verde = volta ao restaurar; vermelho riscado = sai). Restaurar = gravação nova.
+// Depois dos commits do arquivo da página, "Versões mais antigas" lê o histórico anterior à 1.48 (semana/plano.json), sob demanda.
+const ntHistTexto=b=>ntNotionTexto(b?.conteudo||b).replace(/\s+/g,' ').trim();
+function ntHistResumo(novo,antigo){
+  if(!antigo)return 'versão inicial';
+  const A=new Map((antigo.doc?.blocos||[]).map(b=>[b.id,b])),N=new Map((novo.doc?.blocos||[]).map(b=>[b.id,b]));
+  const mais=[...N.keys()].filter(k=>!A.has(k)).length,menos=[...A.keys()].filter(k=>!N.has(k)).length,
+    edit=[...N.values()].filter(b=>A.has(b.id)&&JSON.stringify(A.get(b.id).conteudo)!==JSON.stringify(b.conteudo)),r=[];
+  if(mais)r.push('+'+mais+(mais>1?' blocos':' bloco'));if(menos)r.push('−'+menos+(menos>1?' blocos':' bloco'));
+  if(edit.length===1)r.push('editou “'+(ntHistTexto(edit[0]).slice(0,28)||'bloco')+'”');else if(edit.length)r.push('editou '+edit.length+' blocos');
+  if(!r.length&&(novo.titulo||'')!==(antigo.titulo||''))r.push('título: “'+(novo.titulo||'Sem título').slice(0,28)+'”');
+  return r.join(' · ')||'sem mudança no texto';
+}
+// Ordem da versão; blocos que só existem na atual entram riscados logo após o vizinho anterior.
+function ntHistComparar(versao,atual){
+  const V=versao||[],C=atual||[],cv=new Map(C.map(b=>[b.id,b])),vv=new Set(V.map(b=>b.id));
+  const out=V.map(b=>({b,tipo:!cv.has(b.id)?'adicionado':JSON.stringify(cv.get(b.id).conteudo)===JSON.stringify(b.conteudo)?'igual':'alterado',atual:cv.get(b.id)}));
+  let ant=null;
+  for(const b of C){
+    if(vv.has(b.id)){ant=b.id;continue}
+    let k=ant===null?0:out.findIndex(x=>x.b.id===ant&&x.tipo!=='removido')+1;while(out[k]?.tipo==='removido')k++;
+    out.splice(k,0,{b,tipo:'removido'});
+  }
+  return out;
+}
+const ntHistDia=d=>{const h=new Date(),o=new Date(h);o.setDate(h.getDate()-1);const ig=(a,b)=>a.toDateString()===b.toDateString();
+  return ig(d,h)?'Hoje':ig(d,o)?'Ontem':d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',...(d.getFullYear()!==h.getFullYear()?{year:'numeric'}:{})})};
+const ntHistHora=d=>d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 function ntHistAbre(c=NT){
-  const id=c.pagina||'notas',ov=ntModal('nt-hist','<div class="nt-modal-t"><b>Versões</b><button class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-hist-lista"></div><button class="b s" data-mais>Carregar mais</button><p class="nt-hist-msg"></p><div class="nt-hist-prev"></div><button class="b" data-restaurar disabled>Restaurar</button>');
-  const lista=ov.querySelector('.nt-hist-lista'),msg=ov.querySelector('.nt-hist-msg'),prev=ov.querySelector('.nt-hist-prev'),rest=ov.querySelector('[data-restaurar]');
-  let pagina=0,ref=null,ed=null,visita=0;ov.aoFechar=()=>ed?.destroy();
+  const id=c.pagina||'notas';
+  const ov=ntModal('nt-hist',`<div class="nt-modal-t"><b>Versões</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-hist-g"><div class="nt-hist-ver"><div class="nt-hist-bar"><b class="nt-hist-tit">Escolha uma versão</b><span class="nt-hist-leg"><span class="adicionado">volta</span> <span class="removido">sai</span></span><button type="button" class="b" data-restaurar disabled>Restaurar esta versão</button></div><p class="nt-hist-msg" role="status"></p><div class="nt-hist-prev"></div></div><div class="nt-hist-l" aria-label="Lista de versões"><div class="nt-hist-lista"></div><button type="button" class="b s" data-mais>Versões mais antigas</button></div></div>`);
+  const lista=ov.querySelector('.nt-hist-lista'),msg=ov.querySelector('.nt-hist-msg'),prev=ov.querySelector('.nt-hist-prev'),rest=ov.querySelector('[data-restaurar]'),mais=ov.querySelector('[data-mais]'),tit=ov.querySelector('.nt-hist-tit');
+  const schema=ntSchema(),ser=schema&&TT.pm.model.DOMSerializer.fromSchema(schema);
+  let fonte='pagina',pag=0,fim=false,ocupado=false,escolhida=null,visita=0;const itens=[];   // {sha,data,plano,p}
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
-  const carregar=async()=>{const mais=ov.querySelector('[data-mais]');mais.disabled=true;try{
-    const l=await SyncNotas.versoes(id,{pagina:pagina+1});pagina++;
-    for(const commit of l){const bt=document.createElement('button');bt.className='b s';bt.textContent=(commit.commit?.author?.date||'')+' · '+(commit.commit?.message||commit.sha);lista.appendChild(bt);
-      bt.onclick=async()=>{const n=++visita;ref=null;rest.disabled=true;try{const p=await SyncNotas.versoes(id,{ref:commit.sha});if(n!==visita||!ov.isConnected)return;ed?.destroy();prev.replaceChildren();const el=document.createElement('div');el.className='nt-ed';prev.appendChild(el);
-        ed=new TT.Editor({element:el,extensions:ntExtensoes({pagina:id,el}),content:ntDocumento(p.doc.blocos),editable:false});ref=commit.sha;rest.disabled=false;msg.textContent='Pré-visualização. Restaurar cria uma nova gravação.';
-      }catch(e){msg.textContent=e.message}}}
-    mais.hidden=l.length<30;if(!l.length&&!lista.children.length)msg.textContent='Nenhuma versão gravada.';
-  }catch(e){msg.textContent=e.message}finally{mais.disabled=false}};
-  ov.querySelector('[data-mais]').onclick=carregar;
-  rest.onclick=async()=>{rest.disabled=true;try{ntAntes();const ok=await SyncNotas.restaurar(id,ref);if(!ok){msg.textContent='Restauração na fila; aguardando conexão.';return}if(NT.pagina===id)await ntSincroniza();ntModalFecha(ov)}catch(e){msg.textContent=e.message}finally{rest.disabled=false}};
-  carregar();return ov;
+  const atual=()=>NT.pagina===id&&NT.ed?ntBlocos(NT.ed.getJSON(),NT.shown||[]):(pgAchar(id)?.doc?.blocos||[]);
+  const render=b=>{const el=document.createElement('div');el.className='nt-ed nt-hist-bloco-c';
+    try{el.appendChild(ser.serializeNode(schema.nodeFromJSON(b.conteudo)))}catch(e){el.textContent=ntHistTexto(b)}return el};
+  const copiar=async(el,t)=>{
+    try{if(window.ClipboardItem&&navigator.clipboard?.write)await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([el.innerHTML],{type:'text/html'}),'text/plain':new Blob([t],{type:'text/plain'})})]);else await navigator.clipboard.writeText(t);msg.textContent='Bloco copiado. Cole na página com Ctrl+V.'}
+    catch(e){msg.textContent='Não consegui copiar; selecione o texto e use Ctrl+C.'}
+  };
+  const mostra=it=>{
+    ++visita;escolhida=it;lista.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));it.el?.classList.add('on');
+    tit.textContent=it.rotulo||'';prev.replaceChildren();
+    const comp=ntHistComparar(it.p.doc?.blocos,atual()),muda=comp.filter(x=>x.tipo!=='igual').length;
+    const h=document.createElement('h2');h.className='nt-hist-ptit';h.textContent=it.p.titulo||'Sem título';prev.appendChild(h);
+    for(const x of comp){
+      const sec=document.createElement('section');sec.className='nt-hist-bloco '+x.tipo;
+      if(x.tipo==='alterado'){const r=render(x.atual);r.classList.add('antes');sec.appendChild(r)}
+      const el=render(x.b);sec.appendChild(el);
+      if(x.tipo!=='removido'&&ntHistTexto(x.b)){const bt=document.createElement('button');bt.type='button';bt.className='b s nt-hist-copia';bt.textContent='Copiar bloco';bt.onclick=()=>copiar(el,el.innerText||ntHistTexto(x.b));sec.appendChild(bt)}
+      prev.appendChild(sec);
+    }
+    msg.textContent=muda?muda+(muda>1?' blocos diferentes':' bloco diferente')+' da versão atual.':'Igual à versão atual.';
+    rest.disabled=false;
+  };
+  const pinta=()=>{   // grupo = mesmo aparelho e mesma fonte, intervalo ≤10 min entre gravações seguidas
+    const grupos=[];
+    for(const it of itens){const g=grupos.at(-1),u=g?.at(-1);
+      if(g&&u.plano===it.plano&&(u.p.aparelhoId||'')===(it.p.aparelhoId||'')&&u.data-it.data<=600000)g.push(it);else grupos.push([it])}
+    lista.replaceChildren();let dia='';
+    grupos.forEach((g,k)=>{
+      const top=g[0],d=ntHistDia(top.data),ant=grupos[k+1]?.[0];
+      if(d!==dia){dia=d;const h=document.createElement('div');h.className='nt-hist-dia';h.textContent=d;lista.appendChild(h)}
+      top.rotulo=d+' · '+ntHistHora(top.data);
+      const resumo=ant?ntHistResumo(top.p,ant.p):fim?'versão inicial':(g.length>1?ntHistResumo(top.p,g.at(-1).p):'');
+      const bt=document.createElement('button');bt.type='button';bt.className='nt-hist-it'+(escolhida===top?' on':'');
+      bt.innerHTML=`<b>${ntHistHora(top.data)}${g.length>1?` <small>(${g.length} gravações)</small>`:''}</b><small>${esc(resumo)}${top.plano?' · antes da 1.48':''}</small>`;
+      bt.onclick=()=>mostra(top);top.el=bt;lista.appendChild(bt);
+    });
+    mais.hidden=fim;if(!itens.length&&fim)msg.textContent='Nenhuma versão gravada.';
+  };
+  const carregar=async()=>{
+    if(ocupado||fim||!ov.isConnected)return;ocupado=true;mais.disabled=true;msg.textContent='Carregando versões…';let denovo=false;
+    try{
+      const plano=fonte==='plano',l=await SyncNotas.versoes(id,{pagina:pag+1,plano,porPagina:plano?10:30});pag++;
+      if(!plano&&l.length<30){fonte='plano';pag=0;denovo=!l.length}else if(plano&&l.length<10)fim=true;
+      const fila=[...l];
+      await Promise.all(Array.from({length:4},async()=>{for(let cm;(cm=fila.shift());){
+        try{const p=await SyncNotas.versoes(id,{ref:cm.sha,plano});if(p?.doc)itens.push({sha:cm.sha,plano,data:new Date(cm.commit?.author?.date||cm.commit?.committer?.date||0),p})}catch(e){}
+      }}));
+      itens.sort((a,b)=>(a.plano-b.plano)||(b.data-a.data));
+      // o plano mudava a cada tarefa: só fica a versão em que o documento da página mudou
+      for(let k=itens.length-1;k>0;k--)if(itens[k].plano&&itens[k-1].plano&&JSON.stringify(itens[k].p.doc)===JSON.stringify(itens[k-1].p.doc))itens.splice(k-1,1);
+      msg.textContent='';pinta();
+    }catch(e){msg.textContent=e.message}finally{ocupado=false;mais.disabled=false}
+    if(denovo)return carregar();
+  };
+  mais.onclick=carregar;
+  ov.querySelector('.nt-hist-l').addEventListener('scroll',e=>{const l=e.currentTarget;if(l.scrollTop+l.clientHeight>=l.scrollHeight-40)carregar()});
+  rest.onclick=async()=>{if(!escolhida)return;rest.disabled=true;try{ntAntes();const ok=await SyncNotas.restaurar(id,escolhida.sha,escolhida.plano);if(!ok){msg.textContent='Restauração na fila; aguardando conexão.';return}if(NT.pagina===id)await ntSincroniza();ntModalFecha(ov)}catch(e){msg.textContent=e.message}finally{rest.disabled=false}};
+  carregar().then(()=>{if(itens[0]&&ov.isConnected&&!escolhida)mostra(itens[0])});return ov;
 }
 const ntFrases=()=>Array.isArray(SM.d?.notasFrases)?SM.d.notasFrases:[];
 function frGrava(l){

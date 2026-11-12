@@ -264,11 +264,10 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.equal(await ev("getComputedStyle(NT.bolha).display"),'none','a bolha não aparece');
     assert.equal(await ev("document.querySelectorAll('.nt-bolha-texto').length"),0,'a bolha de texto foi removida');
     const g=await ev("(()=>{const h=document.getElementById('nt_titulo').getBoundingClientRect(),b=document.querySelector('.nt-barra').getBoundingClientRect(),t=document.querySelector('.nt-topo').getBoundingClientRect();return {hx:h.right,hy:h.top+h.height/2,bx:b.left,by:b.top,bh:b.height,tt:t.top,esq:h.left}})()");
-    assert.ok(g.bx>=g.hx-1&&g.by<g.hy&&g.by+g.bh>g.hy,'a barra está na mesma fileira do título da página, à direita dele: '+JSON.stringify(g));
-    assert.ok(g.esq<80,'no canto superior esquerdo');
-    for(const m of ['bold','italic','underline','strike','cor','frase','frases','hist','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
+    assert.ok(g.hy>g.by+g.bh,'1.49: o título grande fica abaixo da barra fixa: '+JSON.stringify(g));
+    for(const m of ['bold','italic','underline','strike','cor','hist','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
     for(const m of ['link','h1','h2','h3','bullet','ordered','task','tgl'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),false,'1.43: o botão '+m+' saiu da barra');
-    assert.equal(await ev("document.querySelectorAll('.nt-barra-l [data-m]').length"),9,'ficam B I U S, cor, frase, frases, histórico e atalhos');
+    assert.equal(await ev("document.querySelectorAll('.nt-barra-l [data-m]').length"),7,'ficam B I U S, cor, histórico e atalhos');
   });
 
   await t.test('1.41 a barra formata a seleção sem tirar o foco nem a seleção do editor; botões acesos mostram o estado',async()=>{
@@ -385,7 +384,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     // recolher e expandir (estado por aparelho)
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display"),'none');assert.equal(await ev("localStorage.getItem('bcbr_nt_lat')"),'0');
     await aguarda("!!document.querySelector('.nt-pm')");   // (a aba é redesenhada depois de fechar o painel: espera o editor voltar)
-    const larg=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(larg>=930,'com a barra lateral recolhida o texto usa quase toda a largura (1000 px): '+larg);
+    const larg=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(larg>=700&&larg<=709,"1.49: texto centralizado com ~708 px: "+larg);
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display!=='none'&&localStorage.getItem('bcbr_nt_lat')"),'1');
   });
 

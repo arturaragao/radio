@@ -1,4 +1,5 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}.versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}html{background:var(--bg)}/* 1.49: faixas das áreas seguras com o mesmo fundo do tema */
+.versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
 .hr #rd_sync{background:transparent;color:inherit;border:0;padding:0;font:inherit;font-size:.74rem;opacity:.85;display:flex;align-items:center;white-space:nowrap;cursor:pointer;max-width:100%}
 .hr #rd_sync.rd-erro{color:var(--bad,#ff7272)}
 .rd-topo{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;font-size:.75rem}
@@ -851,7 +852,17 @@ body.nt-aba-pg>main{display:none}
 .nt-diff-conteudo [data-type=detailsContent]{display:block!important}
 .nt-diff-acoes{display:flex;flex-wrap:wrap;gap:8px;position:sticky;bottom:-14px;background:var(--card);padding:10px 0}
 .nt-diff-bloco [aria-pressed=true]{outline:2px solid var(--pri);outline-offset:1px}
-.nt-pagina-titulo{font:inherit;font-size:1.3rem;font-weight:600;color:var(--tx);background:transparent;border:0;min-width:60px;width:180px;max-width:30vw}
+.nt-pagina-titulo{display:block;box-sizing:border-box;width:100%;max-width:708px;margin:88px auto 8px;padding:0 4px 0 30px;border:0;outline:0;background:transparent;color:var(--tx);font:inherit;font-size:40px;font-weight:700;line-height:1.2}
+.nt-pagina-titulo::placeholder{color:var(--mut);opacity:.6}
+/* 1.49: página estilo Notion — texto centralizado em ~708 px, começa mais abaixo; blocos com respiro parecido */
+.nt-conteudo #nt_raiz{max-width:708px;margin:0 auto}
+.nt-pm{line-height:1.5}
+.nt-pm h1{margin:1.4em 0 .15em}.nt-pm h2{margin:1.1em 0 .15em}.nt-pm h3{margin:1em 0 .1em}
+.nt-img.ProseMirror-selectednode{outline:1px solid var(--pri);outline-offset:2px}
+.nt-arquivo{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0}
+.nt-corpo.lat-off.lat-hover .nt-lat{animation:nt-lat-in .12s ease-out}
+@keyframes nt-lat-in{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+@media(max-width:700px){.nt-pagina-titulo{margin-top:32px;font-size:30px;padding-left:26px}}
 </style></head><body>
 <title>Radio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1075,7 +1086,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.48.0</small></div>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.49.0</small></div>
 <div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
 <main id="app"></main>
@@ -1083,5 +1094,5 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.48.0"</script><script src="shim.js?v=1.48.0"></script>
+<script>window.BCBR_VERSAO="1.49.0"</script><script src="shim.js?v=1.49.0"></script>
 </body></html>

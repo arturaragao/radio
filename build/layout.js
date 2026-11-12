@@ -115,4 +115,12 @@ function lyIni(){
 const lyCalendario=TABS.find(t=>t[0]==='semana');if(lyCalendario)lyCalendario[1]='Calendário';
 delete KEYLAB.smurg;KG.sem=KG.sem.filter(k=>k!=='smurg');
 lyIni();
+// 1.49: a cor da barra de status/aba do navegador acompanha o tema escolhido no app (as duas metas theme-color recebem a mesma cor).
+function lyTemaCor(){
+  const cor=getComputedStyle(document.documentElement).getPropertyValue('--band').trim();
+  if(cor)document.querySelectorAll('meta[name="theme-color"]').forEach(m=>m.setAttribute('content',cor));
+}
+lyTemaCor();
+new MutationObserver(lyTemaCor).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+if(typeof matchMedia==='function')matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',lyTemaCor);
 render();

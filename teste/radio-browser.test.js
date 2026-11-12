@@ -151,7 +151,7 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
   await t.test('frases-padrão: salvar o texto selecionado, "/Frase" filtra e insere, painel renomeia/apaga, sobe pela fila das notas',async()=>{
     await reset(par('Fígado de dimensões normais, contornos regulares.','f1'),par('','f2'));
     await ev("NT.ed.chain().focus().setTextSelection({from:1,to:51}).run()");
-    await click('[data-m=frase]');await ate("!!document.querySelector('.nt-modal input')");
+    assert.equal(await ev("!!document.querySelector('[data-m=frase],[data-m=frases]')"),false,'1.49: botões de frase ocultos');await ev('ntFraseSalvaSel(NT)');await ate("!!document.querySelector('.nt-modal input')");
     await ev("document.querySelector('.nt-modal input').select()");await digita('Fígado normal');await especial('Enter');await espera(300);
     assert.deepEqual(await ev("SM.d.notasFrases.map(f=>[f.titulo,f.texto])"),[['Fígado normal','Fígado de dimensões normais, contornos regulares.']]);
     await ev("frSalva('Rins normais','Rins de forma e dimensões normais.')");
@@ -162,7 +162,7 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     await especial('Enter');await espera(300);
     assert.equal(await ev("NT.ed.getText().includes('Rins de forma e dimensões normais.')"),true,'a frase foi inserida');
     // gerenciar: renomear e apagar
-    await click('[data-m=frases]');await ate("!!document.querySelector('.nt-fr-g')");
+    await ev('ntFrasesGerencia()');await ate("!!document.querySelector('.nt-fr-g')");
     await ev("(()=>{const i=document.querySelector('.nt-fr-g input');i.value='Fígado OK';i.dispatchEvent(new Event('change',{bubbles:true}))})()");await espera(200);
     assert.deepEqual(await ev("SM.d.notasFrases.map(f=>f.titulo)"),['Fígado OK','Rins normais']);
     await ev("document.querySelectorAll('.nt-fr-g [data-f=apaga]')[1].click()");await espera(200);

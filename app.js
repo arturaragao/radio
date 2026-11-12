@@ -1,4 +1,4 @@
-// Banco CBR app 1.48.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.49.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -1998,6 +1998,19 @@ function ntPontoImagem(state,pos){
   for(let d=$p.depth;d>=1;d--){const pai=$p.node(d-1),i=$p.indexAfter(d-1);if(pai.canReplaceWith(i,i,tipo))return $p.after(d)}
   return state.doc.content.size;
 }
+// 1.49: Ctrl+C com uma imagem selecionada copia a IMAGEM (PNG; o JPEG do repositório é convertido pelo canvas).
+async function ntImgPng(img){
+  const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;
+  c.getContext('2d').drawImage(img,0,0);
+  return new Promise((ok,no)=>c.toBlob(r=>r?ok(r):no(new Error('png')),'image/png'));
+}
+function ntCopiaImagem(c){
+  const s=c.ed?.state.selection;if(s?.node?.type.name!=='image'||!navigator.clipboard?.write||!window.ClipboardItem)return false;   // sem suporte: o editor copia o nó
+  const img=c.ed.view.nodeDOM(s.from);if(!(img instanceof HTMLImageElement))return false;
+  const pronta=img.complete&&img.naturalWidth?Promise.resolve():new Promise((ok,no)=>{img.addEventListener('load',ok,{once:true});img.addEventListener('error',no,{once:true})});
+  navigator.clipboard.write([new ClipboardItem({'image/png':pronta.then(()=>ntImgPng(img))})]).then(()=>toast('Imagem copiada.'),()=>toast('Não consegui copiar a imagem.'));
+  return true;
+}
 async function ntInsereImagem(arquivo,pos,c=NT){
   const ed=c.ed;if(!ed||!arquivo)return;
   const id=smId(),ponto=ntPontoImagem(ed.state,pos??ed.state.selection.from);
@@ -2012,11 +2025,13 @@ async function ntInsereImagem(arquivo,pos,c=NT){
   ed.view.dispatch(tr.scrollIntoView());toast('Imagem anexada.');
 }
 function ntEscolheImagem(c=NT){
+  // 1.49: o seletor fica no body (fora do editor, que pode ser redesenhado) e é aberto direto no gesto do usuário (galeria/câmera no celular).
   c.posImg=c.ed.state.selection.from;
-  let i=c.el.querySelector('.nt-arquivo');
-  if(!i){i=document.createElement('input');i.type='file';i.accept='image/*';i.className='nt-arquivo';i.hidden=true;
-    i.onchange=()=>{const f=i.files[0];i.value='';if(f)ntInsereImagem(f,c.posImg,c)};c.el.appendChild(i)}
-  i.click();
+  let i=document.getElementById('nt_arquivo');
+  if(!i){i=document.createElement('input');i.type='file';i.accept='image/*';i.id='nt_arquivo';i.className='nt-arquivo';i.tabIndex=-1;i.setAttribute('aria-hidden','true');document.body.appendChild(i);
+    const ok=()=>{const f=i.files[0];i.value='';const k=i._c;if(f&&k?.ed)ntInsereImagem(f,k.posImg,k)};
+    i.addEventListener('change',ok);i.addEventListener('input',()=>{if(i.files[0])ok()})}
+  i._c=c;i.click();
 }
 // Imagem: nó próprio (largura em %, arquivo vem do repositório privado via ./img/…, com o plano B do shim se o service worker falhar).
 function ntImagem(){
@@ -2194,6 +2209,7 @@ const NT_BARRA=[
   ['cor','A▾','Cor do texto e realce (Ctrl+Shift+H aplica a cor padrão)'],null,
   ['frase','✚<span class="nt-bt-t"> Frase</span>','Salvar o texto selecionado como frase-padrão (insira com /Frase)'],['frases','📋','Gerenciar frases-padrão'],['hist','🕘<span class="nt-bt-t"> Histórico</span>','Histórico de versões das notas'],null,
   ['atalhos','⌨<span class="nt-bt-t"> Atalhos</span>','Atalhos e funções (Ctrl+/)']];
+const NT_BARRA_OCULTA=['frase','frases'];   // 1.49: botões escondidos por enquanto (dados, /Frase e as funções continuam)
 const NT_BARRA_ATIVO={bold:'bold',italic:'italic',underline:'underline',strike:'strike'};   // (1.43: títulos, link, listas, checklist e toggle saíram da barra; ficam os atalhos, o menu "/" e o painel de Atalhos)
 // Paleta: cada cor é uma linha com amostra grande na cor de verdade (A para texto, quadrado cheio para fundo), o nome e a estrela que a faz padrão do Ctrl+Shift+H.
 // (As variáveis --ntc-/--ntb- valem também em .nt-barra no CSS: a paleta fica fora do .nt-ed.)
@@ -2205,7 +2221,7 @@ function ntPaletaPinta(c){
 function ntBarra(c){
   const b=document.createElement('div'),sw=ntPaletaHtml;
   b.className='nt-barra';
-  b.innerHTML=`<div class="nt-barra-l" role="toolbar" aria-label="Formatação">${NT_BARRA.map(x=>x?`<button type="button" data-m="${x[0]}" title="${x[2]}" aria-label="${x[2]}">${x[1]}</button>`:'<i class="nt-sep"></i>').join('')}</div>
+  b.innerHTML=`<div class="nt-barra-l" role="toolbar" aria-label="Formatação">${NT_BARRA.filter(x=>!x||!NT_BARRA_OCULTA.includes(x[0])).map(x=>x?`<button type="button" data-m="${x[0]}" title="${x[2]}" aria-label="${x[2]}">${x[1]}</button>`:'<i class="nt-sep"></i>').join('')}</div>
     <div class="nt-pop nt-link" hidden><input type="text" class="nt-link-in" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Endereço do link (vazio remove)" aria-label="Endereço do link"><button type="button" data-m="link-ok" title="Aplicar">OK</button><button type="button" data-m="link-x" title="Cancelar">✕</button></div>
     <div class="nt-pop nt-paleta" hidden><div class="nt-paleta-t">Cor do texto</div><div class="nt-paleta-l">${sw('texto')}</div><div class="nt-paleta-t">Cor de fundo (realce)</div><div class="nt-paleta-l">${sw('fundo')}</div><div class="nt-paleta-dica">☆ marca a cor padrão do Ctrl+Shift+H (clique de novo para desmarcar)</div><button type="button" class="nt-sem-cor" data-cor="nenhuma">Sem cor</button></div>`;
   b.addEventListener('mousedown',e=>{if(!e.target.closest('input'))e.preventDefault()});
@@ -2352,6 +2368,7 @@ function ntEditor(c,blocos,aoMudar){
         if(arq&&texto){e.preventDefault();v.pasteText(texto);return true}   // Excel/Word trazem imagem + texto: cola o texto
         if(arq){e.preventDefault();ntInsereImagem(arq,undefined,c);return true}
         return false},
+      handleKeyDown:(v,e)=>{if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='c'&&ntCopiaImagem(c)){e.preventDefault();return true}return false},
       handleDrop:(v,e,slice,moved)=>{
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
@@ -2424,7 +2441,7 @@ function vNotas(){
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
+  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo"><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><div id="nt_raiz"></div></div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -2564,7 +2581,7 @@ if(typeof matchMedia==='function')matchMedia('(max-width:700px)').addEventListen
   const aberta=ntLateralAberta();corpo.classList.toggle('lat-off',!aberta);corpo.classList.remove('lat-hover');
   document.getElementById('nt_lat_bt')?.setAttribute('aria-expanded',String(aberta));
 });
-let ntLatT=0;
+let ntLatT=0;const NT_LAT_ATRASO=150;   // 1.49: some mais rápido quando o mouse sai
 document.addEventListener('pointerover',e=>{
   if(e.pointerType!=='mouse')return;
   const corpo=document.querySelector('.nt-corpo');if(!corpo)return;
@@ -2576,9 +2593,9 @@ document.addEventListener('pointerover',e=>{
     }
     return;
   }
-  if(corpo.classList.contains('lat-hover')){clearTimeout(ntLatT);ntLatT=setTimeout(()=>corpo.classList.remove('lat-hover'),300)}   // tolerância: não pisca no caminho do botão até a barra
+  if(corpo.classList.contains('lat-hover')){clearTimeout(ntLatT);ntLatT=setTimeout(()=>corpo.classList.remove('lat-hover'),NT_LAT_ATRASO)}   // tolerância: não pisca no caminho do botão até a barra
 });
-document.documentElement?.addEventListener('mouseleave',()=>{const c=document.querySelector('.nt-corpo.lat-hover');if(c){clearTimeout(ntLatT);ntLatT=setTimeout(()=>c.classList.remove('lat-hover'),300)}});
+document.documentElement?.addEventListener('mouseleave',()=>{const c=document.querySelector('.nt-corpo.lat-hover');if(c){clearTimeout(ntLatT);ntLatT=setTimeout(()=>c.classList.remove('lat-hover'),NT_LAT_ATRASO)}});
 document.addEventListener('pointerdown',e=>{   // arrastar a margem direita da barra muda a largura
   const rz=e.target.closest?.('#nt_lat_rz');if(!rz||e.button!==0)return;
   const corpo=rz.closest('.nt-corpo'),x0=e.clientX,w0=document.getElementById('nt_lat').offsetWidth;let w=w0;e.preventDefault();
@@ -5800,4 +5817,12 @@ function lyIni(){
 const lyCalendario=TABS.find(t=>t[0]==='semana');if(lyCalendario)lyCalendario[1]='Calendário';
 delete KEYLAB.smurg;KG.sem=KG.sem.filter(k=>k!=='smurg');
 lyIni();
+// 1.49: a cor da barra de status/aba do navegador acompanha o tema escolhido no app (as duas metas theme-color recebem a mesma cor).
+function lyTemaCor(){
+  const cor=getComputedStyle(document.documentElement).getPropertyValue('--band').trim();
+  if(cor)document.querySelectorAll('meta[name="theme-color"]').forEach(m=>m.setAttribute('content',cor));
+}
+lyTemaCor();
+new MutationObserver(lyTemaCor).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+if(typeof matchMedia==='function')matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',lyTemaCor);
 render();

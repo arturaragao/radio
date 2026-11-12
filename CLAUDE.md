@@ -1,5 +1,9 @@
 # Banco CBR (app)
 
+## 1.49.0 — 12/11/2026 — layout, local, não publicada
+
+Pedidos do Artur (sem tocar em sync/sincronização): barra lateral some 150 ms após o mouse sair (fade curto); Ctrl+C com imagem selecionada copia a imagem em PNG (ClipboardItem; sem suporte, o editor copia o nó); páginas começam ~88 px abaixo (32 px no celular), título grande de 40 px/700 fora da barra do topo, texto de 708 px centralizado; `html` com o fundo do tema e `theme-color` seguindo --band (faixas seguras uniformes); `/Imagem` abre o seletor `image/*` (input no body, direto do gesto) e insere por `ntInsereImagem`; botões Frase e Gerenciar frases ocultos (`NT_BARRA_OCULTA`; dados, `/Frase` e código mantidos). Teste novo: teste/layout149-browser.test.js.
+
 ## 1.48.0 — 11/11/2026 — implementação local concluída, não publicada
 
 Modelo por página implementado em build/sync-notas.js; Notas é a página "notas" e todas as páginas usam a área principal. Sem commit/push; repo de dados somente lido. Escalada concluída: suíte completa 269/269, rápido 8/8 (2,4 s), interpretar 28/28. Fila local legada transportada sem fusão (exclusões antigas não aplicadas; chaves antigas nunca apagadas); abrir página sem entrada no índice reconstrói a entrada. Brief e evidências: teste/validacao-1.48.md. Esta seção substitui o modelo antigo de fusão/conflitos descrito no histórico abaixo.

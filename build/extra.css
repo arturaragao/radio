@@ -1,3 +1,4 @@
+html{background:var(--bg)}/* 1.49: faixas das áreas seguras com o mesmo fundo do tema */
 .versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
 .hr #rd_sync{background:transparent;color:inherit;border:0;padding:0;font:inherit;font-size:.74rem;opacity:.85;display:flex;align-items:center;white-space:nowrap;cursor:pointer;max-width:100%}
 .hr #rd_sync.rd-erro{color:var(--bad,#ff7272)}

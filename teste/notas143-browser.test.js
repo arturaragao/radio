@@ -97,7 +97,7 @@ test('Notas 1.43 no Chrome',{timeout:600000},async t=>{
     }
     await ev('NT.sujo=true;ntSalvaDoc()');assert.ok(await confirmado());
     await C.abre('notas');assert.deepEqual(await ev('ntCorPadrao()'),{tipo:'fundo',cor:'azul'},'padrão sobrevive recarga');
-    assert.deepEqual(await ev("[...NT.barra.querySelectorAll('.nt-barra-l button')].map(e=>e.dataset.m)"),['bold','italic','underline','strike','cor','frase','frases','hist','atalhos']);
+    assert.deepEqual(await ev("[...NT.barra.querySelectorAll('.nt-barra-l button')].map(e=>e.dataset.m)"),['bold','italic','underline','strike','cor','hist','atalhos']);
     await reset(par('titulo'));await ctrl('2',3);assert.equal(await ev('NT.ed.state.doc.firstChild.type.name'),'heading');
     await ctrl('/');assert.match(await ev("document.querySelector('#nt_atalhos').textContent"),/Ctrl\+K/);await especial('Escape');
     await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:false});

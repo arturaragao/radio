@@ -268,4 +268,14 @@ body.nt-aba-pg>main{display:none}
 .nt-diff-conteudo [data-type=detailsContent]{display:block!important}
 .nt-diff-acoes{display:flex;flex-wrap:wrap;gap:8px;position:sticky;bottom:-14px;background:var(--card);padding:10px 0}
 .nt-diff-bloco [aria-pressed=true]{outline:2px solid var(--pri);outline-offset:1px}
-.nt-pagina-titulo{font:inherit;font-size:1.3rem;font-weight:600;color:var(--tx);background:transparent;border:0;min-width:60px;width:180px;max-width:30vw}
+.nt-pagina-titulo{display:block;box-sizing:border-box;width:100%;max-width:708px;margin:88px auto 8px;padding:0 4px 0 30px;border:0;outline:0;background:transparent;color:var(--tx);font:inherit;font-size:40px;font-weight:700;line-height:1.2}
+.nt-pagina-titulo::placeholder{color:var(--mut);opacity:.6}
+/* 1.49: página estilo Notion — texto centralizado em ~708 px, começa mais abaixo; blocos com respiro parecido */
+.nt-conteudo #nt_raiz{max-width:708px;margin:0 auto}
+.nt-pm{line-height:1.5}
+.nt-pm h1{margin:1.4em 0 .15em}.nt-pm h2{margin:1.1em 0 .15em}.nt-pm h3{margin:1em 0 .1em}
+.nt-img.ProseMirror-selectednode{outline:1px solid var(--pri);outline-offset:2px}
+.nt-arquivo{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0}
+.nt-corpo.lat-off.lat-hover .nt-lat{animation:nt-lat-in .12s ease-out}
+@keyframes nt-lat-in{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+@media(max-width:700px){.nt-pagina-titulo{margin-top:32px;font-size:30px;padding-left:26px}}

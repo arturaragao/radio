@@ -1,5 +1,22 @@
 # Banco CBR (app)
 
+## 1.48.0 — 11/11/2026 — implementação local PARCIAL, não aprovada
+
+Modelo por página implementado em build/sync-notas.js; Notas é a página "notas" e todas as páginas usam a área principal. Sem commit/push; repo de dados somente lido. A suíte completa tem regressões e exige escalada antes de publicar. Brief e evidências: teste/validacao-1.48.md. Esta seção substitui o modelo antigo de fusão/conflitos descrito no histórico abaixo.
+
+### Como salvar funciona
+
+- notas/indice.json contém metadados e SHA; o app consulta o índice com ETag. O documento fica em notas/paginas/<id>.json e é lido ao abrir ou quando muda o SHA da página aberta.
+- Cada edição entra na fila local por página; após cerca de 1,5 s, PUT da página inteira e do índice. Em 409, a gravação local vence; o índice é relido para preservar as outras entradas. A fila só sai após ambas as confirmações.
+- Versões consulta commits do arquivo; restaurar cria uma gravação nova. Cache IndexedDB bcbr é opcional. Sem espaço na fila local, tenta PUT imediato; se também estiver offline, o conteúdo fica apenas na memória até conseguir enviar.
+- A migração retira conteúdo de páginas do plano só depois de confirmar arquivos e índice. paginasEmArquivos: 2 marca o formato; conteúdo reintroduzido por cliente antigo passa novamente pela migração. Revisar os limites de migração no brief antes de uso real.
+
+### Validação por tipo de mudança
+
+- Mudança de layout: node teste/rapido.js (somente interface/tema/layout, limite de 28 s).
+- Mudança em build/sync-notas.js: node --test teste/ e node teste/interpretar.test.js; regenerar com node build/montar-node.js.
+- Testes do contrato revogado (fusão por bloco, bases e detector) foram substituídos pela suíte teste/sync-notas.test.js. A adaptação das regressões de interface/Notion ainda está incompleta; não considerar a redução de testes como aceite.
+
 Complemento 1.45.0: indicador Salvo na mesma linha do titulo Radio v1.45.0, ao lado de Sincronizado, com layout compacto em 375 px; sync/fila/armazenamento inalterados.
 
 ## Estado atual / Histórico

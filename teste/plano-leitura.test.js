@@ -76,15 +76,6 @@ for(const status of [409,422])test('conflito '+status+': relê blob grande e reg
   assert.equal(enviados[1].texto,JSON.stringify(salvo));assert.equal(a.sm().base,enviados[1].texto);assert.equal(a.sm().erro,'');
 });
 
-test('histórico usa helper, ref do commit e blob do SHA retornado',async()=>{
-  const chamadas=[];
-  const a=app(async path=>{chamadas.push(path);return path.includes('/git/blobs/')?{encoding:'base64',content:b64(plano)}:{encoding:'none',content:'',size:1680860,sha:'blob-historico'}});
-  const notas=fs.readFileSync(require.resolve('../build/notas2.js'),'utf8');
-  vm.runInContext(notas.slice(notas.indexOf('async function ntHistVersao'),notas.indexOf('// Blocos da versão')),a.c);
-  assert.deepEqual(JSON.parse(JSON.stringify(await a.c.ntHistVersao('commit/antigo'))),plano);
-  assert.deepEqual(chamadas,['/repos/ficticio/teste/contents/semana/plano.json?ref=commit%2Fantigo','/repos/ficticio/teste/git/blobs/blob-historico']);
-});
-
 test('base com indentação antiga funde objetos e PUT passa a usar JSON compacto',async()=>{
   const remoto={...plano,subtitulo:'Outro aparelho'};let texto;
   const a=app(async(path,opt)=>{

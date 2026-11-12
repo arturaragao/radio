@@ -52,7 +52,7 @@ test('Offline 1.42: app abre do aparelho sem internet, enfileira e envia ao volt
   const lerJson=async p=>{const r=await(await fetch(C.URL_+'api/repos/arturaragao/banco-cbr-app/contents/'+p)).json();if(!r.content)throw new Error('sem '+p+': '+JSON.stringify(r).slice(0,100));return JSON.parse(Buffer.from(r.content,'base64').toString())};
   const plano=await lerJson('semana/plano.json');
   assert.equal(plano.tarefas.filter(x=>x.id==='off1').length,1,'tarefa enviada uma vez');
-  assert.equal(plano.notasDoc.blocos.filter(b=>JSON.stringify(b.conteudo).includes('Nota escrita sem internet')).length,1,'nota enviada uma vez');
+  const nota=await ev("SyncNotas.abrirPagina('notas')");assert.equal(nota.doc.blocos.filter(b=>JSON.stringify(b.conteudo).includes('Nota escrita sem internet')).length,1,'nota enviada uma vez');
   const wk=await ev("wkKey(Date.now())");const logs=await lerJson('progresso/log_'+wk+'.json');
   assert.equal(logs.items.filter(a=>a[0]==='q0').length,1,'resposta enviada uma vez');
   // mais um ciclo: nada novo, nada duplicado

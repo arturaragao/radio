@@ -2,7 +2,7 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.47.0"
+VERSAO = "1.48.0"
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
 js = js.split("<script>", 1)[1].rsplit("</script>", 1)[0]
 head = open(f"{R}/fonte/artefato-head.html", encoding="utf8").read()
@@ -127,7 +127,7 @@ js = js + "\n\n" + open(f"{R}/build/questoes.js", encoding="utf8").read()
 # reordenar cartões arrastando (22/10/2026): botões de restaurar em Config + arrastar/segurar (build/layout.js)
 troca("${layoutUI()}${pesosUI()}", "${layoutUI()}${ordemUI()}${pesosUI()}")
 js = js + "\n\n" + open(f"{R}/build/layout.js", encoding="utf8").read()
-js = open(f"{R}/build/interpretar.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/semana.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas2.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/recuperacao.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/busca.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/offline.js", encoding="utf8").read() + "\n\n" + js  # antes do código do app: estado e notas existem no primeiro render
+js = open(f"{R}/build/sync-notas.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/interpretar.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/semana.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/notas2.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/recuperacao.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/busca.js", encoding="utf8").read() + "\n\n" + open(f"{R}/build/offline.js", encoding="utf8").read() + "\n\n" + js  # antes do código do app: estado e notas existem no primeiro render
 
 open(f"{R}/app.js", "w", encoding="utf8").write(f"// Banco CBR app {VERSAO} — gerado por build/montar.py a partir do artefato (não editar à mão)\n" + js)
 

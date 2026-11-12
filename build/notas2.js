@@ -339,96 +339,26 @@ function ntLembreteEdita(c,dom,pos){
 document.addEventListener('pointerdown',e=>{if(!e.target.closest?.('.nt-lemb-pop,.nt-lemb'))document.querySelector('.nt-lemb-pop')?.remove()});
 
 // ===== Histórico de versões: o plano já é versionado no GitHub (commits do arquivo). Só leitura; restaurar = NOVA edição =====
-const NT_HIST_POR=30;
-const ntHistApi=(p)=>BCBR.api(`/repos/${BCBR.REPO}/${p}`);
-async function ntHistCommits(pagina){return ntHistApi(`commits?path=${encodeURIComponent(SM_ARQ)}&per_page=${NT_HIST_POR}&page=${pagina}`)}
-async function ntHistVersao(sha){const r=await smLerArquivo(`${SM_ARQ}?ref=${encodeURIComponent(sha)}`);return JSON.parse(smDec(r.content))}
-// Blocos da versão `d` (documento principal) ou da página `id`.
-const ntHistBlocos=(d,pg)=>pg?(d?.notasPaginas?.paginas||[]).find(p=>p.id===pg)?.doc?.blocos||[]:d?.notasDoc?.blocos||[];
-function ntHistAbre(c){
-  if(navigator.onLine===false){toast('O histórico precisa de internet.');return}
-  const ov=ntModal('nt-hist',`<div class="nt-modal-t"><b>Histórico das notas</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div>
-    <div class="nt-hist-g"><div class="nt-hist-l"><div class="nt-hist-lista"></div><button type="button" class="b s nt-hist-mais" hidden>Carregar mais</button></div>
-    <div class="nt-hist-v"><div class="nt-hist-bar"><select class="nt-hist-pg" aria-label="O que ver" disabled></select><button type="button" class="b s" data-r="bloco" disabled>Restaurar este bloco</button><button type="button" class="b" data-r="pagina" disabled>Restaurar esta página</button></div>
-    <p class="mut nt-hist-msg">Escolha uma versão à esquerda. Clique num bloco para escolher só ele.</p><div class="nt-hist-prev"></div></div></div>`);
-  const $=s=>ov.querySelector(s),lista=$('.nt-hist-lista'),msg=$('.nt-hist-msg'),mais=$('.nt-hist-mais'),sel=$('.nt-hist-pg'),prev=$('.nt-hist-prev');
-  let pagina=0,versao=null,bloco=null,ed=null,alvoPg=c.pagina||'';
-  const fim=()=>{try{ed?.destroy()}catch(e){}ed=null};ov.aoFechar=fim;
+function ntHistAbre(c=NT){
+  const id=c.pagina||'notas',ov=ntModal('nt-hist','<div class="nt-modal-t"><b>Versões</b><button class="nt-x" aria-label="Fechar">✕</button></div><div class="nt-hist-lista"></div><button class="b s" data-mais>Carregar mais</button><p class="nt-hist-msg"></p><div class="nt-hist-prev"></div><button class="b" data-restaurar disabled>Restaurar</button>');
+  const lista=ov.querySelector('.nt-hist-lista'),msg=ov.querySelector('.nt-hist-msg'),prev=ov.querySelector('.nt-hist-prev'),rest=ov.querySelector('[data-restaurar]');
+  let pagina=0,ref=null,ed=null,visita=0;ov.aoFechar=()=>ed?.destroy();
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
-  const mostra=()=>{
-    fim();prev.innerHTML='';bloco=null;$('[data-r="bloco"]').disabled=true;
-    const bl=ntHistBlocos(versao,alvoPg);
-    $('[data-r="pagina"]').disabled=!(alvoPg?(versao.notasPaginas?.paginas||[]).some(p=>p.id===alvoPg):true);
-    if(!bl.length){msg.textContent='Nada nesta versão.';return}
-    msg.textContent='Versão só para leitura. Clique num bloco para escolher só ele.';
-    const el=document.createElement('div');el.className='nt-ed nt-hist-ed';prev.appendChild(el);
-    ed=new TT.Editor({element:el,extensions:ntExtensoes({pagina:!!alvoPg,el}),content:ntDocumento(bl),editable:false});
-    el.querySelectorAll('[data-type="details"]').forEach(d=>d.classList.add('is-open'));
-    el.addEventListener('click',e=>{
-      const pm=el.querySelector('.ProseMirror'),b=e.target.closest('.ProseMirror>*'),i=b&&pm?[...pm.children].indexOf(b):-1;
-      pm?.querySelectorAll('.nt-hist-sel').forEach(x=>x.classList.remove('nt-hist-sel'));
-      if(i>=0&&i<bl.length){bloco=bl[i];b.classList.add('nt-hist-sel');$('[data-r="bloco"]').disabled=false}
-    });
-  };
-  const carrega=async lst=>{
-    versao=null;msg.textContent='Baixando a versão…';
-    try{
-      versao=await ntHistVersao(lst.dataset.sha);
-      const ps=versao.notasPaginas?.paginas||[];
-      sel.innerHTML=`<option value="">Notas (página principal)</option>`+ps.map(p=>`<option value="${esc(p.id)}">📄 ${esc(p.titulo||'Sem título')}</option>`).join('');
-      if(alvoPg&&!ps.some(p=>p.id===alvoPg))alvoPg='';
-      sel.value=alvoPg;sel.disabled=false;mostra();
-    }catch(e){msg.textContent=e?.status?`Não consegui baixar esta versão (GitHub ${e.status}).`:'Não consegui baixar esta versão (precisa de conexão).'}
-  };
-  sel.onchange=()=>{alvoPg=sel.value;mostra()};
-  const lote=async()=>{
-    mais.hidden=true;
-    try{
-      const cs=await ntHistCommits(++pagina);
-      lista.insertAdjacentHTML('beforeend',cs.map(x=>`<button type="button" class="nt-hist-it" data-sha="${esc(x.sha)}"><b>${esc(new Date(x.commit?.author?.date||x.commit?.committer?.date||0).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}))}</b><small>${esc(String(x.commit?.message||'').split('\n')[0])}</small></button>`).join(''));
-      mais.hidden=cs.length<NT_HIST_POR;
-      if(pagina===1&&!cs.length)lista.innerHTML='<p class="mut">Nenhuma versão encontrada.</p>';
-    }catch(e){msg.textContent=navigator.onLine===false||!e?.status?'O histórico precisa de internet.':`Não consegui listar as versões (GitHub ${e.status}).`}
-  };
-  mais.onclick=lote;
-  lista.addEventListener('click',e=>{const b=e.target.closest('.nt-hist-it');if(!b)return;lista.querySelectorAll('.on').forEach(x=>x.classList.remove('on'));b.classList.add('on');carrega(b)});
-  ov.querySelector('.nt-hist-bar').addEventListener('click',e=>{
-    const b=e.target.closest('[data-r]');if(!b||b.disabled||!versao)return;
-    if(ntHistRestaura(c,versao,alvoPg,b.dataset.r==='bloco'?bloco:null))ntModalFecha(ov);
-  });
-  lote();
+  const carregar=async()=>{const mais=ov.querySelector('[data-mais]');mais.disabled=true;try{
+    const l=await SyncNotas.versoes(id,{pagina:pagina+1});pagina++;
+    for(const commit of l){const bt=document.createElement('button');bt.className='b s';bt.textContent=(commit.commit?.author?.date||'')+' · '+(commit.commit?.message||commit.sha);lista.appendChild(bt);
+      bt.onclick=async()=>{const n=++visita;ref=null;rest.disabled=true;try{const p=await SyncNotas.versoes(id,{ref:commit.sha});if(n!==visita||!ov.isConnected)return;ed?.destroy();prev.replaceChildren();const el=document.createElement('div');el.className='nt-ed';prev.appendChild(el);
+        ed=new TT.Editor({element:el,extensions:ntExtensoes({pagina:id,el}),content:ntDocumento(p.doc.blocos),editable:false});ref=commit.sha;rest.disabled=false;msg.textContent='Pré-visualização. Restaurar cria uma nova gravação.';
+      }catch(e){msg.textContent=e.message}}}
+    mais.hidden=l.length<30;if(!l.length&&!lista.children.length)msg.textContent='Nenhuma versão gravada.';
+  }catch(e){msg.textContent=e.message}finally{mais.disabled=false}};
+  ov.querySelector('[data-mais]').onclick=carregar;
+  rest.onclick=async()=>{rest.disabled=true;try{ntAntes();const ok=await SyncNotas.restaurar(id,ref);if(!ok){msg.textContent='Restauração na fila; aguardando conexão.';return}if(NT.pagina===id)await ntSincroniza();ntModalFecha(ov)}catch(e){msg.textContent=e.message}finally{rest.disabled=false}};
+  carregar();return ov;
 }
-// Aplica a versão como edição NOVA no editor aberto (ntAplicaNoEditor local: entra no Ctrl+Z e é salva pela fila normal); sem editor aberto, pela fila das páginas (pgMuda).
-function ntHistRestaura(c,versao,pg,bloco){
-  const agora=ntAgora(),vb=ntHistBlocos(versao,pg).map(b=>({...b,atualizado:agora}));
-  const ctx=pg?(NP?.ed&&NP.pagina===pg?NP:null):(NT.ed?NT:null);
-  if(bloco){
-    const b={...bloco,atualizado:agora};
-    if(ctx){
-      const atual=ntBlocos(ctx.ed.getJSON(),ctx.shown),i=atual.findIndex(x=>x.id===b.id);
-      if(i>=0)atual[i]=b;
-      else{const j=vb.findIndex(x=>x.id===b.id),pre=j>0?atual.findIndex(x=>x.id===vb[j-1].id):-1;atual.splice(pre>=0?pre+1:atual.length,0,b)}   // apagado depois: volta logo depois do vizinho que tinha
-      ntAplicaNoEditor(ctx,atual,true);
-    }else if(pg){
-      pgMuda(l=>{const x=l.find(y=>y.id===pg);if(!x)return;const bl=x.doc?.blocos||[],i=bl.findIndex(y=>y.id===b.id);if(i>=0)bl[i]=b;else bl.push(b);x.doc={v:1,blocos:bl};x.atualizado=agora});
-    }else return false;
-    toast('Bloco restaurado como uma edição nova.');return true;
-  }
-  if(ctx){
-    ntAplicaNoEditor(ctx,vb,true);
-    if(pg){const p=(versao.notasPaginas?.paginas||[]).find(x=>x.id===pg);if(p&&ctx.titulo){ctx.titulo.value=p.titulo||'';pgTituloSalva()}}
-  }else if(pg){
-    const p=(versao.notasPaginas?.paginas||[]).find(x=>x.id===pg);if(!p)return false;
-    pgMuda(l=>{const x=l.find(y=>y.id===pg),nova={...p,doc:{v:1,blocos:vb},atualizado:agora};if(x)Object.assign(x,nova);else l.push({...nova,ordem:Math.max(0,...l.map(y=>Number(y.ordem)||0))+10})});
-  }else return false;
-  toast('Versão restaurada como uma edição nova.');return true;
-}
-
-// ===== Frases-padrão: SM.d.notasFrases = [{id,titulo,texto,atualizado}] (fusão por `atualizado`, aparelho antigo não apaga) =====
 const ntFrases=()=>Array.isArray(SM.d?.notasFrases)?SM.d.notasFrases:[];
 function frGrava(l){
-  if(!ntFilaGrava('frases',ntFrases(),l))return false;
-  SM.d.notasFrases=l;smGuardaCache();ntSync();return true;
+  if(!SM.d)return false;smMudar(d=>{d.notasFrases=l},'frases');return true;
 }
 const frMuda=fn=>{if(!SM.d)return false;const l=JSON.parse(JSON.stringify(ntFrases()));fn(l);return frGrava(l)};
 function frSalva(titulo,texto){
@@ -680,24 +610,24 @@ function ntNotionCombina(diff,agora=ntAgora()){
   });
 }
 function ntNotionAplicar(id,base,diff,origem){
-  if(NP?.pagina===id&&NP.sujo)pgSalvaDoc();
-  const p=pgAchar(id);if(!p||NP?.pagina===id&&NP.sujo)throw Error('Não consegui salvar a edição atual. A atualização não foi aplicada.');
+  if(NT.pagina===id&&NT.sujo)ntSalvaDoc();
+  const p=pgAchar(id);if(!p||NT.pagina===id&&NT.sujo)throw Error('Não consegui salvar a edição atual. A atualização não foi aplicada.');
   if(!ntIgual(p.doc,base))throw Error('A página mudou durante a revisão. Cancele e compare novamente para incluir essa edição.');
   if(!diff.some(r=>r.tipo!=='igual'&&r.aplicar))return false;
   const agora=ntAgora(),blocos=ntNotionCombina(diff,agora);
   if(!blocos.length)blocos.push(...ntBlocos({content:[ntPar('')]},[],agora));
-  const ctx=NP?.pagina===id?NP:null,schema=(ctx?.ed||NT.ed)?.state.schema;
+  const ctx=NT.pagina===id?NT:null,schema=(ctx?.ed||NT.ed)?.state.schema;
   if(!schema)throw Error('Abra as Notas antes de aplicar.');schema.nodeFromJSON(ntDocumento(blocos)).check();
   const copia={...JSON.parse(JSON.stringify(p)),id:ntNovoId().replace(/^b/,'p'),titulo:(p.titulo||'Sem título')+' (antes de atualizar '+new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+')',fixada:false,criado:agora,atualizado:agora,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+10,copiaDe:id};
   delete copia.origem;
-  // Uma edição normal de páginas grava atomicamente a cópia completa e a combinação. Sem mudança na fila/sync.
+  // Cada página entra na fila própria; o histórico do GitHub também preserva a versão anterior.
   if(!pgMuda(l=>{l.push(copia);const x=l.find(p=>p.id===id);x.doc={v:1,blocos};x.origem={...origem,imagens:{...p.origem?.imagens,...origem.imagens}};x.atualizado=agora}))throw Error('Sem espaço para guardar a cópia de segurança. A atualização não foi aplicada.');
   if(ctx?.ed){ntAplicaNoEditor(ctx,blocos,true);ctx.shown=blocos;ctx.sujo=false;clearTimeout(ctx.timer)}
   return copia.id;
 }
 function ntNotionRevisa(id,p,resumo){
-  if(NP?.pagina===id&&NP.sujo)pgSalvaDoc();
-  if(NP?.pagina===id&&NP.sujo)throw Error('Não consegui salvar a edição atual. Libere espaço antes de comparar.');
+  if(NT.pagina===id&&NT.sujo)ntSalvaDoc();
+  if(NT.pagina===id&&NT.sujo)throw Error('Não consegui salvar a edição atual. Libere espaço antes de comparar.');
   const atual=pgAchar(id);if(!atual)throw Error('Página não encontrada.');
   const base=JSON.parse(JSON.stringify(atual.doc||{v:1,blocos:[]})),conteudo=[...p.doc.content];
   // TrailingNode mantém um parágrafo vazio de edição após imagens/toggles. Não é uma remoção no export.
@@ -705,7 +635,7 @@ function ntNotionRevisa(id,p,resumo){
   if(vazio(fim)&&!vazio(conteudo.at(-1)))conteudo.push(fim);
   const diff=ntNotionDiff(base.blocos||[],conteudo);
   const ov=ntModal('nt-notion-diff',`<div class="nt-modal-t"><b>Atualizar do Notion: ${esc(atual.titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><p>Compare com suas edições atuais. Aplicar cria uma cópia da página para desfazer.</p><p role="status">${resumo.enviadas} imagens enviadas; ${resumo.reutilizadas} reutilizadas; ${resumo.falhas} falhas; ${resumo.simplificados} itens simplificados.</p><div class="nt-diff-lista"></div><div class="nt-diff-acoes"><button type="button" class="b" data-tudo>Aplicar tudo</button><button type="button" class="b" data-selecao>Aplicar selecionados</button><button type="button" class="b s" data-cancelar>Cancelar</button></div>`);
-  const lista=ov.querySelector('.nt-diff-lista'),schema=(NP?.ed||NT.ed).state.schema,serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
+  const lista=ov.querySelector('.nt-diff-lista'),schema=(NT.ed).state.schema,serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
   const mostra=(pai,no,classe,rotulo)=>{
     if(!no)return;const area=document.createElement('div');area.className='nt-diff-versao '+classe;
     const label=document.createElement('b');label.textContent=rotulo;area.appendChild(label);
@@ -798,13 +728,13 @@ async function ntNotionImporta(arquivo,alvo=''){
     checa();
     const agora=ntAgora(),pasta=pags.length>1?{id:ntNovoId().replace(/^b/,'f'),titulo:pags[0].titulo,ordem:Math.max(0,...ntPastas().map(f=>+f.ordem||0))+10,criado:agora,atualizado:agora}:null;
     // Validar tudo antes de gravar: sem página parcialmente importada por HTML/ZIP inválido.
-    const schema=(NP?.ed||NT.ed)?.state.schema;if(!schema)throw Error('Abra as Notas antes de importar.');
+    const schema=(NT.ed)?.state.schema;if(!schema)throw Error('Abra as Notas antes de importar.');
     for(const p of pags){const no=schema.nodeFromJSON(p.doc);no.check();p.doc=no.toJSON();p.origem={tipo:'notion-zip',titulo:p.titulo,importadoEm:agora,...(p.notionId?{notionId:p.notionId}:{}),imagens:p.hashes}}
     if(alvo){const r=ntNotionRevisa(alvo,pags[0],{enviadas,falhas,simplificados,reutilizadas});ov.aoFechar=null;ntModalFecha(ov);return r}
     const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,origem:p.origem,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));
     if(!pgGrava([...ntPaginas(),...novas],pasta?[...ntPastas(),pasta]:undefined))throw Error('Sem espaço para salvar a importação neste aparelho.');
     status.textContent=`${novas.length} páginas criadas; ${enviadas} imagens enviadas, ${falhas} falhas; ${simplificados} itens simplificados.`;
-    acoes.replaceChildren();const fim=document.createElement('button');fim.type='button';fim.className='b';fim.textContent='Concluir';fim.onclick=()=>ntModalFecha(ov);acoes.appendChild(fim);ov.aoFechar=null;ntPainelAbre(novas[0].id);
+    acoes.replaceChildren();const fim=document.createElement('button');fim.type='button';fim.className='b';fim.textContent='Concluir';fim.onclick=()=>ntModalFecha(ov);acoes.appendChild(fim);ov.aoFechar=null;await ntPainelAbre(novas[0].id);
     return {paginas:novas.length,enviadas,falhas,simplificados};
   }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
   finally{NT.importando=false}

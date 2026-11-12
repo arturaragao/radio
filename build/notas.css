@@ -268,3 +268,4 @@ body.nt-aba-pg>main{display:none}
 .nt-diff-conteudo [data-type=detailsContent]{display:block!important}
 .nt-diff-acoes{display:flex;flex-wrap:wrap;gap:8px;position:sticky;bottom:-14px;background:var(--card);padding:10px 0}
 .nt-diff-bloco [aria-pressed=true]{outline:2px solid var(--pri);outline-offset:1px}
+.nt-pagina-titulo{font:inherit;font-size:1.3rem;font-weight:600;color:var(--tx);background:transparent;border:0;min-width:60px;width:180px;max-width:30vw}

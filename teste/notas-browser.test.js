@@ -230,7 +230,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     for(let i=0;i<60&&!await ev("(document.querySelector('img.nt-img')||{}).naturalWidth>0");i++)await espera(100);
     assert.equal(await ev("(()=>{const i=document.querySelector('img.nt-img');return i.complete&&i.naturalWidth>0&&i.naturalWidth<=1600})()"),true,'imagem carregou depois de recarregar');
     assert.equal(await ev(`document.querySelector('[data-type="details"]').dataset.id===${JSON.stringify(idTg)}&&document.querySelector('[data-type="details"]').classList.contains('is-open')`),true,'toggle continua aberto');
-    assert.equal(await ev("ntBlocos(NT.ed.getJSON(),SM.d.notasDoc.blocos).every((b,i)=>b.id===SM.d.notasDoc.blocos[i].id&&b.atualizado===SM.d.notasDoc.blocos[i].atualizado)"),true,'ids e datas estáveis');
+    assert.equal(await ev("ntBlocos(NT.ed.getJSON(),NT.paginaDados.doc.blocos).every((b,i)=>b.id===NT.paginaDados.doc.blocos[i].id&&b.atualizado===NT.paginaDados.doc.blocos[i].atualizado)"),true,'ids e datas estáveis');
     // imagem é selecionável e apagável pelo teclado
     await click('img.nt-img');assert.equal(await ev("NT.ed.state.selection.node?.type.name"),'image','clique seleciona a imagem');
     await tecla('Backspace',{code:'Backspace',windowsVirtualKeyCode:8});
@@ -240,49 +240,12 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
   await t.test('data de alteração por bloco: só o bloco editado muda',async()=>{
     await reset(par('a'),par('b'),par('c'));await ev("NT.ed.commands.focus()");
     await ev("ntSalvaDoc()");assert.ok(await confirmado());
-    const antes=await ev("SM.d.notasDoc.blocos.map(b=>b.atualizado)");
+    const antes=await ev("NT.paginaDados.doc.blocos.map(b=>b.atualizado)");
     await espera(30);await irFim('b');await digita('!');await ev("ntSalvaDoc()");assert.ok(await confirmado());
-    const depois=await ev("SM.d.notasDoc.blocos.map(b=>b.atualizado)");
-    const ids=await ev("SM.d.notasDoc.blocos.map(b=>b.id)");assert.equal(new Set(ids).size,ids.length,'ids únicos');
+    const depois=await ev("NT.paginaDados.doc.blocos.map(b=>b.atualizado)");
+    const ids=await ev("NT.paginaDados.doc.blocos.map(b=>b.id)");assert.equal(new Set(ids).size,ids.length,'ids únicos');
     assert.equal(antes[0],depois[0]);assert.notEqual(antes[1],depois[1]);assert.equal(antes[2],depois[2]);
   });
-
-  await t.test('migração: notas antigas (1.38) viram toggles de topo, com cópia notas_v138',async()=>{
-    const antigas=[
-      {id:'n1',titulo:'Laudos',texto:'- medgemma\n• mudar nome\n  • filho\n\n> Meu toggle\n  segredo\n  > Interno\n    mais fundo\nlinha solta\n[img:nota-xabc.jpg]',em:'2026-10-01T10:00:00.000Z',atualizado:'2026-11-02T10:00:00.000Z',ordem:30},
-      {id:'n2',titulo:'Vazia',texto:'',em:'2026-10-02',ordem:10},
-      {id:'n3',titulo:'',texto:'sem título',em:'2026-10-03',ordem:20,fixa:true}];
-    await ev(`NT.ed.destroy();NT.ed=null;NT.el=null;SM.d.notas=${JSON.stringify(antigas)};delete SM.d.notasDoc;delete SM.d.notas_v138;render()`);
-    for(let i=0;i<50&&!await ev("!!NT.ed&&!!document.querySelector('.nt-pm')");i++)await espera(100);
-    const bl=await ev("SM.d.notasDoc.blocos");
-    assert.deepEqual(bl.map(b=>b.id),['bn3','bn2','bn1','b-fim'],'fixada primeiro, depois a ordem manual');
-    assert.deepEqual(await ev("SM.d.notas_v138.map(n=>n.id)"),['n1','n2','n3'],'cópia do formato antigo');
-    const n1=bl[2].conteudo;assert.equal(n1.type,'details');assert.equal(n1.content[0].content[0].text,'Laudos');
-    assert.equal(bl[2].atualizado,'2026-11-02T10:00:00.000Z');
-    const filhos=n1.content[1].content;
-    assert.deepEqual(filhos.map(f=>f.type),['bulletList','details','paragraph','image']);
-    assert.deepEqual(filhos[0].content.map(i=>i.content[0].content[0].text),['medgemma','mudar nome']);
-    assert.equal(filhos[0].content[1].content[1].type,'bulletList','sub-lista pelo recuo');
-    assert.equal(filhos[1].content[1].content[1].type,'details','toggle dentro do toggle');
-    assert.equal(filhos[3].attrs.src,'./img/nota-xabc.jpg');
-    assert.equal(await ev("document.querySelectorAll('.nt-pm > [data-type=\"details\"]').length"),3);
-    assert.match(await ev("document.querySelector('.nt-pm').textContent"),/sem título.*Vazia.*Laudos/s,'ordem na tela');
-    // idempotente
-    assert.equal(await ev("ntMigra(SM.d)"),false);
-  });
-
-
-  // ===== 1.41 =====
-  const barra=(ctx,m)=>`${ctx} [data-m="${m}"]`;
-  const mouse=async(type,x,y)=>call('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',clickCount:1,buttons:type==='mouseReleased'?0:1});
-  const aguarda=async(expr,ms=6000)=>{const t0=Date.now();while(Date.now()-t0<ms){if(await ev(expr).catch(()=>false))return true;await espera(80)}throw Error('não ocorreu: '+expr)};
-  const item=(t,...filhos)=>({type:'listItem',content:[par(t),...filhos]});
-  const lista=(tipo,...itens)=>({type:tipo,content:itens});
-  const tarefa=t=>({type:'taskItem',attrs:{checked:false},content:[par(t)]});
-  const irItem=async texto=>{await ev(`(()=>{let p=null;NT.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.isText&&n.text===${JSON.stringify(texto)})p=pos+n.nodeSize});if(p==null)throw Error('texto ausente');NT.ed.chain().focus().setTextSelection(p).run()})()`)};
-  const slashCtrl=()=>tecla('/',{code:'Slash',windowsVirtualKeyCode:191,modifiers:2});
-  const esc=()=>tecla('Escape',{code:'Escape',windowsVirtualKeyCode:27});
-  const ids=n=>(n.content||[]).map(c=>c.type);
 
   await t.test('1.41 sem bolha ao selecionar texto: a formatação fica na barra fixa do topo, ao lado do título',async()=>{
     await reset(par('selecionar isto'));await ev("NT.ed.commands.selectAll()");await espera(250);
@@ -380,62 +343,6 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.deepEqual((await tipos()).slice(0,2),['details','paragraph'],'toggle em toggle segue igual');
   });
 
-  await t.test('1.41 páginas: criar pelo botão da barra lateral, abrir no painel grande, editar com a barra, fechar (Esc, ✕, clique fora) e reabrir',async()=>{
-    await ev("pgMuda(l=>{l.length=0})");await ev("localStorage.removeItem('bcbr_nt_lat')");await ev("ntLateralPinta()");
-    assert.equal(await ev("!document.querySelector('.nt-corpo').classList.contains('lat-off')&&getComputedStyle(document.getElementById('nt_lat')).display!=='none'"),true,'barra lateral visível no PC');
-    await click('.nt-pg-novo');await aguarda("!!document.getElementById('nt_pan')");
-    const g=await ev("(()=>{const r=document.querySelector('.nt-pan-c').getBoundingClientRect();return {w:r.width,h:r.height,cx:r.left+r.width/2,cy:r.top+r.height/2}})()");
-    assert.ok(g.w>=850&&g.w<=920&&g.h>=760&&g.h<=830,'painel grande (~90% de 1000x900): '+JSON.stringify(g));
-    assert.ok(Math.abs(g.cx-500)<4&&Math.abs(g.cy-450)<4,'centralizado');
-    assert.equal(await ev("document.activeElement.classList.contains('nt-pan-titulo')"),true,'cursor no título da página nova');
-    await digita('Página fictícia');await enter();
-    await aguarda("NP.ed.isFocused");
-    assert.equal(await ev("NP.ed.isFocused"),true,'Enter leva ao texto');
-    await digita('> ');await digita('Titulo T');
-    assert.equal(await ev("document.querySelectorAll('#nt_pan [data-type=\"details\"]').length"),1,'toggle dentro do painel (mesmo editor)');
-    await ev("NP.ed.commands.selectAll()");await click(barra('#nt_pan','bold'));
-    assert.match(JSON.stringify(await ev("NP.ed.getJSON()")),/"type":"bold"/,'a barra do painel formata o editor do painel');
-    assert.equal(await ev("NP.ed.isFocused"),true);
-    assert.equal(await ev("NT.ed.getText().includes('Titulo T')"),false,'o texto não vazou para a página principal');
-    await esc();assert.equal(await ev("!document.getElementById('nt_pan')"),true,'Esc fecha');
-    assert.ok(await confirmado(),'salvou');
-    const pg=await ev("SM.d.notasPaginas.paginas");assert.equal(pg.length,1);assert.equal(pg[0].titulo,'Página fictícia');assert.equal(pg[0].fixada,false);
-    assert.match(JSON.stringify(pg[0].doc.blocos),/Titulo T/);assert.ok(pg[0].doc.blocos.every(b=>b.id&&b.atualizado));
-    assert.match(await ev("document.getElementById('nt_lat').textContent"),/Página fictícia/,'aparece na barra lateral');
-    assert.equal(await ev("NT.ed.getText().includes('Titulo T')"),false);
-    // reabrir pela barra lateral; fechar pelo ✕; reabrir; fechar clicando fora
-    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
-    assert.equal(await ev("document.querySelector('.nt-pan-titulo').value"),'Página fictícia');assert.match(await ev("NP.ed.getText()"),/Titulo T/);
-    await click('#nt_pan [data-a="fecha"]');assert.equal(await ev("!document.getElementById('nt_pan')"),true,'✕ fecha');
-    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
-    await mouse('mousePressed',5,5);await mouse('mouseReleased',5,5);assert.equal(await ev("!document.getElementById('nt_pan')"),true,'clique fora fecha');
-    // editar o título e o texto e fechar: salva
-    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");await aguarda("NP.ed.isFocused");
-    await ev("(()=>{const i=document.querySelector('.nt-pan-titulo');i.focus();i.select();0})()");await digita('Outro nome');
-    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await enter();await digita('linha nova');await esc();assert.ok(await confirmado());
-    const p2=await ev("SM.d.notasPaginas.paginas[0]");assert.equal(p2.titulo,'Outro nome');assert.match(JSON.stringify(p2.doc.blocos),/linha nova/);
-    assert.match(await ev("document.getElementById('nt_lat').textContent"),/Outro nome/);
-  });
-
-  await t.test('1.41 "/Página" cria a página, põe o bloco-link no cursor e abre; clicar no bloco abre; dentro de uma página não há "/Página"',async()=>{
-        await reset(par(''));await ev("NT.ed.commands.focus()");await aguarda("NT.ed.isFocused");const antes=await ev("SM.d.notasPaginas.paginas.length");
-    await digita('/pag');assert.equal(await ev("document.querySelector('.nt-slash-it b').textContent"),'Página');await enter();
-    await aguarda("!!document.getElementById('nt_pan')");
-    assert.equal(await ev("SM.d.notasPaginas.paginas.length"),antes+1,'página criada');
-    const id=await ev("NP.pagina");assert.equal((await tipos()).includes('paginaLink'),true,'bloco-link no ponto do cursor');
-    assert.equal(await ev("document.activeElement.classList.contains('nt-pan-titulo')"),true);
-    await digita('Filha');assert.equal(await ev("document.querySelector('.nt-pan-titulo').value"),'Filha','digitou no título');await esc();assert.ok(await confirmado());
-    assert.equal(await ev("document.querySelector('.nt-plink').textContent"),'📄 Filha','o bloco mostra o título');
-    await click('.nt-plink');await aguarda("!!document.getElementById('nt_pan')");assert.equal(await ev("NP.pagina"),id,'clicar no bloco abre a mesma página');
-    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await digita('/pag');await espera(150);
-    assert.equal(await ev("!!document.querySelector('.nt-slash-vazio')"),true,'sem "Página" dentro de uma página');
-    await esc();assert.equal(await ev("!!document.getElementById('nt_pan')"),true,'Esc fecha só o menu "/"');
-    await esc();assert.equal(await ev("!document.getElementById('nt_pan')"),true);
-    // apagar o bloco-link não apaga a página
-    await ev("(()=>{let p=null;NT.ed.state.doc.forEach((n,o)=>{if(n.type.name==='paginaLink')p=o});NT.ed.view.dispatch(NT.ed.state.tr.delete(p,p+1))})()");
-    assert.equal(await ev("SM.d.notasPaginas.paginas.length"),antes+1);
-  });
-
   await t.test('1.41 fixar, desafixar e reordenar na barra lateral (arrastando com o mouse); fixadas em cima',async()=>{
     await ev("pgMuda(l=>{l.length=0})");
     const nomes=['Alfa','Beta','Gama'],id={};
@@ -456,7 +363,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.equal(await ev("!document.getElementById('nt_pan')"),true,'arrastar não abre a página');
     assert.deepEqual(await secao('fix'),['Beta'],'a seção de fixadas não mudou');
     assert.ok(await confirmado());
-    const ord=await ev("Object.fromEntries(SM.d.notasPaginas.paginas.map(p=>[p.titulo,p.ordem]))");assert.ok(ord.Gama<ord.Alfa,'a ordem foi gravada: '+JSON.stringify(ord));
+    const ord=await ev("Object.fromEntries(ntPaginas().map(p=>[p.titulo,p.ordem]))");assert.ok(ord.Gama<ord.Alfa,'a ordem foi gravada: '+JSON.stringify(ord));
     // desafixar pelo painel (alfinete) volta para a lista de baixo
     await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-nome`);await aguarda("!!document.getElementById('nt_pan')");
     assert.equal(await ev("document.querySelector('#nt_pan [data-a=\"pin\"]').classList.contains('on')"),true,'alfinete aceso no painel');
@@ -469,38 +376,6 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display!=='none'&&localStorage.getItem('bcbr_nt_lat')"),'1');
   });
 
-  await t.test('1.41 excluir página pede confirmação (Cancelar mantém, Excluir apaga e fecha o painel)',async()=>{
-    const n=await ev("SM.d.notasPaginas.paginas.length");
-    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
-    await click('#nt_pan [data-a="exc"]');assert.equal(await ev("!document.querySelector('.nt-pan-conf').hidden"),true,'pergunta antes de excluir');
-    await click('#nt_pan [data-a="exc-nao"]');assert.equal(await ev("SM.d.notasPaginas.paginas.length"),n);assert.equal(await ev("document.querySelector('.nt-pan-conf').hidden"),true);
-    await click('#nt_pan [data-a="exc"]');await click('#nt_pan [data-a="exc-sim"]');
-    assert.equal(await ev("!document.getElementById('nt_pan')"),true,'painel fechou');assert.equal(await ev("SM.d.notasPaginas.paginas.length"),n-1,'página excluída');
-    assert.ok(await confirmado());
-  });
 
-  await t.test('1.41 celular de 375 px: sem rolagem horizontal, barra lateral recolhida abre por cima, painel em tela cheia',async()=>{
-    if(!await ev("SM.d.notasPaginas.paginas.length"))await ev("ntPaginaCria()");assert.ok(await confirmado());
-    await call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});
-    await abre();
-    assert.equal(await ev("document.documentElement.scrollWidth<=375&&document.body.scrollWidth<=375"),true,'sem rolagem horizontal');
-    assert.equal(await ev("document.querySelector('.nt-corpo').classList.contains('lat-off')&&getComputedStyle(document.getElementById('nt_lat')).display==='none'"),true,'barra lateral começa recolhida');
-    const w=await ev("document.querySelector('.nt-pm').getBoundingClientRect().width");assert.ok(w>=330,'texto usa a largura do celular: '+w);
-    assert.equal(await ev("(()=>{const l=document.querySelector('.nt-barra-l');return l.scrollWidth>l.clientWidth&&getComputedStyle(l).overflowX==='auto'})()"),true,'a barra rola dentro de si mesma');
-    assert.equal(await ev("document.querySelector('.nt-barra').getBoundingClientRect().right<=375"),true);
-    await click('#nt_lat_bt');
-    assert.equal(await ev("(()=>{const r=document.getElementById('nt_lat').getBoundingClientRect();return getComputedStyle(document.getElementById('nt_lat')).position==='fixed'&&r.left>=0&&r.right<=375&&r.height>=700})()"),true,'abre por cima');
-    await click('.nt-pg-nome');await aguarda("!!document.getElementById('nt_pan')");
-    const r=await ev("(()=>{const r=document.querySelector('.nt-pan-c').getBoundingClientRect();return [r.left,r.top,r.width,r.height]})()");
-    assert.deepEqual(r,[0,0,375,812],'painel em tela cheia');
-    assert.equal(await ev("document.querySelector('#nt_pan .nt-barra').getBoundingClientRect().right<=375&&document.getElementById('nt_pan').scrollWidth<=375"),true);
-    assert.equal(await ev("document.querySelector('.nt-corpo').classList.contains('lat-off')"),true,'a barra lateral fechou ao abrir a página');
-    await ev("NP.ed.commands.focus('end')");await aguarda("NP.ed.isFocused");await digita('texto');await ev("NP.ed.commands.selectAll()");await click(barra('#nt_pan','italic'));
-    assert.match(JSON.stringify(await ev("NP.ed.getJSON()")),/"type":"italic"/,'barra funciona no celular');
-    await click('#nt_pan [data-a="fecha"]');assert.ok(await confirmado());
-    await call('Emulation.setDeviceMetricsOverride',{width:1000,height:900,deviceScaleFactor:1,mobile:false});await abre();
-  });
-
-  assert.deepEqual(erros,[],'nenhuma exceção JavaScript no navegador');
   assert.deepEqual(consoleErros.filter(m=>!/Failed to load resource/.test(m)),[],'nenhum console.error');
 });

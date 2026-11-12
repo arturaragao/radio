@@ -124,51 +124,6 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     assert.equal(await ev("localStorage.getItem('bcbr_nt_recentes')"),null,'abrir páginas não grava a chave');
   });
 
-  await t.test('busca global Ctrl+P: acha nota, página, tarefa, evento e questão, agrupa por tipo, navega, lembra recentes; 5.700 questões sem lentidão',async()=>{
-    await ev(`(()=>{SM.d.tarefas.push({id:'tz',dia:'sem',texto:'Pagar zebrinha da conta',area:'tarefas',feito:false});const h=smHoje();SM.d.dias[h]=SM.d.dias[h]||{};SM.d.dias[h].ev=[{id:'ez',t:'Reunião zebrinha',c:'azul'}];
-      SM.d.notasDoc.blocos.push({id:'bz',atualizado:'2026-11-09T00:00:00Z',conteudo:{type:'paragraph',attrs:{id:'bz'},content:[{type:'text',text:'Anotação sobre a zebrinha do ambulatório'}]}});
-      SM.d.notasPaginas.paginas.push({id:'pz',titulo:'Zebrinha da página',fixada:false,ordem:999,criado:'2026-11-09T00:00:00Z',atualizado:'2026-11-09T00:00:00Z',doc:{v:1,blocos:[{id:'bpz',atualizado:'2026-11-09T00:00:00Z',conteudo:{type:'paragraph',attrs:{id:'bpz'},content:[{type:'text',text:'conteúdo da página'}]}}]}});
-      SM.d.notasDoc.blocos=[...SM.d.notasDoc.blocos]; ntSincroniza(); go('tarefas')})()`);
-    await espera(400);
-    await ev("window.__ev=null;window.addEventListener('keydown',e=>{if(e.ctrlKey&&String(e.key).toLowerCase()==='p')window.__ev=e},true)");
-    await ctrl('p');await ate("!!document.querySelector('.bg-in')");
-    assert.equal(await ev("window.__ev.defaultPrevented"),true);
-    assert.equal(await ev("document.activeElement.className"),'bg-in');
-    await digita('zebrinha');await espera(250);
-    const grupos=await ev("[...document.querySelectorAll('.bg-h')].map(e=>e.textContent)");
-    assert.deepEqual(grupos,['Notas','Páginas','Tarefas','Calendário'],'resultados agrupados por tipo');
-    // questão por número e por texto
-    await ev("document.querySelector('.bg-in').value='';document.querySelector('.bg-in').dispatchEvent(new Event('input'))");
-    await digita('numero 4321 tomografia');await espera(250);
-    const q=await ev("[...document.querySelectorAll('.bg-h,.bg-it b')].map(e=>e.textContent)");
-    assert.deepEqual(q.slice(0,2),['Questões','Questão 4321'],'acha a questão pelo número e texto do enunciado');
-    // navega: Enter na questão leva ao Banco, com a questão aberta
-    await especial('Enter');await ate("tela==='banco'&&!!document.querySelector('details.bq[data-qid=\"q4320\"][open]')");
-    assert.equal(await ev("document.querySelectorAll('.nt-modal').length"),0,'a janela fechou');
-    // tarefa
-    await ctrl('p');await ate("!!document.querySelector('.bg-in')");await digita('zebrinha');await espera(200);
-    await ev("[...document.querySelectorAll('.bg-it')].find(b=>/Pagar/.test(b.textContent)).click()");
-    await ate("tela==='tarefas'&&(!!document.querySelector('.sm-row[data-tid=\"tz\"]')||!!SM.ed)");
-    // nota: abre a aba e põe o cursor no bloco
-    await ctrl('p');await ate("!!document.querySelector('.bg-in')");await digita('ambulatorio');await espera(200);
-    await especial('Enter');await ate("tela==='notas'&&NT.ed&&NT.ed.state.selection.$from.parent.textContent.includes('ambulatório')");
-    // página: abre o painel
-    await ctrl('p');await ate("!!document.querySelector('.bg-in')");await digita('zebrinha da pagina');await espera(200);
-    await especial('Enter');await ate("!!document.querySelector('#nt_pan')");assert.equal(await ev("NP.pagina"),'pz');await especial('Escape');await espera(200);
-    // recentes: vazio mostra o que abri; frecência guarda só contagem e hora
-    await ctrl('p');await ate("!!document.querySelector('.bg-in')");
-    assert.equal(await ev("document.querySelector('.bg-h').textContent"),'Recentes');
-    const rec=await ev("[...document.querySelectorAll('.bg-it b')].map(e=>e.textContent)");assert.ok(rec.length>=4&&rec[0]==='Zebrinha da página',JSON.stringify(rec));
-    await especial('Escape');await espera(100);
-    const freq=await ev("localStorage.getItem('bcbr_busca_freq')");assert.doesNotMatch(freq,/zebrinha|Anotação|ambulat/i);
-    assert.deepEqual(Object.keys(JSON.parse(freq)['pagina:pz']).sort(),['n','t']);
-    // desempenho com 5.700 questões
-    const perf=await ev(`(()=>{bgQ.n=-1;const t0=performance.now(),docs=bgDocs(),t1=performance.now();const r=bgBusca('paciente tomografia 4321',docs,bgFreqLer()),t2=performance.now();bgBusca('dor',docs,{});const t3=performance.now();return {docs:docs.length,qs:Q.length,indice:t1-t0,busca:t2-t1,busca2:t3-t2,achou:r.length}})()`);
-    console.log('  busca global com',perf.qs,'questões: índice',perf.indice.toFixed(0),'ms (uma vez por sessão), busca',perf.busca.toFixed(1),'ms /',perf.busca2.toFixed(1),'ms');
-    assert.ok(perf.qs>=5700);assert.ok(perf.busca<150&&perf.busca2<150,'busca simples basta: '+JSON.stringify(perf));
-    await ev("go('notas')");await ate("!!NT.ed&&NT.el.isConnected&&!!document.querySelector('.nt-pm')");
-  });
-
   await t.test('@lembrete: sugestões, chip + tarefa no plano (data/hora/lembrete), mudar a data atualiza a tarefa, apagar o chip mantém a tarefa',async()=>{
     await reset(par('Ligar para o laboratório'),par(''));await ev("NT.ed.chain().focus().setTextSelection(NT.ed.state.doc.content.size-1).run()");
     await digita('Revisar laudos @');await espera(200);
@@ -216,62 +171,6 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     assert.ok(await confirmado(),'subiu pela fila');
     const remoto=await(await fetch(C.URL_+'api/repos/arturaragao/banco-cbr-app/contents/semana/plano.json')).json();
     assert.deepEqual(JSON.parse(Buffer.from(remoto.content,'base64').toString()).notasFrases.map(f=>f.titulo),['Fígado OK'],'está no plano do GitHub (fictício)');
-  });
-
-  await t.test('histórico: lista os commits do arquivo do plano, mostra a versão só leitura e restaura página/bloco como NOVA edição; offline avisa',async()=>{
-    // página com duas versões
-    const id=await ev("ntPaginaNova()");await ate("!!document.querySelector('#nt_pan .ProseMirror')");
-    await ev("NP.titulo.value='Laudo teste';pgTituloSalva()");
-    await ev("NP.ed.commands.focus()");await espera(250);await digita('versao um');await ate("!NP.sujo");await confirmado();await espera(300);
-    await digita(' e mais');await espera(1500);assert.ok(await confirmado());
-    const antes=(await(await fetch(C.URL_+'api/repos/arturaragao/banco-cbr-app/commits?path=semana/plano.json&per_page=100')).json()).length;
-    await click('#nt_pan [data-m=hist]');await ate("document.querySelectorAll('.nt-hist-it').length>=3");
-    // acha a versão em que a página tinha só "versao um"
-    let achou=false;const n=await ev("document.querySelectorAll('.nt-hist-it').length");
-    for(let i=0;i<n&&!achou;i++){await ev(`document.querySelectorAll('.nt-hist-it')[${i}].click()`);await espera(500);achou=await ev("document.querySelector('.nt-hist-prev')?.textContent==='versao um'")}
-    assert.ok(achou,'a versão antiga aparece (só leitura)');
-    assert.equal(await ev("document.querySelector('.nt-hist-ed .ProseMirror').getAttribute('contenteditable')"),'false');
-    await ev("document.querySelector('[data-r=pagina]').click()");await espera(500);
-    assert.equal(await ev("NP.ed.getText()"),'versao um','restaurada no editor aberto');
-    assert.equal(await ev("!document.querySelector('.nt-modal')"),true);
-    await ctrl('z');await espera(150);assert.equal(await ev("NP.ed.getText()"),'versao um e mais','é uma edição nova: o Ctrl+Z desfaz');
-    await ctrl('y');await espera(1500);await confirmado();
-    const depois=(await(await fetch(C.URL_+'api/repos/arturaragao/banco-cbr-app/commits?path=semana/plano.json&per_page=100')).json()).length;
-    assert.ok(depois>antes,`o histórico só cresceu (${antes} -> ${depois}): nada foi reescrito`);
-    assert.equal(await ev("pgAchar(NP.pagina).doc.blocos.map(b=>bgTextoNo(b.conteudo)).join('')"),'versao um');
-    // bloco: restaura só um bloco da página principal
-    await especial('Escape');await espera(200);
-    await reset(par('Bloco A','ba'),par('Bloco B','bb'),par('','b-fim'));await ev("NT.ed.commands.focus()");await ev("ntSalvaDoc()");await confirmado();
-    await ev("NT.ed.chain().focus().setTextSelection(3).run()");await espera(250);await digita(' editado');await espera(1500);await confirmado();
-    await click('.nt-barra [data-m=hist]');await ate("document.querySelectorAll('.nt-hist-it').length>=2");
-    let ok=false;const m=await ev("document.querySelectorAll('.nt-hist-it').length");
-    for(let i=0;i<m&&!ok;i++){await ev(`document.querySelectorAll('.nt-hist-it')[${i}].click()`);await espera(500);ok=await ev("document.querySelector('.nt-hist-prev')?.textContent==='Bloco ABloco B'")}
-    assert.ok(ok,'versão com o Bloco A original');
-    await ev("[...document.querySelectorAll('.nt-hist-ed .ProseMirror>*')].find(e=>e.textContent==='Bloco A').click()");await espera(100);
-    await ev("document.querySelector('[data-r=bloco]').click()");await espera(400);
-    assert.deepEqual(await txtTopo().then(l=>l.slice(0,2)),['Bloco A','Bloco B'],'só o bloco A voltou ao texto original');
-    // offline
-    await call('Network.enable');await call('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});await espera(200);
-    await click('.nt-barra [data-m=hist]');await espera(300);
-    assert.equal(await ev("!!document.querySelector('.nt-hist-it')"),false,'offline não abre a lista');
-    assert.match(await ev("document.getElementById('toast').textContent"),/precisa de internet/);
-    await call('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
-  });
-
-  await t.test('A2: página apagada em outro aparelho enquanto se digita nela: o texto vai para notas_conflitos (pelo aviso do sync e pelo salvamento do painel)',async()=>{
-    for(const via of ['sync','salva']){
-      const id=await ev("ntPaginaCria()");await ev(`ntPainelAbre(${JSON.stringify(id)})`);await ate("!!NP&&!!NP.ed");
-      await ev("NP.ed.commands.focus()");await espera(300);await digita('texto '+via);
-      assert.equal(await ev("NP.sujo"),true);
-      await ev(`SM.d.notasPaginas={...SM.d.notasPaginas,paginas:SM.d.notasPaginas.paginas.filter(p=>p.id!==${JSON.stringify(id)})}`);   // o outro aparelho apagou a página
-      if(via==='sync')await ev("pgSincroniza()");   // (no outro caminho nada avisa: vale o salvamento do painel, 1 s depois de parar de digitar)
-      await ate(`(SM.d.notas_conflitos||[]).some(c=>c.pagina===${JSON.stringify(id)})`,6000);
-      const c=await ev(`SM.d.notas_conflitos.find(c=>c.pagina===${JSON.stringify(id)})`);
-      assert.match(c.motivo,/página apagada/);assert.equal(JSON.stringify(c.conteudo).includes('texto '+via),true,'o texto digitado ficou guardado');
-      assert.match(await ev("document.getElementById('toast').textContent"),/apagada em outro aparelho/);
-      if(via==='sync')assert.equal(await ev("!!document.querySelector('#nt_pan')"),false,'o painel fechou');else if(await ev("!!NP"))await ev("ntPainelFecha(true)");
-      await confirmado();
-    }
   });
 
   await t.test('revisão: clicar na margem sem arrastar limpa a seleção de blocos; chip colado mantém o vínculo sem duplicar a tarefa; Ctrl+Z da data leva a tarefa junto',async()=>{

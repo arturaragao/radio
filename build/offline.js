@@ -21,7 +21,7 @@ function ofPinta(){
 }
 // Nomes das imagens das notas e páginas (./img/nota-….jpg) para entrarem no "baixar tudo".
 function ofImagensNotas(){
-  const s=JSON.stringify([SM.d?.notasDoc,SM.d?.notasPaginas]||''),out=new Set();
+  const s=JSON.stringify(SyncNotas.estado().abertas),out=new Set();
   for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))out.add(m[1]);
   return [...out];
 }

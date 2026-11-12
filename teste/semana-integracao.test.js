@@ -16,7 +16,8 @@ async function app(tarefas=[],nativo=false,armazenamento=null,offline=false,remo
   const el=tag=>({tagName:tag.toUpperCase(),children:[],querySelector(){return null},querySelectorAll(){return []},setAttribute(k,v){this[k]=v},append(...xs){this.children.push(...xs)},remove(){elementos.delete(this.id)}});
   const document={visibilityState:'visible',addEventListener(){},querySelector(){return null},querySelectorAll(){return []},getElementById:id=>elementos.get(id)||null,createElement:el,body:{appendChild(x){elementos.set(x.id,x)},classList:{remove(){},add(){}}}};
   const B={tarefas:json=>recebidos.push(JSON.parse(json)),pendentes:()=>JSON.stringify(estado.pendentes),confirmar:json=>confirmados.push(JSON.parse(json)),dados(){}};
-  const c=vm.createContext({console,document,window:{addEventListener(tipo,fn){if(tipo==='keydown')teclas.push(fn)},...(nativo?{BCBRNativo:B}:{})},navigator:opcoes.navigator||{},
+  const SyncNotas={estado:()=>({paginas:[],abertas:{},pendentes:0}),receberLegado:async()=>{},enviar:async()=>true,listarPaginas:async()=>[],integrarPlano:async(d,sha)=>({d,sha})};
+  const c=vm.createContext({SyncNotas,console,document,window:{addEventListener(tipo,fn){if(tipo==='keydown')teclas.push(fn)},...(nativo?{BCBRNativo:B}:{})},navigator:opcoes.navigator||{},
     localStorage:{get length(){return mem.size},key:i=>[...mem.keys()][i],getItem:k=>mem.get(k)??null,setItem:(k,v)=>{auditaLegado('setItem',k);return mem.set(k,v)},removeItem:k=>{auditaLegado('removeItem',k);return mem.delete(k)}},confirm:()=>true,
     setTimeout:(fn,ms)=>{tempos.push({fn,ms});return tempos.length},clearTimeout(){},setInterval(){},clearInterval(){},
     atob:s=>Buffer.from(s,'base64').toString('binary'),btoa:s=>Buffer.from(s,'binary').toString('base64'),
@@ -243,6 +244,7 @@ test('atalhos ricos só formatam com comando e usam a cor do tipo; colagem é te
   a.c.smRichTecla({key:'b',ctrlKey:false},el);assert.equal(comandos.length,3);
   assert.notEqual(vm.runInContext("smCorTexto('ferramenta')",a.c),vm.runInContext("smCorTexto('estudo')",a.c));a.c.smRichCola({preventDefault(){},clipboardData:{getData:()=>'<script>texto literal</script>'}});assert.deepEqual(comandos.at(-1),['insertText',false,'<script>texto literal</script>']);
 });
+
 test('calendário usa grade ampliada; Tarefas mantém Hoje, atrasadas e ordenação',async()=>{
   const a=await app([{id:'baixa',dia:'2026-10-26',texto:'Baixa',prioridade:'baixa'},{id:'u',dia:'2026-10-26',texto:'Urgente',urg:true},{id:'velha',dia:'2020-01-01',texto:'Vencida'}]);
   vm.runInContext("SM.d.dias['2026-10-26']={ev:[{id:'e',t:'Evento',c:'azul'}]}",a.c);
@@ -254,6 +256,7 @@ test('calendário usa grade ampliada; Tarefas mantém Hoje, atrasadas e ordenaç
   assert.ok(!html.includes('Temas fracos'));assert.ok(!html.includes('💡'));assert.equal(a.lista()[2].dia,'2020-01-01');
   a.c.smRola();await a.fila();assert.equal(a.lista()[2].dia,'2026-10-26');
 });
+
 test('concluir e desfazer em 5 s remove próxima ocorrência intacta e notifica Android',async()=>{
   const a=await app([{id:'r',dia:'2026-10-26',texto:'Ler',feito:false,repetir:{tipo:'diaria'}}],true);
   await a.c.smCheck('r',true);assert.equal(a.lista().length,2);assert.equal(a.lista()[0].feito,true);
@@ -261,6 +264,7 @@ test('concluir e desfazer em 5 s remove próxima ocorrência intacta e notifica 
   barra.children[1].onclick();await a.fila();assert.equal(a.lista().length,1);assert.equal(a.lista()[0].feito,false);
   assert.equal(a.recebidos.at(-1)[0].feita,false);
 });
+
 test('conflito remoto reaplica conclusão e repetição uma vez e mantém tarefa do outro aparelho',async()=>{
   const a=await app([{id:'r',dia:'2026-10-26',texto:'Ler',feito:false,repetir:{tipo:'diaria'}}]);
   a.estado.conflito=true;await a.c.smCheck('r',true);
@@ -295,12 +299,14 @@ test('widget só confirma conclusão gravada, inclusive cache feito e conflitos 
   assert.deepEqual(a.confirmados.at(-1),['widget-retry']);
   assert.ok(JSON.parse(a.mem.get('bcbr_nat_importados')).includes('widget-retry'));
 });
+
 test('widget conclui, repete, confirma após gravação e ignora reenvio',async()=>{
   const a=await app([{id:'r',dia:'2026-10-26',texto:'Ler',feito:false,repetir:{tipo:'diaria'}}],true);
   a.estado.pendentes=[{id:'widget1',tipo:'concluir',tarefa:'r'}];a.c.smNativoImporta();await a.fila();await new Promise(r=>setImmediate(r));
   assert.equal(a.lista().length,2);assert.equal(a.lista()[0].feito,true);assert.deepEqual(a.confirmados.at(-1),['widget1']);
   a.c.smNativoImporta();await a.fila();await new Promise(r=>setImmediate(r));assert.equal(a.lista().length,2);
 });
+
 test('pendência sem tarefa conhecida não é confirmada e falha de gravação pode ser repetida',async()=>{
   const a=await app([{id:'r',dia:'2026-10-26',texto:'Ler',feito:false,repetir:{tipo:'diaria'}}],true);
   a.estado.pendentes=[{id:'p',tipo:'concluir',tarefa:'r'},{id:'inexistente',tipo:'concluir',tarefa:'x'}];a.estado.falhar=true;
@@ -308,6 +314,7 @@ test('pendência sem tarefa conhecida não é confirmada e falha de gravação p
   a.estado.falhar=false;a.c.smNativoImporta();await a.fila();await new Promise(r=>setImmediate(r));
   assert.equal(a.lista().length,2);assert.deepEqual(a.confirmados.at(-1),['p']);
 });
+
 test('tipos antigos de pendência continuam entrando e retry não duplica nova tarefa',async()=>{
   const a=await app([],true);a.estado.pendentes=[{id:'voz1',texto:'Ler amanhã 9h !! #pacs',voz:true},{id:'ideia1',tipo:'ideia',texto:'Uma ideia'}];a.estado.falhar=true;
   a.c.smNativoImporta();await a.fila();await new Promise(r=>setImmediate(r));assert.equal(a.confirmados.length,0);
@@ -315,11 +322,13 @@ test('tipos antigos de pendência continuam entrando e retry não duplica nova t
   assert.equal(a.lista().length,1);assert.equal(a.lista()[0].hora,'09:00');assert.equal(a.lista()[0].prioridade,'alta');assert.equal(a.lista()[0].texto,'Ler');
   assert.deepEqual(a.confirmados.at(-1),['voz1','ideia1']);assert.equal(vm.runInContext('smIdeiaNova',a.c),true);
 });
+
 test('mover tarefa preserva campos e atualiza lembrete enviado ao Android',async()=>{
   const a=await app([{id:'r',dia:'2026-10-26',texto:'Consulta',hora:'09:00',lembrete:60,subtarefas:[{id:'s',texto:'Documentos'}]}],true);
   a.c.smMover('r','2026-10-28');await a.fila();assert.equal(a.lista()[0].dia,'2026-10-28');assert.equal(a.lista()[0].subtarefas.length,1);
   assert.equal(a.recebidos.at(-1)[0].lembrete,'2026-10-28T08:00');
 });
+
 test('Nova tarefa salva texto natural com os mesmos dia, hora e prioridade da prévia',async()=>{
   const a=await app([],true);
   vm.runInContext("Object.assign(QA,{texto:'comprar ração sexta 9h30 !alta #pacs',quando:'2026-10-30',prioridade:'baixa',hora:'10:00',lembrete:'15',det:'Marca habitual'})",a.c);
@@ -329,6 +338,7 @@ test('Nova tarefa salva texto natural com os mesmos dia, hora e prioridade da pr
   const t=a.lista()[0];assert.equal(t.texto,'comprar ração sexta 9h30 !alta #pacs');assert.equal(t.dia,'2026-10-30');assert.equal(t.hora,'09:30');assert.equal(t.prioridade,'alta');assert.equal(t.det,'Marca habitual');assert.deepEqual(t.etiquetas,['pacs']);
   assert.equal(a.recebidos.at(-1)[0].lembrete,'2026-10-30T09:15');
 });
+
 test('campos de Nova tarefa persistem no rascunho e entram na gravação pendente',async()=>{
   const a=await app();
   vm.runInContext("Object.assign(QA,{texto:'Revisar',on:true,quando:'2026-10-27',prioridade:'media',hora:'08:30',lembrete:'60',repetir:{tipo:'semanal',dias:[2,4]}})",a.c);
@@ -339,6 +349,7 @@ test('campos de Nova tarefa persistem no rascunho e entram na gravação pendent
   assert.match(a.c.qaPrevTxt(),/27\/10 · 08:30 · média · toda semana/);
   a.c.smRascPend();await a.fila();const t=a.lista()[0];assert.equal(t.dia,'2026-10-27');assert.equal(t.prioridade,'media');assert.equal(t.lembrete,60);assert.deepEqual(t.repetir.dias,[2,4]);
 });
+
 test('agenda mantém eventos e avisos; plantões viram apenas etiquetas sem horário',async()=>{
   const a=await app();
   const tipos=['br','norte','hsi','br-manha','almoco','estagio','cobre-pos'];
@@ -602,28 +613,6 @@ test('Tarefas: grupos identificam destino e planejamento vem depois das tarefas'
   assert.match(html,/data-drop="2026-10-27" data-area="ferramenta" data-sub=""/);
 });
 
-test('Notas 1.39: migração das notas 1.38 vira toggles de topo (ordem, listas, toggles aninhados, imagem), guarda cópia e é idempotente',async()=>{
-  const a=await app();
-  vm.runInContext(`SM.d.notas=${JSON.stringify(NOTAS_138)};delete SM.d.notasDoc;delete SM.d.notas_v138`,a.c);
-  assert.equal(a.c.ntMigra(vm.runInContext('SM.d',a.c)),true);
-  const d=copia(vm.runInContext('SM.d',a.c)),bl=d.notasDoc.blocos;
-  assert.deepEqual(bl.map(b=>b.id),['bxa3','bxa4','bxa2','bxa1','b-fim'],'fixada primeiro; depois a ordem do app (ordem manual; sem ordem = pela data de criação, no topo)');
-  assert.deepEqual(d.notas_v138.map(n=>n.id),['xa1','xa2','xa3','xa4'],'cópia do formato antigo');
-  assert.deepEqual(d.notas.map(n=>n.id),['xa4'],'"tema fraco" da Semana continua em notas');
-  const n1=bl.find(b=>b.id==='bxa1');assert.equal(n1.atualizado,'2026-11-02T10:00:00.000Z');assert.equal(n1.conteudo.attrs.id,'bxa1');
-  assert.equal(n1.conteudo.type,'details');assert.equal(txt(n1.conteudo.content[0]),'Laudos');
-  const f=n1.conteudo.content[1].content;
-  assert.deepEqual(f.map(x=>x.type),['bulletList','details','paragraph','image','paragraph']);
-  assert.deepEqual(f[0].content.map(i=>txt(i.content[0])),['primeira ideia','segunda ideia'],'"- " e "•" viram a mesma lista');
-  assert.equal(f[0].content[1].content[1].type,'bulletList','sub-lista pelo recuo');
-  assert.equal(txt(f[1].content[0]),'Meu toggle');assert.equal(f[1].content[1].content[0].content[0].text,'segredo');
-  assert.equal(f[1].content[1].content[1].type,'details','toggle dentro do toggle');assert.equal(txt(f[1].content[1].content[1].content[1].content[0]),'mais fundo');
-  assert.equal(txt(f[2]),'linha solta');assert.equal(f[3].attrs.src,'./img/nota-xabc.jpg');assert.equal(txt(f[4]),'-5 graus não é lista');
-  const n3=bl.find(b=>b.id==='bxa3');assert.equal(n3.conteudo.content[0].content,undefined,'nota sem título: título vazio, texto preservado');assert.equal(txt(n3.conteudo.content[1].content[0]),'sem título');
-  assert.deepEqual(bl.find(b=>b.id==='bxa2').conteudo.content[1].content,[{type:'paragraph'}],'nota sem texto: um parágrafo vazio');
-  assert.equal(a.c.ntMigra(vm.runInContext('SM.d',a.c)),false,'idempotente');
-});
-
 test('Notas 1.39: ntBlocos/ntDocumento — id estável, data de alteração só no bloco mudado, ida e volta sem perda',async()=>{
   const a=await app(),p=(id,t,extra={})=>({type:'paragraph',attrs:{id,...extra},content:[{type:'text',text:t}]});
   const doc1={type:'doc',content:[p('x','a'),p('y','b'),p('z','c')]};
@@ -641,115 +630,14 @@ test('Notas 1.39: ntBlocos/ntDocumento — id estável, data de alteração só 
   assert.deepEqual(copia(a.c.ntDocumento([])),{type:'doc',content:[{type:'paragraph'}]},'sempre há onde digitar');
 });
 
-test('Notas 1.39: salva pela fila do plano, sobrevive offline/reload, concilia 409 e edição durante o envio fica pendente',async()=>{
-  const doc=t=>`NT.ed={getJSON:()=>({type:'doc',content:[{type:'details',attrs:{id:'b1'},content:[{type:'detailsSummary',content:[{type:'text',text:'${t}'}]},{type:'detailsContent',content:[{type:'paragraph'}]}]}]})}`;
-  const a=await app([],false,null,true);vm.runInContext(doc('Offline'),a.c);
-  a.c.ntSalvaDoc();assert.equal(vm.runInContext('ntPendentes().length',a.c),1);
-  assert.equal(await a.c.ntSync(),false,'sem conexão: continua pendente');assert.equal(vm.runInContext('ntTemPendentes()',a.c),true);
-  // reload offline: o documento pendente volta para a tela
-  const b=await app([],false,a.mem,true);assert.equal(vm.runInContext('SM.d.notasDoc.blocos[0].id',b.c),'b1');
-  assert.equal(vm.runInContext('ntTemPendentes()',b.c),true);
-  // volta a conexão com conflito 409 (outro aparelho mexeu em tarefas): nada se perde
-  b.estado.falhar=false;b.estado.conflito=true;await b.c.smPuxar();
-  assert.equal(vm.runInContext('ntTemPendentes()',b.c),false,'confirmado');
-  const salvo=b.salvos.at(-1);assert.equal(salvo.notasDoc.blocos[0].id,'b1');assert.ok(salvo.tarefas.some(t=>t.id==='outro'),'tarefa do outro aparelho preservada');
-  // edição durante o PUT continua pendente e sobe depois
-  const c=await app();vm.runInContext(doc('Primeira'),c.c);c.c.ntSalvaDoc();
-  const api=c.c.BCBR.api;let liberar;c.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT')await new Promise(r=>{liberar=r});return api(p,o)};
-  const envio=c.c.ntSync();await new Promise(r=>setImmediate(r));assert.equal(typeof liberar,'function');
-  vm.runInContext(doc('Durante o envio'),c.c);c.c.ntSalvaDoc();liberar();assert.equal(await envio,true);
-  assert.equal(c.salvos.at(-1).notasDoc.blocos[0].conteudo.content[0].content[0].text,'Primeira');
-  assert.equal(vm.runInContext('ntPendentes().length',c.c),1,'versão nova segue pendente');
-  c.c.BCBR.api=api;assert.equal(await c.c.ntSync(),true);
-  assert.equal(c.salvos.at(-1).notasDoc.blocos[0].conteudo.content[0].content[0].text,'Durante o envio');
-  assert.equal(vm.runInContext('ntPendentes().length',c.c),0);
-});
-
 test('Notas 1.39: toggle aberto/fechado fica por aparelho (localStorage), fora do documento',async()=>{
   const a=await app();
   assert.equal(a.c.ntAberto('b1'),false);a.c.ntAbertoSalva('b1',true);a.c.ntAbertoSalva('b2',true);assert.equal(a.c.ntAberto('b1'),true);
   const b=await app([],false,a.mem);assert.equal(b.c.ntAberto('b1'),true,'lembrado depois de recarregar');
   b.c.ntAbertoSalva('b1',false);assert.equal(b.c.ntAberto('b1'),false);assert.equal(b.c.ntAberto('b2'),true);
   assert.doesNotMatch(JSON.stringify(vm.runInContext('SM.d',b.c)),/b1|is-open|"open"/,'o plano não guarda o estado');
-});// ===== Notas 1.39: página única (Tiptap). A edição em si é testada no Chrome (notas-browser.test.js); aqui, a parte pura e a fila de salvamento =====
-// Formato idêntico ao plano.json real (v1.38): título + texto com "- ", "•", "> " (recuo = dentro), [img:…]; texto fictício.
-const NOTAS_138=[
-  {id:'xa1',titulo:'Laudos',texto:'- primeira ideia\n• segunda ideia\n  • sub-ideia\n\n> Meu toggle\n  segredo\n  > Interno\n    mais fundo\nlinha solta\n[img:nota-xabc.jpg]\n-5 graus não é lista',em:'2026-10-01T10:00:00.000Z',atualizado:'2026-11-02T10:00:00.000Z',ordem:30},
-  {id:'xa2',titulo:'Vazia',texto:'',em:'2026-10-02T10:00:00.000Z',atualizado:'2026-10-02T10:00:00.000Z',ordem:10,fixa:false},
-  {id:'xa3',titulo:'',texto:'sem título',em:'2026-10-03T10:00:00.000Z',atualizado:'2026-10-03T10:00:00.000Z',ordem:20,fixa:true},
-  {id:'xa4',texto:'tema fraco da Semana',em:'2026-10-04T10:00:00.000Z',fraco:true}];
-const txt=n=>n.content.map(c=>c.text).join('');
+});
 
-// ===== 1.40: sincronização rápida (fusão por bloco, ETag/304, cota, uma gravação por rajada) =====
-const bp=(id,t,atualizado)=>({id,atualizado,conteudo:{type:'paragraph',attrs:{id},content:[{type:'text',text:t}]}});
-const lista=r=>r.blocos.map(b=>b.id+':'+b.conteudo.content[0].text);
-test('Notas 1.40: ntFunde — blocos diferentes nos dois lados ficam os dois, sem conflito',async()=>{
-  const a=await app(),T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z';
-  const base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)];
-  const r=copia(a.c.ntFunde(base,[bp('x','x local',T2),base[1],base[2]],[base[0],bp('y','y remoto',T2),base[2]]));
-  assert.deepEqual(lista(r),['x:x local','y:y remoto','z:z']);assert.deepEqual(r.conflitos,[]);
-  // bloco novo de cada lado entra, sem apagar nada; sem base nada é apagado
-  const n=copia(a.c.ntFunde(base,[...base,bp('l','novo local',T2)],[base[0],bp('r','novo remoto',T2),...base.slice(1)]));
-  assert.deepEqual(lista(n),['x:x','r:novo remoto','y:y','z:z','l:novo local']);
-  assert.deepEqual(lista(copia(a.c.ntFunde(null,[bp('a','só local',T1)],[bp('b','só remoto',T1)]))),['a:só local','b:só remoto']);
-});
-test('Notas 1.40: ntFunde — mesmo bloco editado nos dois lados: vence o atualizado maior e o outro vai para os conflitos',async()=>{
-  const a=await app(),base=[bp('x','x','2026-11-01T00:00:00Z')];
-  let r=copia(a.c.ntFunde(base,[bp('x','local','2026-11-03T00:00:00Z')],[bp('x','remoto','2026-11-02T00:00:00Z')],'2026-11-04T00:00:00Z'));
-  assert.deepEqual(lista(r),['x:local']);assert.equal(r.conflitos.length,1);assert.equal(r.conflitos[0].conteudo.content[0].text,'remoto');assert.equal(r.conflitos[0].em,'2026-11-04T00:00:00Z');
-  r=copia(a.c.ntFunde(base,[bp('x','local','2026-11-02T00:00:00Z')],[bp('x','remoto','2026-11-03T00:00:00Z')]));
-  assert.deepEqual(lista(r),['x:remoto']);assert.equal(r.conflitos[0].conteudo.content[0].text,'local');
-  // o mesmo texto dos dois lados não é conflito
-  assert.deepEqual(copia(a.c.ntFunde(base,[bp('x','igual','2026-11-02T00:00:00Z')],[bp('x','igual','2026-11-03T00:00:00Z')])).conflitos,[]);
-  // 1.44 parcial: nenhum conflito removido sem descarte explícito; sem repetir
-  const muitos=Array.from({length:25},(_,i)=>({id:'c',em:'e'+i}));
-  assert.deepEqual(copia(a.c.ntJuntaConflitos(muitos,[muitos[24]])),muitos);
-  const c=r.conflitos[0];assert.equal(copia(a.c.ntJuntaConflitos([c],[{...c,em:'outra tentativa'}])).length,1,'repetir a fusão não duplica a mesma versão');
-});
-test('Notas 1.40: ntFunde — apagado de um lado e intacto do outro apaga; apagado de um e editado do outro fica o editado',async()=>{
-  const a=await app(),T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)];
-  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],base[2]],base))),['x:x','z:z'],'apagado aqui, intacto lá');
-  assert.deepEqual(lista(copia(a.c.ntFunde(base,base,[base[0],base[1]]))),['x:x','y:y'],'apagado lá, intacto aqui');
-  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],base[2]],[base[0],bp('y','y editado',T2),base[2]]))),['x:x','y:y editado','z:z'],'apagado aqui, editado lá');
-  assert.deepEqual(lista(copia(a.c.ntFunde(base,[base[0],bp('y','y editado',T2),base[2]],[base[0],base[2]]))),['x:x','y:y editado','z:z'],'editado aqui, apagado lá');
-});
-test('Notas 1.40: ntFunde — ordem é a do lado que reordenou (a remota, se ambos)',async()=>{
-  const a=await app(),T1='2026-11-01T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1),bp('z','z',T1)],ids=r=>r.blocos.map(b=>b.id).join('');
-  const zxy=[base[2],base[0],base[1]],yzx=[base[1],base[2],base[0]];
-  assert.equal(ids(copia(a.c.ntFunde(base,zxy,base))),'zxy','só o local reordenou');
-  assert.equal(ids(copia(a.c.ntFunde(base,base,yzx))),'yzx','só o remoto reordenou');
-  assert.equal(ids(copia(a.c.ntFunde(base,zxy,yzx))),'yzx','os dois: vale o remoto');
-  assert.equal(ids(copia(a.c.ntFunde(base,[base[2],base[0],bp('n','n',T1),base[1]],base))),'zxny','reordenou e inseriu aqui: o novo fica depois do vizinho');
-});
-test('Notas 1.40: 409 (sha velho) — puxa, funde por bloco e regrava sem perder o que o outro aparelho mudou',async()=>{
-  const T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1)];
-  const a=await app();
-  vm.runInContext(`SM.d.notasDoc={v:1,blocos:${JSON.stringify(base)}};NT.ed={getJSON:()=>({type:'doc',content:[${JSON.stringify(bp('x','x daqui',T2).conteudo)},${JSON.stringify(base[1].conteudo)}]})}`,a.c);
-  a.c.ntBaseSalva(copia(base));a.estado.remoto.notasDoc={v:1,blocos:copia(base)};
-  const api=a.c.BCBR.api;let falhou=false;
-  a.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT'&&!falhou){falhou=true;a.estado.remoto.notasDoc={v:1,blocos:[base[0],bp('y','y de lá','2026-11-03T00:00:00Z')]};throw Object.assign(new Error('sha'),{status:409})}return api(p,o)};
-  a.c.ntSalvaDoc();assert.equal(await a.c.ntSync(),true);
-  assert.deepEqual(lista(a.salvos.at(-1).notasDoc),['x:x daqui','y:y de lá'],'as duas edições ficaram');
-  assert.equal(a.salvos.at(-1).notas_conflitos,undefined,'sem conflito: blocos diferentes');
-  assert.equal(vm.runInContext('ntTemPendentes()',a.c),false);
-  assert.deepEqual(lista({blocos:copia(a.c.ntBaseLer())}),['x:x daqui','y:y de lá'],'base = o que subiu');
-});
-test('Notas 1.40: puxar com texto ainda não salvo funde por bloco (conflito é guardado) e GET condicional 304 não muda nada',async()=>{
-  const T1='2026-10-01T00:00:00Z',base=[bp('x','x',T1),bp('y','y',T1)];
-  const a=await app();
-  vm.runInContext(`SM.d.notasDoc={v:1,blocos:${JSON.stringify(base)}};NT.ed={getJSON:()=>({type:'doc',content:[${JSON.stringify(bp('x','x daqui',T1).conteudo)},${JSON.stringify(base[1].conteudo)}]})};NT.sujo=true;SM.sha='antigo'`,a.c);
-  a.c.ntBaseSalva(copia(base));
-  a.estado.remoto.notasDoc={v:1,blocos:[bp('x','x de lá','2026-10-20T00:00:00Z'),bp('y','y de lá','2026-10-20T00:00:00Z')]};   // o GitHub tem outra versão
-  await a.c.smPuxar();await vm.runInContext('SM.fila',a.c);
-  assert.deepEqual(lista(a.salvos.at(-1).notasDoc),['x:x daqui','y:y de lá'],'o digitado (mais novo) vence em x; y vem de lá');
-  assert.equal(a.salvos.at(-1).notas_conflitos.length,1);assert.equal(a.salvos.at(-1).notas_conflitos[0].conteudo.content[0].text,'x de lá');
-  // 304: nada muda e nada é regravado
-  const antes=vm.runInContext('SM.d',a.c),n=a.salvos.length,opts=[];
-  a.c.BCBR.api=async(p,o)=>{opts.push(o);return {naoMudou:true}};
-  vm.runInContext("SM.etag='\"e1\"'",a.c);await a.c.smPuxar();
-  assert.equal(vm.runInContext('SM.d',a.c),antes,'mesmo objeto: 304 não re-aplica');assert.equal(a.salvos.length,n);
-  assert.equal(opts.find(o=>o&&o.etag).etag,'"e1"','mandou o ETag da última leitura');
-});
 test('Notas 1.40: ciclo de busca — 10 s, cota baixa volta a 90 s; rajada de mudanças vira um único commit',async()=>{
   const a=await app();
   assert.equal(a.c.smIntervalo(),10000);
@@ -761,108 +649,6 @@ test('Notas 1.40: ciclo de busca — 10 s, cota baixa volta a 90 s; rajada de mu
   assert.deepEqual(await Promise.all(ps),[true,true,true]);
   assert.equal(a.salvos.length-antes,1,'um commit para as três mudanças');
   assert.deepEqual(['n1','n2','n3'].filter(id=>a.salvos.at(-1).tarefas.some(t=>t.id===id)),['n1','n2','n3']);
-});
-test('Notas 1.40: ntFunde ignora elemento nulo/não-objeto do plano remoto; busca velha chegando depois de uma gravação é descartada; o azul fixo saiu (Sépia também no claro)',async()=>{
-  const a=await app(),T='2026-11-01T00:00:00Z';
-  assert.deepEqual(lista(copia(a.c.ntFunde([bp('x','x',T)],[bp('x','x',T)],[null,7,'s',{conteudo:1},bp('x','x',T)]))),['x:x']);
-  assert.deepEqual(lista(copia(a.c.ntFunde(null,[bp('x','x',T)],'quebrado'))),['x:x']);
-  // GET lento: uma gravação acontece enquanto ele viaja; a resposta (velha) não troca SM.d/SM.sha
-  vm.runInContext("SM.sha='antigo'",a.c);a.estado.remoto.tarefas.push({id:'velha',dia:'sem',texto:'v'});
-  const api=a.c.BCBR.api;let solta;a.c.BCBR.api=async(p,o)=>{const r=await api(p,o);if(!o?.method&&p.endsWith('plano.json'))await new Promise(f=>{solta=f});return r};
-  const busca=a.c.smPuxar();await new Promise(r=>setImmediate(r));
-  vm.runInContext("SM.gravs=(SM.gravs||0)+1",a.c);solta();await busca;
-  assert.equal(vm.runInContext('SM.sha',a.c),'antigo');assert.equal(vm.runInContext("SM.d.tarefas.some(t=>t.id==='velha')",a.c),false);
-  const css=fs.readFileSync(require.resolve('../build/semana.css'),'utf8');
-  assert.match(css,/\.qa-p\.on\{opacity:1;border-color:var\(--pri\);color:var\(--pri\)/);assert.match(css,/\.qa-fab\{[^}]*background:var\(--pri\);color:var\(--on-pri\)/);assert.doesNotMatch(css,/#38bdf8/,'1.42: sem o azul fixo, vale o Sépia também no claro');
-  assert.match(css,/:root\[data-theme="dark"\] \.qa-fab\{background:var\(--pri\)/);
-});
-
-// ===== 1.41: páginas dentro das Notas (fusão por campo + por bloco, fila e 409) =====
-const pgx=(id,titulo,o={})=>({id,titulo,fixada:false,ordem:10,criado:'2026-11-01T00:00:00Z',atualizado:'2026-11-01T00:00:00Z',doc:{v:1,blocos:[bp('b'+id,'texto '+id,'2026-11-01T00:00:00Z')]},...o});
-const titulos=r=>r.paginas.map(p=>p.id+':'+p.titulo+(p.fixada?'*':'')+'@'+p.ordem);
-test('Notas 1.41: ntFundePaginas — campos diferentes (título num lado, fixar/ordem no outro) ficam os dois; o mesmo campo vale o mais recente',async()=>{
-  const a=await app(),T2='2026-11-02T00:00:00Z',T3='2026-11-03T00:00:00Z',base=[pgx('p1','Um'),pgx('p2','Dois',{ordem:20})];
-  let r=copia(a.c.ntFundePaginas(base,[pgx('p1','Um novo',{atualizado:T2}),base[1]],[base[0],pgx('p2','Dois',{ordem:20,fixada:true,atualizado:T3})]));
-  assert.deepEqual(titulos(r),['p1:Um novo@10','p2:Dois*@20'],'título aqui, fixada lá');
-  r=copia(a.c.ntFundePaginas(base,[pgx('p1','Local',{atualizado:T3}),base[1]],[pgx('p1','Remoto',{atualizado:T2}),base[1]]));
-  assert.equal(r.paginas[0].titulo,'Local','mesmo campo: o mais recente (local)');
-  r=copia(a.c.ntFundePaginas(base,[pgx('p1','Local',{atualizado:T2}),base[1]],[pgx('p1','Remoto',{atualizado:T3}),base[1]]));
-  assert.equal(r.paginas[0].titulo,'Remoto','mesmo campo: o mais recente (remoto)');
-  r=copia(a.c.ntFundePaginas(base,[pgx('p1','Um',{ordem:30,atualizado:T2}),base[1]],[base[0],pgx('p2','Dois',{ordem:5,atualizado:T3})]));
-  assert.deepEqual(titulos(r),['p1:Um@30','p2:Dois@5'],'ordem de uma página não atropela a ordem da outra');
-});
-test('Notas 1.41: ntFundePaginas — blocos da página usam a fusão por bloco; página nova/apagada; campos desconhecidos ficam',async()=>{
-  const a=await app(),T2='2026-11-02T00:00:00Z',T3='2026-11-03T00:00:00Z';
-  const base=[pgx('p1','Um',{doc:{v:1,blocos:[bp('x','x','2026-11-01T00:00:00Z'),bp('y','y','2026-11-01T00:00:00Z')]}}),pgx('p2','Dois')];
-  const local=[{...base[0],doc:{v:1,blocos:[bp('x','x daqui',T2),base[0].doc.blocos[1]]},atualizado:T2},base[1],pgx('pl','Nova local')];
-  const remoto=[{...base[0],doc:{v:1,blocos:[base[0].doc.blocos[0],bp('y','y de lá',T3)]},atualizado:T3,futuro:{a:1}},pgx('pr','Nova remota')];
-  const r=copia(a.c.ntFundePaginas(base,local,remoto,'2026-11-04T00:00:00Z'));
-  const p1=r.paginas.find(p=>p.id==='p1');assert.deepEqual(lista(p1.doc),['x:x daqui','y:y de lá'],'blocos de cada lado preservados');
-  assert.deepEqual(p1.futuro,{a:1},'campo desconhecido preservado');assert.deepEqual(r.conflitos,[]);
-  assert.deepEqual(r.paginas.map(p=>p.id),['p1','pr','pl'],'ordem do remoto primeiro, depois as só-locais');
-  assert.equal(r.paginas.some(p=>p.id==='p2'),false,'p2 foi apagada no remoto e estava intacta aqui');
-  // mesmo bloco editado nos dois lados: o perdedor vai para os conflitos, marcado com a página
-  const c=copia(a.c.ntFundePaginas(base,[{...base[0],doc:{v:1,blocos:[bp('x','local',T3),base[0].doc.blocos[1]]},atualizado:T3}],[{...base[0],doc:{v:1,blocos:[bp('x','remoto',T2),base[0].doc.blocos[1]]},atualizado:T2}],'2026-11-04T00:00:00Z'));
-  assert.equal(c.conflitos.length,1);assert.equal(c.conflitos[0].pagina,'p1');assert.equal(c.conflitos[0].conteudo.content[0].text,'remoto');
-  // apagada aqui e editada lá: a edição fica; sem base nada é apagado
-  const d=copia(a.c.ntFundePaginas(base,[base[1]],[{...base[0],titulo:'Editada lá',atualizado:T2},base[1]]));
-  assert.deepEqual(d.paginas.map(p=>p.id+':'+p.titulo),['p1:Editada lá','p2:Dois']);
-  assert.deepEqual(copia(a.c.ntFundePaginas(null,[pgx('a','A')],[pgx('b','B')])).paginas.map(p=>p.id),['b','a']);
-  assert.deepEqual(copia(a.c.ntFundePaginas(null,[base[1]],'quebrado')).paginas.map(p=>p.id),['p2'],'remoto malformado não quebra nem apaga');
-});
-test('Notas 1.41: páginas pendentes sobem pela mesma fila; 409 refaz a fusão com o que o outro aparelho gravou; aparelho antigo não apaga o campo',async()=>{
-  const a=await app(),T2='2026-11-02T00:00:00Z',T3='2026-11-03T00:00:00Z',base=[pgx('p1','Um'),pgx('p2','Dois',{ordem:20})];
-  a.estado.remoto.notasPaginas={v:1,paginas:copia(base),campoFuturo:'fica'};vm.runInContext(`SM.d.notasPaginas={v:1,paginas:${JSON.stringify(base)}}`,a.c);a.c.ntBaseSalva(null,copia(base));
-  // este aparelho renomeia p1 e cria p3; antes de subir, outro aparelho fixou p2 (409)
-  const api=a.c.BCBR.api;let falhou=false;
-  a.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT'&&!falhou){falhou=true;a.estado.remoto.notasPaginas={v:1,paginas:[base[0],pgx('p2','Dois',{ordem:20,fixada:true,atualizado:T3})],campoFuturo:'fica'};throw Object.assign(new Error('sha'),{status:409})}return api(p,o)};
-  vm.runInContext(`pgMuda(l=>{l[0].titulo='Um novo';l[0].atualizado='${T2}';l.push(${JSON.stringify(pgx('p3','Três',{ordem:30}))})})`,a.c);
-  assert.equal(vm.runInContext('ntTemPendentes()',a.c),true,'ficou na fila');assert.equal(await a.c.ntSync(),true);
-  const salvo=a.salvos.at(-1);assert.deepEqual(titulos(salvo.notasPaginas),['p1:Um novo@10','p2:Dois*@20','p3:Três@30'],'as duas mudanças ficaram');
-  assert.equal(salvo.notasPaginas.campoFuturo,'fica','campo do plano que este aparelho não conhece');
-  assert.equal(vm.runInContext('ntTemPendentes()',a.c),false);
-  assert.deepEqual(copia(a.c.pgBaseLer()).map(p=>p.id),['p1','p2','p3'],'base = o que subiu');
-  // aparelho antigo: o cache dele não tem notasPaginas; uma mudança qualquer (409 -> relê) não pode apagar as páginas do plano
-  const b=await app([],false,null,false,salvo);vm.runInContext('delete SM.d.notasPaginas',b.c);
-  b.estado.conflito=true;await vm.runInContext("smMudar(d=>{d.tarefas.push({id:'t9',dia:'sem',texto:'x',area:'tarefas'})},'qualquer')",b.c);
-  assert.deepEqual(b.salvos.at(-1).notasPaginas.paginas.map(p=>p.id),['p1','p2','p3'],'as páginas continuam no plano');assert.equal(b.salvos.at(-1).notasPaginas.campoFuturo,'fica');
-});
-
-test('Notas 1.41.1 (A1): página criada durante o voo do PUT não entra na base como sincronizada; pull remoto sem ela não a apaga',async()=>{
-  const a=await app(),base=[pgx('p1','Um'),pgx('p2','Dois',{ordem:20})];
-  a.estado.remoto.notasPaginas={v:1,paginas:copia(base)};vm.runInContext(`SM.d.notasPaginas={v:1,paginas:${JSON.stringify(base)}}`,a.c);a.c.ntBaseSalva(null,copia(base));
-  const api=a.c.BCBR.api;let uma=false;
-  a.c.BCBR.api=async(p,o)=>{
-    if(o?.method==='PUT'&&!uma){uma=true;const r=await api(p,o);   // o PUT já saiu sem p3; ela nasce enquanto ele "voa"
-      vm.runInContext(`pgMuda(l=>{l.push(${JSON.stringify(pgx('p3','Três',{ordem:30}))})})`,a.c);return r}
-    return api(p,o)};
-  vm.runInContext(`pgMuda(l=>{l[0].titulo='Um novo';l[0].atualizado='2026-11-02T00:00:00Z'})`,a.c);
-  await a.c.ntSync();
-  assert.deepEqual(copia(a.c.pgBaseLer()).map(p=>p.id),['p1','p2'],'p3 não foi sincronizada ainda');
-  assert.equal(vm.runInContext('ntTemPendentes()',a.c),true,'p3 continua na fila');
-  // pull remoto (sem p3) antes do retry: a página não some
-  vm.runInContext(`SM.d=${JSON.stringify(a.estado.remoto)};ntRecebe(SM.d)`,a.c);
-  assert.ok(vm.runInContext(`ntPaginas().some(p=>p.id==='p3')`,a.c),'p3 sobreviveu ao pull');
-  assert.equal(await a.c.ntSync(),true);
-  assert.ok(a.salvos.at(-1).notasPaginas.paginas.some(p=>p.id==='p3'),'p3 subiu no retry');
-});
-
-test('Notas 1.42: ntFundeFrases — mesma frase vale o atualizado maior; apagada de um lado some; nova fica; aparelho antigo (sem o campo) não apaga',async()=>{
-  const a=await app(),f=(id,t,at='2026-11-01T00:00:00Z')=>({id,titulo:t,texto:'texto '+t,atualizado:at}),ids=l=>copia(l).map(x=>x.id+':'+x.titulo);
-  const base=[f('a','A'),f('b','B')];
-  assert.deepEqual(ids(a.c.ntFundeFrases(base,[f('a','A local','2026-11-03T00:00:00Z'),base[1]],[f('a','A remoto','2026-11-02T00:00:00Z'),base[1]])),['a:A local','b:B'],'o mais recente vence');
-  assert.deepEqual(ids(a.c.ntFundeFrases(base,[f('a','A local','2026-11-02T00:00:00Z'),base[1]],[f('a','A remoto','2026-11-03T00:00:00Z'),base[1]])),['a:A remoto','b:B']);
-  assert.deepEqual(ids(a.c.ntFundeFrases(base,[base[0]],[base[0],base[1]])),['a:A'],'apagada aqui (intacta lá) some');
-  assert.deepEqual(ids(a.c.ntFundeFrases(base,[base[0],f('c','C')],[base[0]])),['a:A','c:C'],'B apagada lá (intacta aqui) some; a nova daqui fica');
-  assert.deepEqual(ids(a.c.ntFundeFrases(base,[base[0]],[base[0],f('b','B editada','2026-11-05T00:00:00Z')])),['a:A','b:B editada'],'apagada aqui, mas editada lá: a edição fica');
-  assert.deepEqual(ids(a.c.ntFundeFrases(null,[f('x','X')],undefined)),['x:X'],'sem base e sem o campo remoto (aparelho antigo): nada é apagado');
-  // sobe pela fila das notas, junto das páginas, e a base guarda o que subiu
-  vm.runInContext(`SM.d.notasFrases=[];ntBaseSalva(null,[],[])`,a.c);
-  assert.equal(vm.runInContext(`frSalva('Laudo normal','Sem alterações significativas.')`,a.c),true);
-  assert.equal(await a.c.ntSync(),true);
-  assert.deepEqual(a.salvos.at(-1).notasFrases.map(x=>x.titulo+'|'+x.texto),['Laudo normal|Sem alterações significativas.']);
-  assert.deepEqual(copia(a.c.frBaseLer()).map(x=>x.titulo),['Laudo normal']);
-  assert.equal(vm.runInContext('ntTemPendentes()',a.c),false);
 });
 
 test('Notas 1.42: @lembrete — itens do menu (Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm), hora e datas inválidas',async()=>{
@@ -941,503 +727,7 @@ test('Plano 1.42 (revisão): smMerge3 — escalar dos dois lados vale o carimbo 
   assert.equal(vm.runInContext('smFundePlano({tarefas:[],v:2}).tarefas.length',a.c)>=0,true);
 });
 
-test('Notas 1.43: fila compartilhada não sobrescreve edições; entradas confirmadas saem, novas ficam; base é por aba',async()=>{
-  const base=[pgx('p1','Um'),pgx('p2','Dois')],remoto={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[]},notasPaginas:{v:1,paginas:base}};
-  const mem=new Map([['sm_cache2',JSON.stringify({sha:'s0',d:remoto})]]);
-  const a=await app([],false,mem,true,remoto),b=await app([],false,mem,true,remoto);
-  for(const x of [a,b])x.c.ntBaseSalva([],copia(base),[]);
-  // Duas abas antigas gravam listas completas distintas, sem evento storage entre elas.
-  a.c.pgMuda(l=>{l[0].titulo='Um A';l[0].atualizado='2026-11-03T00:00:00Z'});
-  b.c.pgMuda(l=>{l[1].titulo='Dois B';l[1].atualizado='2026-11-04T00:00:00Z'});
-  await a.fila();await b.fila();
-  const p=copia(a.c.ntPendentes()[0]);assert.equal(p.filas.length,2);
-  assert.deepEqual(p.paginas.map(p=>p.titulo),['Um A','Dois B']);
-  a.c.pgBaseSalva(p.paginas);assert.deepEqual(copia(b.c.pgBaseLer()).map(p=>p.titulo),['Um','Dois'],'outra aba não troca a base desta');
-  b.estado.falhar=false;const api=b.c.BCBR.api;let uma=false;
-  b.c.BCBR.api=async(url,o)=>{const r=await api(url,o);if(o?.method==='PUT'&&!uma){uma=true;b.c.pgMuda(l=>{l[0].titulo='Durante PUT';l[0].atualizado='2026-11-05T00:00:00Z'})}return r};
-  assert.equal(await b.c.ntSync(),true);assert.equal(b.c.ntTemPendentes(),true,'edição durante PUT ficou na fila');
-  assert.equal(await b.c.ntSync(),true);assert.equal(b.c.ntTemPendentes(),false);
-  assert.deepEqual(b.salvos.at(-1).notasPaginas.paginas.map(p=>p.titulo),['Durante PUT','Dois B']);
-  assert.equal([...mem.keys()].filter(k=>k.startsWith('bcbr_notasdoc_pendente')).length,0,'entradas confirmadas retiradas');
-});
-
-// LockManager compartilhado: callbacks exclusivos, fila real de promessas e gancho entre donos.
-function locksLegado(){
-  let fila=Promise.resolve(),ativos=0;const l={chamadas:0,depois:null};
-  l.request=(nome,op,fn)=>{
-    assert.equal(nome,'radio-notas-migra-legado');assert.equal(op.mode,'exclusive');l.chamadas++;
-    const p=fila.then(async()=>{assert.equal(++ativos,1);try{return await fn()}finally{ativos--;l.depois?.()}});
-    fila=p.catch(()=>{});return p;
-  };return l;
-}
-function cenarioLegado(){
-  const t='2026-11-01T00:00:00Z',base={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[bp('x','X',t),bp('y','Y',t)]},notasPaginas:{v:1,paginas:[pgx('p1','Original')],pastas:[{id:'f1',titulo:'Pasta',atualizado:t}]},notasFrases:[{id:'fr1',texto:'Frase',atualizado:t}]};
-  const remoto=copia(base);remoto.notasDoc.blocos[1]=bp('y','Remoto','2026-11-03T00:00:00Z');remoto.notasPaginas.paginas.push(pgx('p2','Remota'));
-  remoto.notasPaginas.pastas.push({id:'f2',titulo:'Remota'});remoto.notasFrases.push({id:'fr2',texto:'Remota'});
-  const legado={blocos:[bp('x','Local','2026-11-02T00:00:00Z'),base.notasDoc.blocos[1]],paginas:base.notasPaginas.paginas,pastas:base.notasPaginas.pastas,frases:base.notasFrases,em:1};
-  const mem=new Map([['sm_cache2',JSON.stringify({sha:'s0',d:base})]]);
-  for(const [k,v] of [['bcbr_notas_base',base.notasDoc.blocos],['bcbr_notaspag_base',base.notasPaginas.paginas],['bcbr_notaspastas_base',base.notasPaginas.pastas],['bcbr_notasfrases_base',base.notasFrases]])mem.set(k,JSON.stringify(v));
-  return {base,remoto,legado,mem};
-}
-const chavesLegado=mem=>[...mem.keys()].filter(k=>k.startsWith('bcbr_notasdoc_pendente:'));
-const basesLegadas=['bcbr_notas_base','bcbr_notaspag_base','bcbr_notasfrases_base','bcbr_notaspastas_base'];
-const basesDoPlano=d=>[d.notasDoc.blocos,d.notasPaginas.paginas,d.notasFrases,d.notasPaginas.pastas];
-const legadoOk='bcbr_notasdoc_pendente_v143_legado_ok';
-function confirmaLegado(a,raw){
-  assert.equal(a.mem.get('bcbr_notasdoc_pendente'),raw,'legado intacto após PUT');
-  const hash=a.c.ntLegadoChave(raw).split(':').at(-1);
-  assert.ok(JSON.parse(a.mem.get(legadoOk)||'[]').includes(hash),'hash confirmado persistido');
-}
-test('Notas 1.43 retenção: corrida após confirmação, PUT 1.42 falha e fechar/reabrir recupera revisão nova',async()=>{
-  const {base,legado,mem}=cenarioLegado(),chave='bcbr_notasdoc_pendente',raw=JSON.stringify(legado),opcoes={navigator:{locks:locksLegado()}};
-  mem.set(chave,raw);const a=await app([],false,mem,true,base,opcoes);
-  const rev2=copia(legado);rev2.em=2;rev2.blocos.push(bp('r2','Última cópia da revisão 2','2026-11-04T00:00:00Z'));
-  const raw2=JSON.stringify(rev2);let confirmou=false,intercalou=false,falhas142=0,put142;
-  const pendentes=a.c.ntPendentes,ler=a.c.localStorage.getItem,grava=a.c.localStorage.setItem,migra=a.c.ntMigraLegado,api=a.c.BCBR.api;
-  let putConfirmado=false;
-  a.c.BCBR.api=async(u,o)=>{const r=await api(u,o);if(o?.method==='PUT')putConfirmado=true;return r};
-  a.c.ntPendentes=()=>{const p=pendentes();if(putConfirmado)confirmou=true;return p};
-  const escreve142=()=>{
-    intercalou=true;mem.set(chave,raw2);
-    const cache=copia(base);cache.notasDoc.blocos=rev2.blocos;mem.set('sm_cache2',JSON.stringify({sha:'s0',d:cache}));
-    // PUT automático da aba antiga falha: nenhuma cópia da revisão 2 chega ao servidor.
-    a.estado.falhar=true;
-    put142=api('semana/plano.json',{method:'PUT',body:JSON.stringify({content:Buffer.from(JSON.stringify(cache)).toString('base64')})})
-      .then(()=>assert.fail('PUT 1.42 deveria falhar'),e=>{assert.equal(e.status,503);falhas142++});
-    a.estado.falhar=false;
-  };
-  // Runtime anterior: escreve entre getItem (bytes antigos retornados) e removeItem.
-  a.c.localStorage.getItem=k=>{const v=ler(k);if(k===chave&&confirmou&&!intercalou)escreve142();return v};
-  // Runtime corrigido: escreve após registrar confirmação, antes da próxima leitura do legado.
-  a.c.localStorage.setItem=(k,v)=>{const r=grava(k,v);if(k===legadoOk&&confirmou&&!intercalou)escreve142();return r};
-  a.c.ntMigraLegado=()=>intercalou?undefined:migra(); // fecha antes de outra migração
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);await put142;assert.equal(intercalou,true);assert.equal(falhas142,1);
-  assert.deepEqual(lista(a.estado.remoto.notasDoc),['x:Local','y:Y']);
-  assert.ok(!JSON.parse(mem.get('sm_cache2')).d.notasDoc.blocos.some(b=>b.id==='r2'),'confirmação sobrescreveu o cache compartilhado');
-  const b=await app([],false,mem,true,a.estado.remoto,opcoes);b.estado.falhar=false;
-  assert.equal(await b.c.ntSync(),true);if(b.c.ntTemPendentes())assert.equal(await b.c.ntSync(),true);
-  assert.deepEqual(lista(b.estado.remoto.notasDoc),['x:Local','y:Y','r2:Última cópia da revisão 2']);
-  confirmaLegado(b,raw2);assert.equal(b.c.ntTemPendentes(),false);
-});
-test('Notas 1.43 retenção: revisão confirmada não é reenviada após reload',async()=>{
-  const {base,legado,mem}=cenarioLegado(),raw=JSON.stringify(legado),opcoes={navigator:{locks:locksLegado()}};
-  mem.set('bcbr_notasdoc_pendente',raw);const a=await app([],false,mem,true,base,opcoes);
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.length,1);confirmaLegado(a,raw);
-  const b=await app([],false,mem,true,a.estado.remoto,opcoes);b.estado.falhar=false;
-  for(let i=0;i<3;i++){await b.c.ntMigraLegado();assert.equal(await b.c.ntSync(),true)}
-  assert.deepEqual(chavesLegado(mem),[]);assert.equal(b.salvos.length,0);confirmaLegado(b,raw);
-});
-test('Notas 1.43 retenção: guarda somente os últimos 20 hashes confirmados',async()=>{
-  const {base,legado,mem}=cenarioLegado(),a=await app([],false,mem,true,base,{navigator:{locks:locksLegado()}}),hashes=[];
-  a.estado.falhar=false;
-  for(let i=0;i<22;i++){
-    const raw=JSON.stringify({...legado,em:i});mem.set('bcbr_notasdoc_pendente',raw);
-    hashes.push(a.c.ntLegadoChave(raw).split(':').at(-1));
-    assert.equal(await a.c.ntSync(),true);confirmaLegado(a,raw);
-    assert.deepEqual(JSON.parse(mem.get(legadoOk)),hashes.slice(-20));
-  }
-  assert.equal(a.salvos.length,22);assert.deepEqual(chavesLegado(mem),[]);
-});
-test('Notas 1.43 retenção: falha no PUT ou ao persistir hash não descarta pendência',async()=>{
-  const {base,legado,mem}=cenarioLegado(),raw=JSON.stringify(legado),opcoes={navigator:{locks:locksLegado()}};
-  mem.set('bcbr_notasdoc_pendente',raw);const a=await app([],false,mem,true,base,opcoes),[k]=chavesLegado(mem),entrada=mem.get(k);
-  assert.equal(await a.c.ntSync(),false);assert.equal(a.salvos.length,0);assert.equal(mem.has(legadoOk),false);
-  const set=a.c.localStorage.setItem;a.c.localStorage.setItem=(k,v)=>{if(k===legadoOk)throw Error('quota de confirmação');return set(k,v)};
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),false);assert.equal(a.salvos.length,1,'PUT chegou, mas confirmação local falhou');
-  assert.equal(mem.get(k),entrada);assert.equal(mem.get('bcbr_notasdoc_pendente'),raw);assert.equal(mem.has(legadoOk),false);
-  const b=await app([],false,mem,true,a.estado.remoto,opcoes);b.estado.falhar=false;
-  assert.equal(await b.c.ntSync(),true);confirmaLegado(b,raw);assert.deepEqual(chavesLegado(mem),[]);
-});
-for(const modo of ['PUT','409','falha e reload'])test('Notas 1.43 D1: revisões da aba 1.42 durante '+modo,async()=>{
-  const {base,legado,mem}=cenarioLegado(),opcoes={navigator:{locks:locksLegado()}},chave='bcbr_notasdoc_pendente';
-  mem.set(chave,JSON.stringify(legado));
-  let a=await app([],false,mem,true,base,opcoes);
-  const primeira=chavesLegado(mem)[0],rawPrimeira=mem.get(primeira);
-  assert.ok(rawPrimeira,'revisão 1 já migrada');
-  const base2=copia(base);base2.notasDoc.blocos=legado.blocos;
-  const rev2=copia(legado);rev2.em=2;
-  rev2.blocos.push(bp('r2','Revisão 2','2026-11-04T00:00:00Z'));
-  rev2.paginas.push(pgx('p-r2','Página revisão 2'));
-  rev2.pastas.push({id:'f-r2',titulo:'Pasta revisão 2'});rev2.frases.push({id:'fr-r2',texto:'Frase revisão 2'});
-  const raw2=JSON.stringify(rev2,null,2);let escreveu=false;
-  const escreve142=()=>{escreveu=true;basesLegadas.forEach((k,i)=>mem.set(k,JSON.stringify(basesDoPlano(base2)[i])));mem.set(chave,raw2)};
-  const api=a.c.BCBR.api;a.c.BCBR.api=async(u,o)=>{
-    if(o?.method==='PUT'&&!escreveu)escreve142();
-    return api(u,o);
-  };
-  a.estado.falhar=modo==='falha e reload';a.estado.conflito=modo==='409';
-  assert.equal(await a.c.ntSync(),modo!=='falha e reload');assert.equal(escreveu,true);
-  if(modo==='PUT'){
-    assert.deepEqual(lista(a.salvos[0].notasDoc),['x:Local','y:Y'],'primeira revisão chegou');
-    assert.equal(mem.get(chave),raw2,'PUT da revisão 1 não apaga revisão 2');
-  }
-  if(modo==='falha e reload'){
-    assert.equal(a.salvos.length,0);assert.equal(mem.get(primeira),rawPrimeira);assert.equal(mem.get(chave),raw2);
-    a.c.smGuardaCache();a=await app([],false,mem,true,base,opcoes);
-  }
-  await a.c.ntMigraLegado();
-  if(mem.has(primeira))assert.equal(mem.get(primeira),rawPrimeira,'primeira entrada é imutável');
-  const segunda=chavesLegado(mem).map(k=>[k,JSON.parse(mem.get(k))]).find(([,op])=>op.blocos?.some(b=>b.id==='r2'));
-  // No 409 as duas revisões podem ter sido confirmadas no retry do mesmo salvamento.
-  if(!a.salvos.at(-1)?.notasDoc.blocos.some(b=>b.id==='r2')){
-    assert.ok(segunda,'revisão 2 tem entrada própria');assert.notEqual(segunda[0],primeira);
-    assert.deepEqual([segunda[1].base,segunda[1].basePaginas,segunda[1].baseFrases,segunda[1].basePastas],basesDoPlano(base2));
-  }
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);
-  if(a.c.ntTemPendentes())assert.equal(await a.c.ntSync(),true);
-  const salvo=a.salvos.at(-1);assert.ok(salvo);
-  assert.deepEqual(lista(salvo.notasDoc),['x:Local','y:Y','r2:Revisão 2']);
-  assert.deepEqual(salvo.notasPaginas.paginas.map(p=>p.id),['p1','p-r2']);
-  assert.deepEqual(salvo.notasPaginas.pastas.map(p=>p.id),['f1','f-r2']);assert.deepEqual(salvo.notasFrases.map(p=>p.id),['fr1','fr-r2']);
-  confirmaLegado(a,raw2);assert.deepEqual(chavesLegado(mem),[]);
-  basesLegadas.forEach((k,i)=>assert.equal(mem.get(k),JSON.stringify(basesDoPlano(base2)[i]),'base da aba 1.42 preservada'));
-});
-test('Notas 1.43 D1: confirmação distingue bytes exatos mesmo após montar a fila confirmada',async()=>{
-  const {base,legado,mem}=cenarioLegado(),chave='bcbr_notasdoc_pendente',raw=JSON.stringify(legado),raw2=JSON.stringify(legado,null,2);
-  mem.set(chave,raw);const a=await app([],false,mem,true,base,{navigator:{locks:locksLegado()}});
-  const primeira=chavesLegado(mem)[0],pendentes=a.c.ntPendentes;let confirmou=false,intercalou=false;
-  const api=a.c.BCBR.api;a.c.BCBR.api=async(u,o)=>{const r=await api(u,o);if(o?.method==='PUT')confirmou=true;return r};
-  a.c.ntPendentes=()=>{const p=pendentes();if(confirmou&&!intercalou){intercalou=true;mem.set(chave,raw2)}return p};
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(intercalou,true);
-  assert.equal(mem.get(chave),raw2,'mesmo JSON com bytes diferentes não é confirmado');
-  assert.equal(mem.has(primeira),false,'entrada confirmada pode sair');
-  await a.c.ntMigraLegado();assert.notEqual(chavesLegado(mem)[0],primeira,'hash depende dos bytes');
-  assert.equal(await a.c.ntSync(),true);confirmaLegado(a,raw2);assert.equal(a.salvos.length,2);
-  basesLegadas.forEach(k=>assert.ok(mem.has(k)));
-});
-test('Notas 1.43 D2: Restaurar offline conserva legado e fila, envia ao reconectar',async()=>{
-  const {base,legado,mem}=cenarioLegado(),opcoes={navigator:{locks:locksLegado()}};
-  base.notas_v138=[{id:'recuperada',titulo:'Recuperada',texto:'Conteúdo recuperado',em:'2026-11-05T00:00:00Z'}];
-  mem.set('sm_cache2',JSON.stringify({sha:'s0',d:base}));mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-  const a=await app([],false,mem,true,base,opcoes);
-  assert.equal(a.c.ntFilaGrava('blocos',base.notasDoc.blocos,[...base.notasDoc.blocos,bp('nova','Fila anterior','2026-11-06T00:00:00Z')]),true);
-  const antes=new Map([...mem].filter(([k])=>k.startsWith('bcbr_notasdoc_pendente')));
-  await a.c.ntRestaura();await a.fila();
-  assert.equal(a.salvos.length,0,'nenhum PUT confirmado offline');
-  for(const [k,raw] of antes)assert.equal(mem.get(k),raw,'pendência anterior preservada: '+k);
-  assert.equal(chavesLegado(mem).length,antes.size,'restauração acrescentou uma entrada');
-  a.c.smGuardaCache();const b=await app([],false,mem,true,base,opcoes);b.estado.falhar=false;b.estado.conflito=true;
-  assert.equal(await b.c.ntSync(),true);if(b.c.ntTemPendentes())assert.equal(await b.c.ntSync(),true);
-  const salvo=b.salvos.at(-1);assert.ok(salvo,'PUT ao reconectar');
-  for(const id of ['x','nova','brecuperada'])assert.ok(salvo.notasDoc.blocos.some(b=>b.id===id),'preserva '+id);
-  assert.equal(salvo.notasDoc.blocos.find(b=>b.id==='x').conteudo.content[0].text,'Local');
-  assert.deepEqual(salvo.notasPaginas,base.notasPaginas);assert.deepEqual(salvo.notasFrases,base.notasFrases);
-  confirmaLegado(b,JSON.stringify(legado));assert.equal(b.c.ntTemPendentes(),false);
-});
-for(const comLocks of [false,true])test('Notas 1.43 bases separadas: A sincroniza antes de B migrar, locks em A '+comLocks,async()=>{
-  const {base,remoto,legado,mem}=cenarioLegado(),locks=locksLegado();
-  remoto.notasDoc.blocos.push(bp('z','Nota remota','2026-11-03T00:00:00Z'));
-  const a=await app([],false,mem,true,base,{navigator:comLocks?{locks}:{}});
-  mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-  // Com locks, representa a confirmação de um PUT já em voo; sem locks, o recebimento remoto completo.
-  if(comLocks)a.c.ntBaseSalva(...basesDoPlano(remoto));else await a.c.ntRecebe(copia(remoto));
-  basesLegadas.forEach((k,i)=>assert.deepEqual(JSON.parse(mem.get(k+'_v143')),basesDoPlano(remoto)[i],'A avançou a base nova antes de B'));
-  mem.set('sm_cache2',JSON.stringify({sha:'s0',d:remoto}));
-  const b=await app([],false,mem,true,remoto,{navigator:{locks}});
-  const d=copia(remoto);await b.c.ntRecebe(d);
-  assert.deepEqual(lista(d.notasDoc),['x:Local','y:Remoto','z:Nota remota']);
-  assert.deepEqual(copia(d.notasPaginas.paginas).map(p=>p.id),['p1','p2']);
-  assert.deepEqual(copia(d.notasPaginas.pastas).map(p=>p.id),['f1','f2']);
-  assert.deepEqual(copia(d.notasFrases).map(p=>p.id),['fr1','fr2']);
-  const op=JSON.parse(mem.get(chavesLegado(mem)[0]));
-  assert.deepEqual([op.base,op.basePaginas,op.baseFrases,op.basePastas],basesDoPlano(base));
-  basesLegadas.forEach((k,i)=>{assert.deepEqual(JSON.parse(mem.get(k)),basesDoPlano(base)[i]);assert.deepEqual(JSON.parse(mem.get(k+'_v143')),basesDoPlano(remoto)[i])});
-});
-for(const comLocks of [false,true])test('Notas 1.43 bases separadas: sem legado copia uma vez, locks '+comLocks,async()=>{
-  const {base,remoto,mem}=cenarioLegado(),locks=locksLegado(),escritas=[];
-  const opcoes={navigator:comLocks?{locks}:{},antes:c=>{const set=c.localStorage.setItem;c.localStorage.setItem=(k,v)=>{escritas.push(k);return set(k,v)}}};
-  const a=await app([],false,mem,true,base,opcoes);
-  basesLegadas.forEach((k,i)=>assert.deepEqual(JSON.parse(mem.get(k+'_v143')),basesDoPlano(base)[i]));
-  assert.deepEqual(escritas.filter(k=>basesLegadas.includes(k)),[]);
-  a.c.ntBaseSalva(...basesDoPlano(remoto));
-  mem.set('sm_cache2',JSON.stringify({sha:'s0',d:remoto}));
-  const b=await app([],false,mem,true,remoto,opcoes);await b.c.ntMigraLegado();
-  basesLegadas.forEach((k,i)=>{assert.deepEqual(JSON.parse(mem.get(k)),basesDoPlano(base)[i]);assert.deepEqual(JSON.parse(mem.get(k+'_v143')),basesDoPlano(remoto)[i])});
-  assert.deepEqual(escritas.filter(k=>basesLegadas.includes(k)),[]);
-  if(comLocks)assert.ok(locks.chamadas>0,'cópia usa a mesma trava');
-});
-test('Notas 1.43 bases separadas: confirmação do PUT registra hash; legado e bases antigas permanecem sem escritas',async()=>{
-  const {base,legado,mem}=cenarioLegado(),raw=JSON.stringify(legado),escritas=[];
-  mem.set('bcbr_notasdoc_pendente',raw);
-  const opcoes={navigator:{locks:locksLegado()},antes:c=>{const set=c.localStorage.setItem;c.localStorage.setItem=(k,v)=>{escritas.push(k);return set(k,v)}}};
-  const a=await app([],false,mem,true,base,opcoes);
-  assert.equal(mem.get('bcbr_notasdoc_pendente'),raw,'offline conserva legado até confirmar');
-  basesLegadas.forEach(k=>assert.ok(mem.has(k)));
-  const api=a.c.BCBR.api;a.c.BCBR.api=async(u,o)=>{if(o?.method==='PUT'){assert.equal(mem.get('bcbr_notasdoc_pendente'),raw);basesLegadas.forEach(k=>assert.ok(mem.has(k)))}return api(u,o)};
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.length,1);
-  confirmaLegado(a,raw);assert.deepEqual(chavesLegado(mem),[]);
-  basesLegadas.forEach(k=>assert.equal(mem.has(k),true));
-  a.c.BCBR.api=api;await a.c.ntRecebe(copia(a.estado.remoto));a.c.ntBaseSalva(...basesDoPlano(a.estado.remoto));a.c.smGuardaCache();
-  const b=await app([],false,mem,true,a.estado.remoto,opcoes);b.estado.falhar=false;
-  assert.equal(b.c.ntFilaGrava('blocos',b.c.ntBaseLer(),[bp('x','Posterior','2026-11-04T00:00:00Z')]),true);
-  assert.equal(await b.c.ntSync(),true);assert.ok(b.salvos.length>0);
-  assert.deepEqual(escritas.filter(k=>basesLegadas.includes(k)),[]);basesLegadas.forEach(k=>assert.equal(mem.has(k),true));
-});
-for(const comLocks of [true]){
-  const modo=comLocks?'com locks':'sem locks';
-  test('Notas 1.43 migração idempotente: corrida '+modo,async()=>{
-    const {base,remoto,legado,mem}=cenarioLegado(),locks=comLocks?locksLegado():null,opcoes={navigator:locks?{locks}:{}};
-    const a=await app([],false,mem,true,base,opcoes),b=await app([],false,mem,true,base,opcoes);
-    mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-    const avanca=()=>b.c.ntBaseSalva(copia(remoto.notasDoc.blocos),copia(remoto.notasPaginas.paginas),copia(remoto.notasFrases),copia(remoto.notasPaginas.pastas));
-    const ler=a.c.localStorage.getItem;let intercalou=false;
-    a.c.localStorage.getItem=k=>{const raw=ler(k);if(k==='bcbr_notasdoc_pendente'&&!intercalou){intercalou=true;
-      b.c.ntPendentes();if(locks)locks.depois=()=>{locks.depois=null;avanca()};else avanca();
-    }return raw};
-    const d=copia(remoto);await a.c.ntRecebe(d);await vm.runInContext('NT.migrando',a.c);
-    assert.equal(intercalou,true);assert.equal(chavesLegado(mem).length,1,'uma única operação migrada');
-    assert.deepEqual(lista(d.notasDoc),['x:Local','y:Remoto']);assert.deepEqual(copia(d.notasPaginas.paginas).map(p=>p.id),['p1','p2']);
-    const op=JSON.parse(mem.get(chavesLegado(mem)[0]));
-    assert.deepEqual(op.base,base.notasDoc.blocos);assert.deepEqual(op.basePaginas,base.notasPaginas.paginas);
-    assert.deepEqual(op.baseFrases,base.notasFrases);assert.deepEqual(op.basePastas,base.notasPaginas.pastas);
-    assert.deepEqual(copia(d.notasFrases).map(f=>f.id),['fr1','fr2']);assert.deepEqual(copia(d.notasPaginas.pastas).map(f=>f.id),['f1','f2']);
-    if(locks)assert.ok(locks.chamadas>=2);
-  });
-  test('Notas 1.43 migração idempotente: interrupção e reload '+modo,async()=>{
-    const {base,legado,mem}=cenarioLegado(),locks=comLocks?locksLegado():null,opcoes={navigator:locks?{locks}:{}};
-    const a=await app([],false,mem,true,base,opcoes);mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-    const set=a.c.localStorage.setItem;a.c.localStorage.setItem=(k,v)=>{set(k,v);if(k?.startsWith('bcbr_notasdoc_pendente:legado:'))throw Error('fechou após setItem')};
-    a.c.ntPendentes();await vm.runInContext('NT.migrando',a.c);
-    assert.equal(chavesLegado(mem).length,1);assert.equal(mem.has('bcbr_notasdoc_pendente'),true);
-    const [k]=chavesLegado(mem),raw=mem.get(k);
-    const b=await app([],false,mem,true,base,opcoes);
-    assert.deepEqual(chavesLegado(mem),[k],'reload não cria segunda entrada');assert.equal(mem.get(k),raw,'não sobrescreve entrada');
-    assert.equal(mem.has('bcbr_notasdoc_pendente'),true,'reload conserva legado até PUT');b.estado.falhar=false;
-    assert.equal(await b.c.ntSync(),true);assert.equal(b.salvos.length,1,'sincroniza uma vez');assert.equal(b.c.ntTemPendentes(),false);
-    confirmaLegado(b,JSON.stringify(legado));basesLegadas.forEach(k=>assert.equal(mem.has(k),true));
-    assert.deepEqual(lista(b.salvos[0].notasDoc),['x:Local','y:Y']);
-  });
-  test('Notas 1.43 migração idempotente: inicialização simultânea '+modo,async()=>{
-    const {base,legado,mem}=cenarioLegado(),locks=comLocks?locksLegado():null;
-    mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));let libera,leituras=0,puts=0,gravacoes=0,aplicadas=0;const contextos=[];
-    if(locks)locks.request('radio-notas-migra-legado',{mode:'exclusive'},()=>new Promise(r=>{libera=r}));
-    const opcoes={navigator:locks?{locks}:{},antes:c=>{
-      contextos.push(c);
-      const api=c.BCBR.api;c.BCBR.api=(u,o)=>{leituras++;if(o?.method==='PUT')puts++;return api(u,o)};
-      const set=c.localStorage.setItem;c.localStorage.setItem=(k,v)=>{if(k.startsWith('bcbr_notasdoc_pendente:'))gravacoes++;return set(k,v)};
-    }};
-    const aa=app([],false,mem,true,base,opcoes),bb=app([],false,mem,true,base,opcoes);
-    let salvamento;
-    if(locks){salvamento=contextos[0].smMudar(()=>{aplicadas++},'durante migração');await new Promise(r=>setImmediate(r));
-      assert.equal(aplicadas,0,'salvamento aguarda trava');assert.equal(leituras,0,'pull aguarda trava');assert.equal(puts,0);assert.equal(gravacoes,0);libera()}
-    const [a,b]=await Promise.all([aa,bb]);assert.equal(chavesLegado(mem).length,1);assert.equal(gravacoes,1,'duas abas gravam uma vez');
-    if(locks){assert.equal(await salvamento,false,'PUT offline após liberar');assert.ok(aplicadas>0,'salvamento liberado');}
-    assert.ok(chavesLegado(mem)[0]?.startsWith('bcbr_notasdoc_pendente:legado:'),'chave fixa por revisão');assert.equal(mem.has('bcbr_notasdoc_pendente'),true,'PUT offline mantém legado');
-    assert.equal(a.c.ntPendentes()[0].filas.length,1);assert.equal(b.c.ntPendentes()[0].filas.length,1);
-  });
-}
-
-for(const navigator of [{},{locks:{}}])test('Notas 1.43 sem Web Locks: preserva legado e bases, sincroniza fila nova e avisa uma vez '+JSON.stringify(navigator),async()=>{
-  const {base,legado,mem}=cenarioLegado(),raw=JSON.stringify(legado,null,2);
-  mem.set('bcbr_notasdoc_pendente',raw);
-  const bases=[...mem].filter(([k])=>k.endsWith('_base'));
-  const a=await app([],false,mem,true,base,{navigator});
-  for(let i=0;i<3;i++)await a.c.ntMigraLegado();
-  assert.equal(mem.get('bcbr_notasdoc_pendente'),raw,'bytes do legado preservados');
-  assert.deepEqual(chavesLegado(mem),[],'não cria entrada migrada');
-  for(const [k,v] of bases)assert.equal(mem.get(k),v,'base preservada '+k);
-  assert.deepEqual(lista(copia(vm.runInContext('SM.d.notasDoc',a.c))),['x:X','y:Y'],'legado não é fundido');
-  assert.equal(a.c.ntFilaGrava('blocos',base.notasDoc.blocos,[bp('x','Nova','2026-11-04T00:00:00Z'),base.notasDoc.blocos[1]]),true);
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.length,1);
-  assert.deepEqual(lista(a.salvos[0].notasDoc),['x:Nova','y:Y']);assert.equal(a.c.ntTemPendentes(),false);
-  assert.equal(mem.get('bcbr_notasdoc_pendente'),raw);
-  assert.deepEqual(a.avisos,['Há uma edição antiga das Notas guardada neste aparelho. Abra o Radio no Chrome atualizado para recuperá-la.']);
-});
-
-test('Notas 1.43 sem Web Locks: intercalação com migração travada não sobrescreve bases nem apaga remoto no reload',async()=>{
-  const {base,remoto,legado,mem}=cenarioLegado();
-  const a=await app([],false,mem,true,base,{navigator:{}});
-  // Este LockManager executa o único dono imediatamente, permitindo a pausa síncrona do getItem de A.
-  const b=await app([],false,mem,true,base,{navigator:{locks:{request:(n,o,fn)=>Promise.resolve(fn())}}});
-  mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-  let intercalou=false,rawMigrado;
-  const migraB=()=>{
-    intercalou=true;b.c.ntMigraLegado();
-    rawMigrado=mem.get(chavesLegado(mem)[0]);
-    b.c.ntBaseSalva(remoto.notasDoc.blocos,remoto.notasPaginas.paginas,remoto.notasFrases,remoto.notasPaginas.pastas);
-  };
-  const ler=a.c.localStorage.getItem;
-  a.c.localStorage.getItem=k=>{const raw=ler(k);if(k?.startsWith('bcbr_notasdoc_pendente:legado:')&&!intercalou)migraB();return raw};
-  await a.c.ntMigraLegado();
-  // Sem locks a nova implementação elimina o ponto de pausa na chave fixa. B pode migrar em seguida.
-  if(!intercalou)migraB();
-  assert.equal(mem.get(chavesLegado(mem)[0]),rawMigrado,'A não sobrescreve a operação de B');
-  mem.set('sm_cache2',JSON.stringify({sha:'s0',d:remoto}));   // B já recebeu o remoto e avançou o cache junto das bases.
-  const c=await app([],false,mem,true,remoto,{navigator:{}});
-  const d=copia(vm.runInContext('SM.d',c.c));
-  assert.deepEqual(lista(d.notasDoc),['x:Local','y:Remoto']);
-  assert.deepEqual(d.notasPaginas.paginas.map(p=>p.id),['p1','p2']);
-  assert.deepEqual(d.notasFrases.map(f=>f.id),['fr1','fr2']);assert.deepEqual(d.notasPaginas.pastas.map(f=>f.id),['f1','f2']);
-});
-
-test('Notas 1.43 sem Web Locks: mesma aba recupera legado uma única vez quando locks fica disponível',async()=>{
-  const {base,legado,mem}=cenarioLegado();mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-  const a=await app([],false,mem,true,base,{navigator:{}});
-  assert.equal(mem.has('bcbr_notasdoc_pendente'),true);
-  let gravacoes=0;const set=a.c.localStorage.setItem;
-  a.c.localStorage.setItem=(k,v)=>{if(k?.startsWith('bcbr_notasdoc_pendente:legado:'))gravacoes++;return set(k,v)};
-  a.c.navigator.locks=locksLegado();await a.c.ntMigraLegado();
-  const raw=mem.get(chavesLegado(mem)[0]);assert.ok(raw);
-  await a.c.ntMigraLegado();await a.c.ntRecebe(vm.runInContext('SM.d',a.c));
-  assert.equal(gravacoes,1);assert.equal(mem.get(chavesLegado(mem)[0]),raw);
-  assert.equal(mem.has('bcbr_notasdoc_pendente'),true,'aguarda confirmação');
-  a.estado.falhar=false;assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.length,1);
-  confirmaLegado(a,JSON.stringify(legado));basesLegadas.forEach(k=>assert.equal(mem.has(k),true));
-  assert.deepEqual(lista(a.salvos[0].notasDoc),['x:Local','y:Y']);assert.equal(a.c.ntTemPendentes(),false);
-});
-
-test('Notas 1.43 regressão P1: legado 1.42 mantém a base original em dois recebimentos e sincronizações',async()=>{
-  const T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z',T3='2026-11-03T00:00:00Z';
-  const base={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[bp('x','X',T1),bp('y','Y',T1)]},notasPaginas:{v:1,paginas:[pgx('p1','Página')],pastas:[{id:'f1',titulo:'Pasta',atualizado:T1}]},notasFrases:[{id:'fr1',titulo:'Frase',texto:'Original',atualizado:T1}]};
-  const a=await app([],false,null,true,base,{navigator:{locks:locksLegado()}});
-  vm.runInContext(`SM.d=${JSON.stringify(base)}`,a.c);a.c.ntBaseSalva(copia(base.notasDoc.blocos),copia(base.notasPaginas.paginas),copia(base.notasFrases),copia(base.notasPaginas.pastas));
-  basesLegadas.forEach((k,i)=>a.mem.set(k,JSON.stringify(basesDoPlano(base)[i]))); // disco da 1.42, nunca gravado pela 1.43
-  const legado={blocos:[bp('x','Edição legada',T2),base.notasDoc.blocos[1]],paginas:copia(base.notasPaginas.paginas),frases:copia(base.notasFrases),em:Date.parse(T2)};
-  a.mem.set('bcbr_notasdoc_pendente',JSON.stringify(legado));
-  // Recebimentos pelo mesmo caminho do pull/409, antes de o PUT poder confirmar a fila.
-  const remoto=copia(base);remoto.notasDoc.blocos[1]=bp('y','Texto remoto',T3);remoto.notasPaginas.paginas.push(pgx('p2','Página remota'));
-  remoto.notasFrases[0]={...remoto.notasFrases[0],texto:'Remota',atualizado:T3};remoto.notasFrases.push({id:'fr2',titulo:'Nova',texto:'Nova remota',atualizado:T3});
-  remoto.notasPaginas.pastas[0]={...remoto.notasPaginas.pastas[0],titulo:'Pasta remota',atualizado:T3};
-  a.estado.remoto=copia(remoto);
-  for(let i=0;i<2;i++){
-    await vm.runInContext(`SM.d=${JSON.stringify(remoto)};ntRecebe(SM.d)`,a.c);
-    const d=copia(vm.runInContext('SM.d',a.c));
-    assert.deepEqual(lista(d.notasDoc),['x:Edição legada','y:Texto remoto'],'recebimento '+(i+1)+' preserva ambos os textos');
-    assert.deepEqual(d.notasPaginas.paginas.map(p=>p.id),['p1','p2'],'página remota não é apagada');
-    assert.deepEqual(d.notasFrases.map(f=>f.texto),['Remota','Nova remota']);assert.equal(d.notasPaginas.pastas[0].titulo,'Pasta remota');
-    assert.equal(d.notas_conflitos?.length||0,0,'mudanças independentes não geram conflitos');
-  }
-  assert.equal(a.mem.has('bcbr_notasdoc_pendente'),true,'legado permanece até o PUT confirmar a entrada fixa');
-  const migrado=copia(a.c.ntPendentes()[0]).filas[0].op;
-  assert.deepEqual(migrado.base,base.notasDoc.blocos);assert.deepEqual(migrado.basePaginas,base.notasPaginas.paginas);assert.deepEqual(migrado.baseFrases,base.notasFrases);assert.deepEqual(migrado.basePastas,base.notasPaginas.pastas);
-  // Reload com as bases remotas já persistidas não muda a base da operação migrada.
-  a.c.smGuardaCache();const b=await app([],false,a.mem,true,remoto,{navigator:{locks:locksLegado()}});b.estado.falhar=false;
-  for(let i=0;i<2;i++){
-    if(i){
-      b.c.ntFilaGrava('blocos',copia(b.c.ntBaseLer()),[bp('x','Edição legada final','2026-11-04T00:00:00Z'),remoto.notasDoc.blocos[1]]);
-      b.estado.remoto.notasDoc.blocos[1]=bp('y','Texto remoto novo','2026-11-05T00:00:00Z');
-      b.estado.remoto.notasPaginas.paginas.push(pgx('p3','Outra página remota'));
-    }
-    b.estado.conflito=true;assert.equal(await b.c.ntSync(),true,'sincronização '+(i+1));
-    const salvo=b.salvos.at(-1);assert.deepEqual(lista(salvo.notasDoc),['x:Edição legada'+(i?' final':''),'y:Texto remoto'+(i?' novo':'')]);
-    assert.deepEqual(salvo.notasPaginas.paginas.map(p=>p.id),i?['p1','p2','p3']:['p1','p2']);assert.deepEqual(salvo.notasFrases.map(f=>f.texto),['Remota','Nova remota']);
-    assert.equal(b.c.ntTemPendentes(),false);
-  }
-});
-
-test('Notas 1.43 regressão P2: JSON legado inválido não bloqueia entradas novas e vai para notas_conflitos',async()=>{
-  const a=await app([],false,null,true,null,{navigator:{locks:locksLegado()}}),raw='{"legado":';
-  vm.runInContext('SM.d.notasDoc={v:1,blocos:[]};ntBaseSalva([])',a.c);
-  assert.equal(a.c.ntFilaGrava('blocos',copia(a.c.ntBaseLer())||[],[bp('novo','Entrada válida','2026-11-02T00:00:00Z')]),true);
-  a.mem.set('bcbr_notasdoc_pendente',raw);a.estado.falhar=false;
-  assert.equal(await a.c.ntSync(),true);
-  const salvo=a.salvos.at(-1);assert.ok(salvo,'houve PUT real na VM');assert.deepEqual(lista(salvo.notasDoc),['novo:Entrada válida']);
-  const ruins=salvo.notas_conflitos.filter(c=>c.conteudo===raw);assert.equal(ruins.length,1);assert.match(ruins[0].motivo,/inválid|corrompid/);
-  confirmaLegado(a,raw);assert.equal(a.c.ntTemPendentes(),false);
-});
-
-test('Notas 1.43 regressão P2: entrada nova corrompida é arquivada uma vez sem bloquear as outras',async()=>{
-  const a=await app([],false,null,true),raw='{',k='bcbr_notasdoc_pendente:ruim';
-  vm.runInContext('SM.d.notasDoc={v:1,blocos:[]};ntBaseSalva([])',a.c);
-  a.c.ntFilaGrava('blocos',copia(a.c.ntBaseLer())||[],[bp('novo','Bloco válido','2026-11-02T00:00:00Z')]);
-  a.c.ntFilaGrava('paginas',[],[pgx('nova','Página válida')]);a.mem.set(k,raw);
-  // Repetir leitura e reload offline mantém tanto o arquivo ruim quanto as operações boas recuperáveis.
-  for(let i=0;i<2;i++)a.c.ntAplica(vm.runInContext('SM.d',a.c),a.c.ntPendentes());
-  a.c.smGuardaCache();const b=await app([],false,a.mem,true);b.estado.falhar=false;
-  const api=b.c.BCBR.api,k2=k+'-durante-put',raw2='';let inseriu=false;
-  b.c.BCBR.api=async(url,o)=>{const r=await api(url,o);if(o?.method==='PUT'&&!inseriu){inseriu=true;b.mem.set(k2,raw2)}return r};
-  assert.equal(await b.c.ntSync(),true);
-  const salvo=b.salvos.at(-1);assert.deepEqual(lista(salvo.notasDoc),['novo:Bloco válido']);assert.equal(salvo.notasPaginas.paginas[0].titulo,'Página válida');
-  const ruins=(salvo.notas_conflitos||[]).filter(c=>c.conteudo===raw);assert.equal(ruins.length,1,'uma cópia da entrada corrompida');assert.match(ruins[0].motivo,/inválid|corrompid/);
-  assert.equal(b.mem.has(k2),true,'corrupção durante PUT permanece até sua cópia ser enviada');assert.equal(b.c.ntTemPendentes(),true);
-  assert.equal(await b.c.ntSync(),true);
-  for(const [chave,conteudo] of [[k,raw],[k2,raw2]]){
-    assert.equal(b.salvos.at(-1).notas_conflitos.filter(c=>c.conteudo===conteudo).length,1);
-    assert.equal(b.mem.has(chave),false,'só retira a entrada arquivada após confirmação');
-  }
-  assert.equal(b.c.ntTemPendentes(),false);
-});
-
-test('Notas 1.43: migração sem espaço mantém legado e quatro bases até gravar a entrada, inclusive após reload',async()=>{
-  const T1='2026-11-01T00:00:00Z',T2='2026-11-02T00:00:00Z';
-  const base={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[bp('x','Original',T1),bp('y','Original Y',T1)]},notasPaginas:{v:1,paginas:[pgx('p1','Original')],pastas:[{id:'f1',titulo:'Original',atualizado:T1}]},notasFrases:[{id:'fr1',texto:'Original',atualizado:T1}]};
-  const a=await app([],false,null,true,base,{navigator:{locks:locksLegado()}});
-  vm.runInContext(`SM.d=${JSON.stringify(base)}`,a.c);a.c.ntBaseSalva(base.notasDoc.blocos,base.notasPaginas.paginas,base.notasFrases,base.notasPaginas.pastas);
-  basesLegadas.forEach((k,i)=>a.mem.set(k,JSON.stringify(basesDoPlano(base)[i]))); // estado persistido pela 1.42
-  const raw=JSON.stringify({blocos:[bp('x','Local',T2),base.notasDoc.blocos[1]],paginas:base.notasPaginas.paginas,frases:base.notasFrases,pastas:base.notasPaginas.pastas,em:1});
-  a.mem.set('bcbr_notasdoc_pendente',raw);
-  const gravar=a.c.localStorage.setItem;a.c.localStorage.setItem=(k,v)=>{if(k.startsWith('bcbr_notasdoc_pendente:'))throw Error('quota');return gravar(k,v)};
-  const remoto=copia(base);remoto.notasDoc.blocos[1]=bp('y','Remoto',T2);remoto.notasPaginas.paginas.push(pgx('p2','Nova'));remoto.notasFrases.push({id:'fr2',texto:'Nova',atualizado:T2});remoto.notasPaginas.pastas.push({id:'f2',titulo:'Nova',atualizado:T2});
-  for(let i=0;i<2;i++){
-    await vm.runInContext(`SM.d=${JSON.stringify(remoto)};ntRecebe(SM.d)`,a.c);
-    assert.deepEqual(lista(copia(vm.runInContext('SM.d.notasDoc',a.c))),['x:Original','y:Remoto'],'legado não é fundido fora da entrada persistida');
-    assert.equal(await a.c.ntSync(),false,'sem espaço, não envia nem consome o legado');assert.equal(a.salvos.length,0);assert.equal(a.c.ntTemPendentes(),true);
-    assert.equal(a.mem.get('bcbr_notasdoc_pendente'),raw);
-    for(const [k,v] of [['bcbr_notas_base',base.notasDoc.blocos],['bcbr_notaspag_base',base.notasPaginas.paginas],['bcbr_notasfrases_base',base.notasFrases],['bcbr_notaspastas_base',base.notasPaginas.pastas]])assert.deepEqual(JSON.parse(a.mem.get(k)),copia(v));
-  }
-  a.c.smGuardaCache();const b=await app([],false,a.mem,true,remoto,{navigator:{locks:locksLegado()}});b.estado.falhar=false;
-  assert.equal(b.mem.has('bcbr_notasdoc_pendente'),true,'reload com espaço prepara entrada, aguarda PUT');
-  assert.equal(await b.c.ntSync(),true);const salvo=b.salvos.at(-1);
-  assert.deepEqual(lista(salvo.notasDoc),['x:Local','y:Remoto']);
-  assert.deepEqual(salvo.notasPaginas.paginas.map(p=>p.id),['p1','p2']);assert.deepEqual(salvo.notasFrases.map(f=>f.id),['fr1','fr2']);assert.deepEqual(salvo.notasPaginas.pastas.map(f=>f.id),['f1','f2']);
-  // A base ficou antiga durante a quota: a confirmação conservadora agenda retry após atualizar as bases do PUT.
-  assert.equal(b.c.ntTemPendentes(),true);const retry=b.tempos.findLast(t=>t.ms===700);assert.ok(retry);assert.equal(await retry.fn(),true);
-  assert.deepEqual(b.salvos.at(-1),salvo);assert.equal(b.c.ntTemPendentes(),false);
-  confirmaLegado(b,raw);basesLegadas.forEach(k=>assert.equal(b.mem.has(k),true));
-});
-
-test('Notas 1.43: fila mantém as alterações válidas se outra entrada está corrompida; falta de espaço não marca editor como salvo',async()=>{
-  const a=await app([],false,null,true),base=[pgx('p1','Um')];
-  vm.runInContext(`SM.d.notasPaginas={v:1,paginas:${JSON.stringify(base)}}`,a.c);a.c.pgBaseSalva(copia(base));
-  a.c.pgMuda(l=>{l[0].titulo='Novo'});a.mem.set('bcbr_notasdoc_pendente:corrompido','{');
-  assert.equal(copia(a.c.ntPendentes()[0]).paginas[0].titulo,'Novo');assert.ok(a.avisos.some(s=>s.includes('corrompida')));
-  vm.runInContext("NT.shown=[];NT.ed={getJSON:()=>({type:'doc',content:[{type:'paragraph',attrs:{id:'quota'},content:[{type:'text',text:'não salvo'}]}]})};NT.sujo=true",a.c);
-  a.c.localStorage.setItem=()=>{throw Error('quota')};a.c.ntSalvaDoc();
-  assert.equal(vm.runInContext('NT.sujo',a.c),true,'digitação continua suja para repetir');assert.ok(a.avisos.some(s=>s.includes('Sem espaço')));
-});
-
 test('Notas 1.42 (revisão): chip de lembrete — HTML guarda o vínculo (data-tarefaId), colar não duplica a tarefa',async()=>{
   const fonteN=fs.readFileSync(require.resolve('../build/notas2.js'),'utf8');
   assert.match(fonteN,/tarefaId:atr\('tarefaId'\)/);assert.doesNotMatch(fonteN,/atr\('tarefa'\)/);
-});
-
-test('Pastas 1.43: três vias por campo; criar, renomear, ordenar e apagar sem perder movimentos de páginas',async()=>{
-  const a=await app(),f={id:'f1',titulo:'Pasta',ordem:10,criado:'2026-01-01',atualizado:'2026-01-01'},novo={...f,id:'f2'},p=pgx('p1','Página',{pasta:''});
-  const funde=(b,l,r)=>copia(a.c.ntFundePaginas(b,l,r,undefined,true)).paginas;
-  assert.deepEqual(funde([f],[{...f,titulo:'Renomeada',atualizado:'2026-02-01'}],[{...f,ordem:20,atualizado:'2026-03-01'},novo]).map(x=>[x.id,x.titulo,x.ordem]),[['f1','Renomeada',20],['f2','Pasta',10]]);
-  assert.deepEqual(funde([f],[],[f]),[]);
-  const pags=copia(a.c.ntFundePaginas([p],[p],[{...p,pasta:f.id,atualizado:'2026-04-01'}])).paginas;
-  vm.runInContext(`SM.d.notasPaginas={v:1,pastas:[],paginas:${JSON.stringify(pags)}}`,a.c);
-  assert.equal(pags[0].pasta,'f1');assert.equal(vm.runInContext('ntPastaDa(ntPaginas()[0])',a.c),'','pasta apagada × página movida aparece fora');assert.equal(pags[0].doc.blocos.length,1);
-  const old={...p};delete old.pasta;
-  for(const [l,r] of [[old,{...p,pasta:'f2'}],[{...p,pasta:'f2'},old]])assert.equal(copia(a.c.ntFundePaginas([p],[l],[r])).paginas[0].pasta,'f2','campo ausente de aparelho antigo não apaga');
-  // Mesma lista de campos da versão antiga: pasta é desconhecido, preservado pelo spread.
-  vm.runInContext("NT_PG_CAMPOS.splice(NT_PG_CAMPOS.indexOf('pasta'),1)",a.c);
-  assert.equal(copia(a.c.ntFundePaginas([old],[{...old,titulo:'Antigo editou'}],[{...p,pasta:'f2'}])).paginas[0].pasta,'f2');
-});
-
-test('Pastas 1.43: fila entre abas, offline/reload, 409, aparelho antigo e exclusão concorrente',async()=>{
-  const inicial={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[]},notasPaginas:{v:1,paginas:[pgx('p1','Página',{pasta:''})],pastas:[{id:'f1',titulo:'Pasta',ordem:10,criado:'2026-01-01',atualizado:'2026-01-01'}]}},mem=new Map([['sm_cache2',JSON.stringify({sha:'s0',d:inicial})]]);
-  const a=await app([],false,mem,true,inicial),b=await app([],false,mem,true,inicial);
-  a.c.ntPastasMuda(l=>{l[0].titulo='Renomeada';l[0].atualizado='2026-12-01'});b.c.ntPaginaPasta('p1','f1');
-  const fila=copia(a.c.ntPendentes()[0]);assert.equal(fila.pastas[0].titulo,'Renomeada');assert.equal(fila.paginas[0].pasta,'f1');
-  const c=await app([],false,mem,true,inicial);assert.equal(vm.runInContext('ntPastas()[0].titulo',c.c),'Renomeada');assert.equal(vm.runInContext('ntPaginas()[0].pasta',c.c),'f1');
-  c.estado.falhar=false;c.estado.conflito=true;assert.equal(await c.c.ntSync(),true);assert.equal(c.c.ntTemPendentes(),false);assert.equal(c.salvos.at(-1).notasPaginas.pastas[0].titulo,'Renomeada');assert.equal(c.salvos.at(-1).notasPaginas.paginas[0].pasta,'f1');
-  // Plano de aparelho antigo sem a lista de pastas não apaga as conhecidas.
-  const antigo=copia(c.salvos.at(-1));delete antigo.notasPaginas.pastas;delete antigo.notasPaginas.paginas[0].pasta;
-  c.c.ntPastasMuda(l=>{l[0].titulo='Nova alteração';l[0].atualizado='2027-01-01'});await c.fila();c.c.ntAplica(antigo,c.c.ntPendentes());
-  // Se a fila já subiu, forçamos entrada explícita com a base antiga para testar o recebimento incompleto.
-  assert.equal(c.c.ntFilaGrava('pastas',inicial.notasPaginas.pastas,[{...inicial.notasPaginas.pastas[0],titulo:'Preservada',atualizado:'2028-01-01'}]),true);
-  c.c.ntAplica(antigo,c.c.ntPendentes());assert.equal(antigo.notasPaginas.pastas[0].titulo,'Preservada');assert.equal(antigo.notasPaginas.paginas[0].pasta,'f1');
-});
-
-test('Pastas 1.43: apagar × página movida no 409; pasta criada durante PUT fica pendente, base só guarda o enviado',async()=>{
-  const inicial={v:2,dias:{},tarefas:[],notasDoc:{v:1,blocos:[]},notasPaginas:{v:1,paginas:[pgx('p1','Página',{pasta:''})],pastas:[{id:'f1',titulo:'Pasta',ordem:10,criado:'2026-01-01',atualizado:'2026-01-01'}]}},mem=new Map([['sm_cache2',JSON.stringify({sha:'s0',d:inicial})]]);
-  const a=await app([],false,mem,false,inicial),api=a.c.BCBR.api;let conflito=true;
-  a.c.BCBR.api=async(p,o)=>{if(o?.method==='PUT'&&conflito){conflito=false;a.estado.remoto.notasPaginas.paginas[0].pasta='f1';a.estado.remoto.notasPaginas.paginas[0].atualizado='2026-12-01';throw Object.assign(Error('sha'),{status:409})}return api(p,o)};
-  a.c.ntPastasMuda(l=>l.splice(0));assert.equal(await a.c.ntSync(),true);assert.equal(a.c.ntTemPendentes(),false);
-  const salvo=a.salvos.at(-1);assert.deepEqual(salvo.notasPaginas.pastas,[]);assert.equal(salvo.notasPaginas.paginas[0].pasta,'f1');assert.equal(vm.runInContext('ntPastaDa(ntPaginas()[0])',a.c),'');
-  let durante=false;a.c.BCBR.api=async(p,o)=>{const r=await api(p,o);if(o?.method==='PUT'&&!durante){durante=true;a.c.ntPastasMuda(l=>l.push({...inicial.notasPaginas.pastas[0],id:'f2'}))}return r};
-  a.c.pgMuda(l=>{l[0].titulo='Inicia PUT'});assert.equal(await a.c.ntSync(),true);
-  assert.deepEqual(copia(a.c.ptBaseLer()),[],'base não contém a pasta criada no voo');assert.equal(a.c.ntTemPendentes(),true);assert.equal(await a.c.ntSync(),true);assert.equal(a.salvos.at(-1).notasPaginas.pastas[0].id,'f2');assert.equal(a.c.ntTemPendentes(),false);
 });

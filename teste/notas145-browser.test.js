@@ -60,7 +60,7 @@ test('Radio 1.45: lateral, exclusão, listas e atalhos no Chrome',{timeout:18000
     }
   });
 
-  await t.test('1/2: ações discretas nos dois temas; página própria com hover/fixar/resize/troca e Notas completas em ?aba=notas',async()=>{
+  await t.test('1/2: ações discretas nos dois temas; página própria com hover/fixar/resize/troca e Notas completas em ?pagina=notas',async()=>{
     for(const tema of ['light','dark']){
       await ev(`document.documentElement.dataset.theme='${tema}'`);await mouse('mouseMoved',900,800);
       const estilos=await ev("[...document.querySelectorAll('.nt-lat-acoes button')].map(e=>{const s=getComputedStyle(e);return {bg:s.backgroundColor,bd:s.borderTopWidth,cor:s.color,mut:getComputedStyle(document.documentElement).getPropertyValue('--mut').trim(),size:parseFloat(s.fontSize)}})");
@@ -71,7 +71,7 @@ test('Radio 1.45: lateral, exclusão, listas e atalhos no Chrome',{timeout:18000
     assert.equal(await C.confirmado(),true);
     await ev("localStorage.setItem(NT_LAT,'0')");
     const A=await C.novaAba();try{
-      await A.abre(C.URL_+'?pagina='+ids[0]);await esperaTab(A,'!!NP?.ed');
+      await A.abre(C.URL_+'?pagina='+ids[0]);await esperaTab(A,'!!NT.ed');
       assert.equal(await A.ev("getComputedStyle(document.querySelector('#nt_lat_bt')).display!=='none'"),true);
       const inicio=await rect('.nt-conteudo',A),bt=await rect('#nt_lat_bt',A);
       await A.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:bt.x,y:bt.y});
@@ -83,7 +83,7 @@ test('Radio 1.45: lateral, exclusão, listas e atalhos no Chrome',{timeout:18000
       for(const [type,x] of [['mousePressed',rz.x],['mouseMoved',rz.x+70],['mouseReleased',rz.x+70]])await A.call('Input.dispatchMouseEvent',{type,x,y:rz.y,button:'left',buttons:type==='mouseReleased'?0:1,clickCount:1});
       assert.equal(await A.ev('ntLatW()'),300);
       const abas=(await C.call('Target.getTargets')).targetInfos.filter(t=>t.type==='page').length;
-      await clickTab(A,`.nt-pg-it[data-pg="${ids[1]}"] .nt-pg-nome`);await esperaTab(A,`NP?.pagina==='${ids[1]}'`);
+      await clickTab(A,`.nt-pg-it[data-pg="${ids[1]}"] .nt-pg-nome`);await esperaTab(A,`NT.pagina==='${ids[1]}'`);
       assert.equal(await A.ev('location.search'),'?pagina='+ids[1]);assert.equal(await A.ev('document.title'),'Separada 1');
       assert.equal((await C.call('Target.getTargets')).targetInfos.filter(t=>t.type==='page').length,abas,'troca na mesma aba');
       for(const tema of ['light','dark']){
@@ -97,7 +97,7 @@ test('Radio 1.45: lateral, exclusão, listas e atalhos no Chrome',{timeout:18000
         for(const type of ['mousePressed','mouseReleased'])await A.call('Input.dispatchMouseEvent',{type,x:370,y:700,button:'left',clickCount:1});
         await esperaTab(A,"document.querySelector('.nt-corpo').classList.contains('lat-off')");
       }
-      await A.abre(C.URL_+'?aba=notas');await esperaTab(A,'!!NT?.ed&&!!document.querySelector("#nt_lat")');
+      await A.abre(C.URL_+'?pagina=notas');await esperaTab(A,'!!NT?.ed&&!!document.querySelector("#nt_lat")');
       assert.equal(await A.ev('document.title'),'Notas');assert.equal(await A.ev("document.querySelectorAll('.nt-lat-acoes button').length"),4);
       await A.ev('ntBuscaAbre(NT)');assert.equal(await A.ev('!!NT.buscaEl'),true);
       await A.ev('ntAtalhosAbre(NT)');assert.equal(await A.ev('!!document.querySelector("#nt_atalhos")'),true);

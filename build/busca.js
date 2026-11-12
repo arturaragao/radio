@@ -40,12 +40,12 @@ const bgArea=q=>typeof AREA_BY!=='undefined'?AREA_BY[q._a]?.nome:'';
 function bgDocs(){
   const docs=[],add=(tipo,id,titulo,corpo,abre,sub)=>{titulo=String(titulo||'').trim();corpo=String(corpo||'');docs.push({tipo,id,chave:tipo+':'+id,titulo,sub:sub||'',corpo,tn:ntNorma(titulo),cn:ntNorma(corpo),abre})};
   const d=SM.d;
-  for(const b of d?.notasDoc?.blocos||[]){
+  for(const b of []){
     const txt=bgTextoNo(b.conteudo).trim();if(!txt)continue;
     const sum=b.conteudo?.type==='details'?bgTextoNo(b.conteudo.content?.find(x=>x.type==='detailsSummary')).trim():'';
     add('nota',b.id,sum||txt.slice(0,70),txt,()=>bgIrNota(b.id));
   }
-  for(const p of d?.notasPaginas?.paginas||[])add('pagina',p.id,p.titulo||'Sem título',(p.doc?.blocos||[]).map(b=>bgTextoNo(b.conteudo)).join(' '),()=>bgIrPagina(p.id),d.notasPaginas.pastas?.find(f=>f.id===p.pasta)?.titulo);
+  for(const p of (typeof ntPaginas==='function'?ntPaginas():[]))add('pagina',p.id,p.titulo||'Sem título',(p.doc?.blocos||[]).map(b=>bgTextoNo(b.conteudo)).join(' '),()=>bgIrPagina(p.id),d.notasPaginas.pastas?.find(f=>f.id===p.pasta)?.titulo);
   for(const t of d?.tarefas||[])add('tarefa',t.id,t.texto,[t.det,...(t.subtarefas||[]).map(s=>s.texto)].filter(Boolean).join(' '),()=>bgIrTarefa(t.id),(t.dia&&t.dia.length===10?t.dia.slice(8)+'/'+t.dia.slice(5,7):'')+(t.feito?' · feita':''));
   for(const [iso,x] of Object.entries(d?.dias||{})){
     const rot=iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4);

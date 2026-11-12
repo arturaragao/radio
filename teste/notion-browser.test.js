@@ -39,14 +39,14 @@ test('Notion 1.43 no Chrome: conversor e importação com imagem persistida',{ti
     await ate("document.querySelector('.nt-importa-status')?.textContent.includes('2 páginas criadas')");
     assert.match(await ev("document.querySelector('.nt-importa-status').textContent"),/1 imagens enviadas, 0 falhas/);assert.equal(await C.confirmado(),true);
     const pags=await ev('ntPaginas()'),f=await ev('ntPastas().at(-1)');assert.equal(f.titulo,'Raiz fictícia');assert.equal(pags.filter(p=>p.pasta===f.id).length,2);
-    const primeira=pags.find(p=>p.titulo==='Raiz fictícia');assert.ok(primeira);assert.equal(await ev('NP.pagina'),primeira.id);
-    assert.deepEqual(await ev("[...NP.el.querySelectorAll('[data-type=details]')].map(e=>e.classList.contains('is-open'))"),[false,false,false]);
-    await ate("NP.el.querySelector('img.nt-img')?.complete&&NP.el.querySelector('img.nt-img').naturalWidth===3");
+    const primeira=pags.find(p=>p.titulo==='Raiz fictícia');assert.ok(primeira);assert.equal(await ev('NT.pagina'),primeira.id);
+    assert.deepEqual(await ev("[...NT.el.querySelectorAll('[data-type=details]')].map(e=>e.classList.contains('is-open'))"),[false,false,false]);
+    await ate("NT.el.querySelector('img.nt-img')?.complete&&NT.el.querySelector('img.nt-img').naturalWidth===3");
     await click('.nt-importa-acoes button');await ev('ntPainelFecha()');
     // Retira cache da imagem: reload precisa buscá-la do servidor simulado, provando o PUT.
     await ev("caches.delete('bcbr-img')");await C.abre('notas');await ev(`ntPainelAbre('${primeira.id}')`);
-    await ate("NP.el.querySelector('img.nt-img')?.complete&&NP.el.querySelector('img.nt-img').naturalWidth===3");assert.equal(await ev(`ntPastas().find(p=>p.id==='${f.id}').titulo`),'Raiz fictícia');
-    assert.equal(await ev("NP.ed.getJSON().content.filter(n=>n.type==='details').length"),2);
+    await ate("NT.el.querySelector('img.nt-img')?.complete&&NT.el.querySelector('img.nt-img').naturalWidth===3");assert.equal(await ev(`ntPastas().find(p=>p.id==='${f.id}').titulo`),'Raiz fictícia');
+    assert.equal(await ev("NT.ed.getJSON().content.filter(n=>n.type==='details').length"),2);
     await ev('ntPainelFecha()');
   });
   await t.test('HTML solto, falha de imagem, offline só texto, cancelamento e ZIP inválido sem importação parcial',async()=>{
@@ -55,7 +55,7 @@ test('Notion 1.43 no Chrome: conversor e importação com imagem persistida',{ti
     const png=Buffer.from(await ev("(()=>{const c=document.createElement('canvas');c.width=3;c.height=3;return c.toDataURL('image/png').split(',')[1]})()"),'base64');
     const comImagem=zip([{nome:'Com imagem.html',dados:'<title>Com imagem</title><img src="foto.png">'},{nome:'foto.png',dados:png}]);
     await ev("window.ntEnviaOriginal=ntImgEnvia;window.ntChamadas=0;ntImgEnvia=async()=>{window.ntChamadas++;throw Error('falha fictícia de upload')}");
-    const falha=await ev(`ntNotionImporta(new File([new Uint8Array(${JSON.stringify([...comImagem])})],'falha.zip'))`);assert.equal(falha.falhas,1);assert.equal(await ev('window.ntChamadas'),1);assert.match(await ev('NP.ed.state.doc.textContent'),/imagem não importada: foto.png/);await ev("ntImgEnvia=window.ntEnviaOriginal;window.ntChamadas=0;document.querySelector('.nt-importa-acoes button').click();ntPainelFecha()");
+    const falha=await ev(`ntNotionImporta(new File([new Uint8Array(${JSON.stringify([...comImagem])})],'falha.zip'))`);assert.equal(falha.falhas,1);assert.equal(await ev('window.ntChamadas'),1);assert.match(await ev('NT.ed.state.doc.textContent'),/imagem não importada: foto.png/);await ev("ntImgEnvia=window.ntEnviaOriginal;window.ntChamadas=0;document.querySelector('.nt-importa-acoes button').click();ntPainelFecha()");
     const ruim=zip([{nome:'boa.html',dados:'boa'},{nome:'cifrada.html',flags:1}]);assert.equal(await ev(`ntNotionImporta(new File([new Uint8Array(${JSON.stringify([...ruim])})],'ruim.zip'))`),null);assert.match(await ev("document.querySelector('.nt-importa-status').textContent"),/cifrado/);assert.equal(await ev('ntPaginas().length'),n+2);await click('.nt-importa-acoes button');
     await ev(`Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});ntImgEnvia=async b=>{window.ntChamadas++;return window.ntEnviaOriginal(b)};window.ntResultado=undefined;ntNotionImporta(new File([new Uint8Array(${JSON.stringify([...comImagem])})],'offline.zip')).then(r=>window.ntResultado=r);0`);
     await ate("document.querySelector('.nt-importa-status')?.textContent.includes('precisam de conexão')");await click('.nt-importa-acoes button:last-child');await ate('window.ntResultado!==undefined');assert.equal(await ev('window.ntResultado.falhas'),1);assert.equal(await ev('window.ntChamadas'),0,'offline só texto não tenta upload');await ev("document.querySelector('.nt-importa-acoes button').click();ntPainelFecha()");

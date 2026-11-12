@@ -17,7 +17,7 @@ try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d
 try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-const SM_MERGE_FORA=new Set(['notasDoc','notasPaginas','notasFrases','notas_conflitos']);
+const SM_MERGE_FORA=new Set(['notasDoc','notas','notas_v138','paginasEmArquivos']);
 // Três vias (b = base, l = local, r = remoto). Objetos: por chave; listas de objetos: por id (apagado de um lado e intacto do outro apaga; editado do outro lado fica; itens sem id:
 // os do remoto ficam e os locais novos entram). Escalar mudado dos dois lados: vale o lado cujo item tem \`atualizado\` (ou \`em\`) mais novo; sem carimbo, o local.
 // sb = {desde} quando a base se perdeu: não dá para saber o que o remoto apagou, então só entra item local criado depois de \`desde\` (os ids vêm da hora), nada é ressuscitado.
@@ -109,7 +109,7 @@ async function smPuxar(){
 }
 async function smPuxar1(){
   smAgendaPuxar();
-  if(SM.d&&typeof ntSync==='function'&&ntTemPendentes()&&!await ntSync())return;
+  if(typeof SyncNotas!=='undefined'){await SyncNotas.receberLegado();await SyncNotas.enviar();await SyncNotas.listarPaginas();if(typeof ntSincroniza==='function')await ntSincroniza()}
   try{
     const g=SM.gravs||0;   // contador de gravações: resposta velha (a gravação começou/terminou durante a busca) é descartada; a próxima busca traz a nova
     const f=await smLerArquivo(SM_ARQ,{etag:SM.d&&SM.sha?SM.etag||'':undefined});
@@ -118,10 +118,11 @@ async function smPuxar1(){
     SM.avisoTamanho=f.size>800000?'Dados grandes ('+(f.size/1000000).toFixed(2)+' MB): páginas importadas pesadas deixam a sincronização lenta.':'';
     if(f.sha!==SM.sha){
       if(typeof ntAntes==='function')ntAntes();   // o que está sendo digitado entra na fila ANTES de o plano do GitHub chegar
-      const texto=smDec(f.content),remoto=JSON.parse(texto);
+      const migrado=typeof SyncNotas!=='undefined'?await SyncNotas.integrarPlano(JSON.parse(smDec(f.content)),f.sha):{d:JSON.parse(smDec(f.content)),sha:f.sha};
+      const remoto=migrado.d,texto=JSON.stringify(remoto);f.sha=migrado.sha;
       if(typeof rdGancho==='function')rdGancho('leitura',remoto);
       SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto;if(SM.sujo)smSujo(true);
-      if(typeof ntRecebe==='function')ntRecebe(SM.d);SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
+      SM.sha=f.sha;smGuardaCache();smAuto();smRender();smNativoTarefas()}
     SM.etag=f.etag;
     if(typeof rdGancho==='function'&&SM.base)rdGancho('leitura',SM.base);
   }catch(e){
@@ -135,7 +136,7 @@ async function smPuxar1(){
     smRender();
   }
 }
-function smRender(){if(typeof NTA!=='undefined'&&NTA&&NTA!=='notas')return;   // aba de uma página (?pagina=<id>): o resto do app não é desenhado
+function smRender(){
   if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
 // toda mudança é uma função idempotente: aplica na hora e de novo na gravação (se outro aparelho mudou o arquivo, relê e reaplica)
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.
@@ -153,25 +154,24 @@ function smMudar(fn,msg,aoSalvar){
     for(let t=0;t<6;t++){
       try{
         grupo.forEach(g=>g.fn(SM.d));
-        if(typeof ntAplica==='function')ntAplica(SM.d,ntPendentes());
+        if(typeof SyncNotas!=='undefined'){const m=await SyncNotas.integrarPlano(SM.d,SM.sha);SM.d=m.d;SM.sha=m.sha}
         const texto=JSON.stringify(SM.d),body={message:'semana: '+(grupo.length>1?grupo.length+' alterações':msg||'atualização'),content:BCBR.b64(texto),branch:'main'};if(SM.sha)body.sha=SM.sha;
-        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null,blocos=SM.d.notasDoc?.blocos,pags=SM.d.notasPaginas?.paginas||[],pastas=SM.d.notasPaginas?.pastas,frases=SM.d.notasFrases||[];   // o que subiu: edições durante o voo do PUT não entram na base
+        const salvo=grupo.some(g=>g.aoSalvar)?JSON.parse(smDec(body.content)):null;
         SM.gravs=(SM.gravs||0)+1;
         const enviadas=typeof rdGancho==='function'?rdGancho('envio',texto):null;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
         if(typeof rdGancho==='function')rdGancho('confirmou',enviadas,texto);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
         SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
-        if(typeof ntBaseSalva==='function')ntBaseSalva(blocos,pags,frases,pastas||null);   // o que subiu é a última versão sincronizada das notas
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;if(typeof ntRecebe==='function')ntRecebe(SM.d)}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
+        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
         if(typeof rdGancho==='function')rdGancho('erro',e);
         SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
       }
     }
-    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smRender();return fim(false);
+    SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smSujo(true);smRender();return fim(false);
   };
   SM.fila=SM.fila.then(tarefa);return SM.fila;
 }

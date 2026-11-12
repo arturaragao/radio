@@ -52,10 +52,13 @@
         <input id="cf_tk" type="password" style="width:100%" value="${tok()}"></label>
       <label style="display:block;margin-top:10px"><b>Chave do Gemini</b> (opcional: para o botão de comentário com IA)
         <input id="cf_gm" type="password" style="width:100%" value="${localStorage.getItem(LS.gm) || ""}"></label>
+      <label style="display:block;margin-top:10px"><b>Chave dos laudos</b> (opcional: fine-grained, repositório <b>laudos-tutu-dados</b>, Contents: Read-only; usada só na página Preliminares)
+        <input id="cf_dk" type="password" style="width:100%" value="${localStorage.getItem("bcbr_gh_token_dados") || ""}"></label>
       <div class="row" style="margin-top:14px"><button class="b" id="cf_ok">Salvar e abrir</button></div></div>`;
     document.getElementById("cf_ok").onclick = async () => {
       localStorage.setItem(LS.tk, document.getElementById("cf_tk").value.trim());
       localStorage.setItem(LS.gm, document.getElementById("cf_gm").value.trim());
+      localStorage.setItem("bcbr_gh_token_dados", document.getElementById("cf_dk").value.trim());
       localStorage.removeItem("bcbr_auth_aviso");
       await passarChaveSW(); location.reload();
     };

@@ -1392,7 +1392,7 @@ test('Notas 1.43: fila mantém as alterações válidas se outra entrada está c
   a.c.pgMuda(l=>{l[0].titulo='Novo'});a.mem.set('bcbr_notasdoc_pendente:corrompido','{');
   assert.equal(copia(a.c.ntPendentes()[0]).paginas[0].titulo,'Novo');assert.ok(a.avisos.some(s=>s.includes('corrompida')));
   vm.runInContext("NT.shown=[];NT.ed={getJSON:()=>({type:'doc',content:[{type:'paragraph',attrs:{id:'quota'},content:[{type:'text',text:'não salvo'}]}]})};NT.sujo=true",a.c);
-  a.c.localStorage.setItem=()=>{throw Error('quota')};a.c.ntSalvaDoc();
+  a.c.localStorage.setItem=()=>{throw Object.assign(Error('quota'),{name:'QuotaExceededError'})};a.c.ntSalvaDoc();
   assert.equal(vm.runInContext('NT.sujo',a.c),true,'digitação continua suja para repetir');assert.ok(a.avisos.some(s=>s.includes('Sem espaço')));
 });
 

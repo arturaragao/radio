@@ -13,6 +13,14 @@ const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
 // interceptor injetado no index.html (só na resposta; o arquivo do app não muda): desvia api.github.com para /api e põe token falso
 const PRE = `(()=>{const f=window.fetch;window.fetch=(u,o)=>{u=String(u);if(u.startsWith('https://api.github.com'))u=u.replace('https://api.github.com','/api');return f(u,o)};
 try{localStorage.setItem('bcbr_gh_token','token-falso')}catch(e){}})();`;
+// Regressão 1.46: artefatos publicados da 1.45, lidos só do histórico LOCAL deste app.
+// Opt-in exclusivamente com dados fictícios; não busca commits nem acessa outro repo.
+const legado146=new Map();
+if(SIMULADO&&process.env.BCBR_LEGADO146==='1'){
+  const ref='e819831753af877adeccf040a062a46215234a2f',git=require('node:child_process').execFileSync;
+  for(const arq of ['index.html','shim.js','app.js'])legado146.set(arq,git('git',['show',ref+':'+arq],{cwd:RAIZ,encoding:'utf8',maxBuffer:4*1024*1024,windowsHide:true}));
+  if(!legado146.get('index.html').includes('1.45.0'))throw Error('Fixture não é 1.45.0');
+}
 const SW_NULO = `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.registration.unregister()));`;
 let n = 0;
 // BCBR_MEM=1 (só com --simulado): PUT de semana/plano.json e imagens/ fica guardado em MEMÓRIA do servidor e volta no GET (teste de recarregar a página).
@@ -24,6 +32,12 @@ const hist=[];   // mais novo primeiro: {sha,rel,b64,message,date}
 const stats={get:0,n304:0,put:0,n409:0};let cota=null;
 http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
+  const antigo=u==='/legado145.html'?'index.html':req.url.includes('v=1.45.0')?u.slice(1):'';
+  if(legado146.has(antigo)){
+    const body=legado146.get(antigo);
+    res.writeHead(200,{'content-type':mime[path.extname(antigo)],'cache-control':'no-store'});
+    return res.end(antigo==='index.html'?body.replace(/<script/,'<script>'+PRE+'</script><script'):body);
+  }
   const rl = () => cota == null ? {} : { 'x-ratelimit-remaining': String(cota), 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600) };
   const j = (o, c = 200, h = {}) => { res.writeHead(c, { 'content-type': 'application/json', ...rl(), ...h }); res.end(JSON.stringify(o)); };
   if (u === '/__stats') { const o = { ...stats }; if (req.url.includes('zera')) Object.assign(stats, { get: 0, n304: 0, put: 0, n409: 0 }); return j(o); }

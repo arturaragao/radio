@@ -1,6 +1,6 @@
 // 1.44 PARCIAL: observação local. Não é uma fila nem altera o formato/fusão do plano.
 // Só um PUT confirmado marca edições como enviadas; GET observa o remoto ANTES da fusão.
-const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000;
+const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000,RD_BYTES=512*1024;
 const RD={enviando:0,ultima:0,erro:'',localErro:''};
 const rdCopia=x=>JSON.parse(JSON.stringify(x));
 const rdTexto=n=>typeof n==='string'?n:n?.text||((n?.content||[]).map(rdTexto).join(n?.type==='doc'||n?.type==='detailsContent'?'\n':''));
@@ -10,8 +10,14 @@ function rdLer(){
   catch(e){RD.localErro='Detector indisponível: não consegui ler o diário local.';return []}
 }
 function rdGuardar(l){
-  try{localStorage.setItem(RD_CHAVE,JSON.stringify(l.filter(e=>e.hora>Date.now()-RD_IDADE).slice(-200)));RD.localErro=''}
-  catch(e){RD.localErro='Detector sem espaço para guardar o diário local. Baixe uma cópia em Ajustes.'}
+  try{
+    const recentes=l.filter(e=>e.hora>Date.now()-RD_IDADE).sort((a,b)=>a.hora-b.hora).slice(-200);
+    let raw=JSON.stringify(recentes);
+    // Conta chave + JSON em UTF-16 (inclusive conteúdo, anterior e escapes). Poda só entradas já confirmadas
+    // pelo PUT, das mais antigas; a mais recente e as não confirmadas ficam mesmo acima do limite.
+    while(2*(RD_CHAVE.length+raw.length)>RD_BYTES){const i=recentes.findIndex((e,n)=>e.enviada===true&&n<recentes.length-1);if(i<0)break;recentes.splice(i,1);raw=JSON.stringify(recentes)}
+    smLsGrava(RD_CHAVE,raw);RD.localErro='';
+  }catch(e){RD.localErro=smErroLocal(e,'guardar o diário local')}
 }
 function rdItens(d){
   const m=new Map(),poe=x=>m.set(rdChave(x),x);
@@ -150,11 +156,39 @@ function rdConflitosAbre(){
     if(b.dataset.sim!==undefined){b.disabled=true;const ok=await rdConflitoDescarta(lista[+b.dataset.sim]);ntModalFecha(ov);rdPinta();rdConflitosAbre();if(!ok)toast('Descarte pendente de sincronização; confira a conexão.')}
   });
 }
-function rdBackupHtml(){return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+function rdBackupHtml(){setTimeout(rdUsoAtualiza,0);return `<div class="card"><h3>Backup e recuperação</h3><p id="rd_uso">localStorage: ${Math.ceil(smLocalBytes()/1024)} KB · Consultando armazenamento…</p><button type="button" class="b s" onclick="rdPersistir(this)">Proteger armazenamento neste aparelho</button><p id="rd_persist"></p><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+async function rdUsoAtualiza(){
+  let idb='IDB estimado: indisponível',persist='Persistência não informada pelo navegador.';
+  try{const e=await navigator.storage?.estimate();if(e){const n=e.usageDetails?.indexedDB;idb=n!==undefined?'IDB estimado: '+Math.ceil(n/1024)+' KB':'Armazenamento da origem (IDB + caches): '+Math.ceil((e.usage||0)/1024)+' KB; IDB separado indisponível'}}catch(e){}
+  try{if(navigator.storage?.persisted)persist=await navigator.storage.persisted()?'Armazenamento persistente concedido.':'Armazenamento sujeito à limpeza pelo navegador.'}catch(e){}
+  const el=document.getElementById('rd_uso');if(el)el.textContent='localStorage: '+Math.ceil(smLocalBytes()/1024)+' KB · '+idb;
+  const p=document.getElementById('rd_persist');if(p)p.textContent=persist;
+}
+async function rdPersistir(botao){
+  botao.disabled=true;let msg;
+  try{msg=navigator.storage?.persist?(await navigator.storage.persist()?'Armazenamento persistente concedido.':'O navegador não concedeu persistência. Mantenha uma cópia baixada.'):'Este navegador não oferece armazenamento persistente.'}catch(e){msg='Não foi possível pedir persistência neste navegador.'}
+  const el=document.getElementById('rd_persist');if(el)el.textContent=msg;botao.disabled=false;
+}
+function rdOfertaCopia(){
+  if(document.getElementById('rd_copia_cota'))return;
+  const ov=rdJanela('Armazenamento cheio',`<p>localStorage: ${Math.ceil(smLocalBytes()/1024)} KB. A edição continua aberta. Baixe uma cópia antes de fechar.</p><button type="button" class="b" id="rd_copia_cota">Baixar cópia</button>`);
+  ov.querySelector('#rd_copia_cota').onclick=rdBaixar;
+}
 function rdBaixar(){
   if(typeof ntAntes==='function')ntAntes();if(typeof pgTituloSalva==='function')pgTituloSalva();
   if(!SM.d){toast('O plano ainda não está disponível.');return}
-  const url=URL.createObjectURL(new Blob([JSON.stringify(SM.d,null,2)],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='radio-plano-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const copia=rdCopia(SM.d);
+  // Se a fila não coube, o editor continua sujo e SM.d ainda tem a versão anterior.
+  // Exporta também esse texto sem confirmar a fila nem alterar o plano em memória.
+  for(const c of [typeof NT==='undefined'?null:NT,typeof NP==='undefined'?null:NP]){
+    const pagina=c?.pagina&&copia.notasPaginas?.paginas?.find(p=>p.id===c.pagina);
+    if(pagina&&c.titulo)pagina.titulo=c.titulo.value;
+    if(!c?.ed||!c.sujo)continue;
+    const doc={v:1,blocos:ntBlocos(c.ed.getJSON(),c.shown||[])};
+    if(c.pagina){if(pagina)pagina.doc=doc}
+    else copia.notasDoc=doc;
+  }
+  const url=URL.createObjectURL(new Blob([JSON.stringify(copia,null,2)],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='radio-plano-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 window.addEventListener('pageshow',()=>smPuxar());
 window.addEventListener('online',rdPinta);window.addEventListener('offline',rdPinta);

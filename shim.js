@@ -84,9 +84,92 @@
   Object.assign(window.BCBR, { api, raw, b64 });   // usados pela aba Semana (build/semana.js)
 
   // ---------- cache simples em IndexedDB ----------
-  const idb = new Promise((ok, no) => { const r = indexedDB.open("bcbr", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+  const idb = new Promise((ok, no) => { const r = indexedDB.open("bcbr", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); r.onblocked = () => no(new Error('IndexedDB bloqueado')); });
+  // A abertura pode falhar antes de o callback assíncrono de Web Locks começar.
+  // Tratar já a rejeição, mantendo a promessa original rejeitada para os leitores.
+  idb.catch(() => {});
   const kvGet = (k) => idb.then((d) => new Promise((ok) => { const t = d.transaction("kv").objectStore("kv").get(k); t.onsuccess = () => ok(t.result); t.onerror = () => ok(undefined); })).catch(() => undefined);
   const kvSet = (k, v) => idb.then((d) => new Promise((ok) => { const t = d.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = ok; t.onerror = ok; })).catch(() => {});
+
+  // 1.46: cópia confirmada dos caches/bases grandes no IDB. O localStorage CONTINUA com a cópia
+  // (abas/APK 1.45 offline leem só dali); ela só sai quando a cota estoura e o IDB tem o mesmo valor.
+  // A fila e as bases 1.42 nunca são removidas. Não usar kvSet aqui: ele tolera erros.
+  const grandesChaves = ['sm_cache2', 'sm_base2', ...['notas','notaspag','notasfrases','notaspastas'].flatMap(n => ['bcbr_'+n+'_base','bcbr_'+n+'_base_v143'])];
+  const grandesMem = new Map(), grandesConf = new Map(), grandesVelho = new Map(); // conf: valor confirmado no IDB; velho: cópia LS que não coube atualizar
+  let grandesFila = Promise.resolve(), grandesIDB = true;
+  const grandeAntiga = k => /^bcbr_notas(?:pag|frases|pastas)?_base$/.test(k);
+  const grandeTrava = fn => typeof navigator.locks?.request === 'function' ? navigator.locks.request('radio-armazenamento-v146', fn) : fn();
+  async function grandeLer(k) {
+    const d = await idb;
+    return new Promise((ok,no) => { const t=d.transaction('kv'),r=t.objectStore('kv').get(k);r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);t.onabort=()=>no(t.error||new Error('Leitura abortada')); });
+  }
+  async function grandeConfirmar(k,v) {
+    const d = await idb;
+    await new Promise((ok,no) => { const t=d.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=ok;t.onerror=()=>no(t.error);t.onabort=()=>no(t.error||new Error('Gravação abortada')); });
+    if (await grandeLer(k) !== v) throw new Error('Cópia no IndexedDB não confirmada');
+    if (typeof v === 'string') grandesConf.set(k,v); else grandesConf.delete(k);
+  }
+  // Carimbo = maior data/número em campos atualizado/em/hora do JSON (plano ou base). 0 = não dá para ordenar.
+  function grandeCarimbo(raw) {
+    let m=0;const anda=x=>{if(Array.isArray(x))x.forEach(anda);else if(x&&typeof x==='object')for(const [c,v] of Object.entries(x)){if(c==='atualizado'||c==='em'||c==='hora'){const t=typeof v==='number'?v:Date.parse(v);if(t>m)m=t}else if(v&&typeof v==='object')anda(v)}};
+    try{anda(JSON.parse(raw))}catch(e){}return m;
+  }
+  const grandesPronto = grandeTrava(async () => {
+    for(const k of grandesChaves){
+      try {
+        const raw=localStorage.getItem(k),v=await grandeLer(k);
+        if(raw!==null&&typeof v==='string'&&v!==raw){
+          // LS e IDB divergem (ex.: 1.45 recriou cache antigo). Nunca troca IDB mais novo por LS mais velho;
+          // o perdedor fica guardado: LS continua no LS; IDB substituído vai para 'anterior:'+k.
+          const cl=grandeCarimbo(raw),ci=grandeCarimbo(v);
+          if(ci>cl){grandesMem.set(k,v);grandesConf.set(k,v);grandesVelho.set(k,raw);continue}
+          await grandeConfirmar('anterior:'+k,v);grandesConf.delete('anterior:'+k);
+        }
+        if(raw!==null){grandesMem.set(k,raw);if(v!==raw)await grandeConfirmar(k,raw);else grandesConf.set(k,raw)}
+        else if(typeof v==='string'){grandesMem.set(k,v);grandesConf.set(k,v)}
+      } catch(e) { grandesIDB=false; } // Uma chave com falha não impede hidratar as demais.
+    }
+  }).catch(()=>{grandesIDB=false});
+  function grandeAgenda(fn) {
+    const p=grandesFila.then(()=>grandesPronto).then(()=>grandeTrava(fn));
+    grandesFila=p.catch(()=>{});return p;
+  }
+  window.BCBR.grandes = {
+    pronto:grandesPronto,
+    // LS primeiro: uma aba antiga pode tê-lo reescrito. Exceção: a cópia LS que esta aba não conseguiu atualizar.
+    getItem(k){const l=localStorage.getItem(k);if(l!==null&&grandesVelho.get(k)!==l)return l;return grandesMem.get(k)??l},
+    setItem(k,v){
+      if(!grandesChaves.includes(k)||grandeAntiga(k))throw new Error('Chave não autorizada');
+      v=String(v);grandesMem.set(k,v);
+      const antes=localStorage.getItem(k);let lsErro=null;
+      const grava=()=>{localStorage.setItem(k,v);grandesVelho.delete(k)};
+      // Cópia síncrona no LS antes de qualquer await (fechar a aba não perde); sob cota, libera cópias confirmadas e tenta de novo.
+      try{grava()}catch(e){try{if(e?.name!=='QuotaExceededError'||!window.BCBR.grandes.liberar())throw e;grava()}catch(e2){lsErro=e2;if(antes!==null&&localStorage.getItem(k)===antes)grandesVelho.set(k,antes)}}
+      if(!grandesIDB)return lsErro?Promise.reject(lsErro):Promise.resolve(true);
+      return grandeAgenda(async()=>{
+        // Grava o valor mais novo do LS (outra aba pode ter escrito depois); removido por outra aba = nada a copiar.
+        const atual=localStorage.getItem(k),valor=lsErro?v:atual;
+        if(valor===null){grandesConf.delete(k);return true}
+        try{await grandeConfirmar(k,valor)}
+        catch(e){grandesIDB=false;grandesConf.delete(k);if(lsErro)throw lsErro;return true}
+        // Remove do LS só um valor idêntico ao confirmado no IDB, relido sem await entre leitura e remoção.
+        if(lsErro&&localStorage.getItem(k)===grandesConf.get(k)){localStorage.removeItem(k);grandesVelho.delete(k)}
+        return true;
+      });
+    },
+    removeItem(k){
+      if(k!=='sm_base2')throw new Error('Remoção não autorizada');
+      grandesMem.delete(k);grandesVelho.delete(k);localStorage.removeItem(k);
+      return grandeAgenda(async()=>{try{if(grandesIDB&&localStorage.getItem(k)===null)await grandeConfirmar(k,null)}catch(e){grandesIDB=false}});
+    },
+    // Cota estourou: tira do LS só cópias cujo valor idêntico está confirmado no IDB. Bases 1.42 ficam.
+    liberar(){
+      let n=0;
+      for(const k of grandesChaves){const l=localStorage.getItem(k);if(!grandeAntiga(k)&&l!==null&&grandesConf.get(k)===l){localStorage.removeItem(k);n++}}
+      return n;
+    },
+    flush(){return grandesFila}
+  };
 
   async function passarChaveSW() {
     if (!tok()) return;
@@ -307,6 +390,7 @@
 
   // ---------- início ----------
   async function iniciar() {
+    await grandesPronto;
     await recuperarChave();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").then(passarChaveSW).catch(() => {});   // não espera
     if (!tok()) return telaConfig();

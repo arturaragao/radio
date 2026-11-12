@@ -73,7 +73,7 @@ test('focus/visível/pageshow puxam imediatamente, SM.puxando impede busca conco
 });
 test('PUT falho não confirma edição e quota do diário não interrompe o PUT',async()=>{
   const a=app();a.falha(new TypeError('Failed to fetch'));assert.equal(await a.c.smMudar(d=>{d.tarefas[0].texto='não enviado'}),false);a.avanca();a.c.rdVerifica(plano());assert.equal(a.c.rdAlertas().length,0);assert.equal(a.c.rdLer()[0].enviada,false);
-  const b=app(),set=b.c.localStorage.setItem;b.c.localStorage.setItem=(k,v)=>{if(k==='bcbr_edicoes_v144')throw Error('Quota');set(k,v)};assert.equal(await b.c.smMudar(d=>{d.tarefas[0].texto='salvo apesar da quota'}),true);assert.equal(b.salvo().tarefas[0].texto,'salvo apesar da quota');assert.match(vm.runInContext('RD.localErro',b.c),/sem espaço/);
+  const b=app(),set=b.c.localStorage.setItem;b.c.localStorage.setItem=(k,v)=>{if(k==='bcbr_edicoes_v144')throw Object.assign(Error('Quota'),{name:'QuotaExceededError'});set(k,v)};assert.equal(await b.c.smMudar(d=>{d.tarefas[0].texto='salvo apesar da quota'}),true);assert.equal(b.salvo().tarefas[0].texto,'salvo apesar da quota');assert.match(vm.runInContext('RD.localErro',b.c),/Sem espaço/);
 });
 test('Conflitos: descarta só a cópia escolhida pela fila existente',async()=>{
   const a=app(),c={id:'c',em:'hoje',conteudo:bloco('versão antiga').conteudo},outro={...c,em:'amanhã'};a.sm.d.notas_conflitos=[c,outro];assert.equal(await a.c.rdConflitoDescarta(c),true);assert.deepEqual(a.salvo().notas_conflitos,[outro]);assert.equal(a.conta().puts,1);

@@ -9,12 +9,28 @@
 // A revisão de domingo (tarefa agendada do Claude) preenche a agenda das próximas semanas pelo Google Agenda e põe os itens da semana nova.
 const SM={d:null,sha:null,ok:false,erro:'',ed:null,add:{},dr:{},ab:new Set(),sel:null,sem:null,mes:null,plan:false,semAdd:null,conf:null,fila:Promise.resolve(),lote:[],auto:new Set(),fr:[]};
 const SM_ARQ='semana/plano.json',SM_VELHO='semana/atual.json';
+// O shim hidrata o espelho antes de carregar app.js. Sem IDB, mantém o caminho localStorage.
+const smArmazem=globalThis.BCBR?.grandes||localStorage;
+// Grava no localStorage; se a cota estourar, libera as cópias grandes já confirmadas no IDB e tenta uma vez mais.
+function smLsGrava(k,v){try{localStorage.setItem(k,v)}catch(e){if(!smCota(e)||!smArmazem.liberar?.())throw e;localStorage.setItem(k,v)}}
+const smCota=e=>e?.name==='QuotaExceededError'||e?.name==='NS_ERROR_DOM_QUOTA_REACHED';
+function smLocalBytes(){let n=0;for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);n+=2*(k.length+(localStorage.getItem(k)||'').length)}return n}
+function smErroLocal(e,acao='salvar as notas'){
+  if(!smCota(e))return 'Não foi possível '+acao+' neste aparelho ('+(e?.name||'erro de armazenamento')+'). Baixe uma cópia em Ajustes.';
+  let uso='indisponível';try{uso=Math.ceil(smLocalBytes()/1024)+' KB'}catch(x){}
+  try{if(typeof rdOfertaCopia==='function')rdOfertaCopia()}catch(x){} // aviso nunca pode interromper a retenção do editor sujo
+  return 'Sem espaço para '+acao+' neste aparelho. localStorage: '+uso+'. Baixar cópia em Ajustes › Backup e recuperação.';
+}
+function smGravaGrande(k,v){
+  const falha=e=>{SM.erroLocal=smErroLocal(e,'guardar a cópia local');if(typeof toast==='function')toast(SM.erroLocal);return false};
+  try{return Promise.resolve(smArmazem.setItem(k,v)).then(()=>true,falha)}catch(e){return Promise.resolve(falha(e))}
+}
 try{SM.ab=new Set(JSON.parse(localStorage.getItem('sm_abertas')||'[]'))}catch(e){}
-try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
+try{const c=JSON.parse(smArmazem.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
 // 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
 // SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
 // locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
-try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?smArmazem.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const SM_MERGE_FORA=new Set(['notasDoc','notasPaginas','notasFrases','notas_conflitos']);
@@ -57,7 +73,7 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
 const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
 function smSujo(sim){
   SM.sujo=sim;
-  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
+  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)return smGravaGrande('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');return smArmazem.removeItem('sm_base2')}}catch(e){SM.erroLocal=smErroLocal(e,'guardar a cópia local')}
 }
 // Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
 function smEnviaSujo(){
@@ -76,7 +92,7 @@ const smRotL=iso=>{const x=smDt(iso);return smDOW[x.getDay()]+' '+x.getDate()+'/
 const smDom=iso=>smMais(iso,-smDt(iso).getDay()); // domingo a sábado
 const smSemana=iso=>{const s=smDom(iso);return Array.from({length:7},(_,i)=>smMais(s,i))};
 const smNumSem=iso=>{const x=smDt(smDom(iso)),a=smDt(smDom(`${x.getFullYear()}-01-01`));return Math.floor((Math.round((x-a)/DAY))/7)+1}; // semana iniciada no domingo
-function smGuardaCache(){try{localStorage.setItem('sm_cache2',JSON.stringify({sha:SM.sha,d:SM.d}))}catch(e){}}
+function smGuardaCache(){return smGravaGrande('sm_cache2',JSON.stringify({sha:SM.sha,d:SM.d}))}
 
 // ---------- leitura / gravação ----------
 // Contents omite o base64 acima de 1 MB; o blob identificado pelo SHA mantém a mesma versão (inclusive no histórico).
@@ -145,7 +161,7 @@ function smMudar(fn,msg,aoSalvar){
   const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
   fn(SM.d);
   if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
-  smGuardaCache();smRender();smNativoTarefas();
+  smGuardaCache();smRender();   // a cópia LS é síncrona; o IDB segue em segundo plano e não adia PUT nem marcadorsmNativoTarefas();
   const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior

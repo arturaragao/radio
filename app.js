@@ -1,4 +1,4 @@
-// Banco CBR app 1.45.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.46.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // ===== INTERPRETAR O TEXTO DE UMA TAREFA (pt-BR, sem API) — 1.17.0 =====
 // interpretarTarefa(texto, hoje) -> [{texto,dia,hora,urg,area,prioridade,etiquetas,repetir}]
 // Pura com hoje explícito; sem hoje usa a data local por compatibilidade com chamadas antigas.
@@ -240,12 +240,28 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { interpre
 // A revisão de domingo (tarefa agendada do Claude) preenche a agenda das próximas semanas pelo Google Agenda e põe os itens da semana nova.
 const SM={d:null,sha:null,ok:false,erro:'',ed:null,add:{},dr:{},ab:new Set(),sel:null,sem:null,mes:null,plan:false,semAdd:null,conf:null,fila:Promise.resolve(),lote:[],auto:new Set(),fr:[]};
 const SM_ARQ='semana/plano.json',SM_VELHO='semana/atual.json';
+// O shim hidrata o espelho antes de carregar app.js. Sem IDB, mantém o caminho localStorage.
+const smArmazem=globalThis.BCBR?.grandes||localStorage;
+// Grava no localStorage; se a cota estourar, libera as cópias grandes já confirmadas no IDB e tenta uma vez mais.
+function smLsGrava(k,v){try{localStorage.setItem(k,v)}catch(e){if(!smCota(e)||!smArmazem.liberar?.())throw e;localStorage.setItem(k,v)}}
+const smCota=e=>e?.name==='QuotaExceededError'||e?.name==='NS_ERROR_DOM_QUOTA_REACHED';
+function smLocalBytes(){let n=0;for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);n+=2*(k.length+(localStorage.getItem(k)||'').length)}return n}
+function smErroLocal(e,acao='salvar as notas'){
+  if(!smCota(e))return 'Não foi possível '+acao+' neste aparelho ('+(e?.name||'erro de armazenamento')+'). Baixe uma cópia em Ajustes.';
+  let uso='indisponível';try{uso=Math.ceil(smLocalBytes()/1024)+' KB'}catch(x){}
+  try{if(typeof rdOfertaCopia==='function')rdOfertaCopia()}catch(x){} // aviso nunca pode interromper a retenção do editor sujo
+  return 'Sem espaço para '+acao+' neste aparelho. localStorage: '+uso+'. Baixar cópia em Ajustes › Backup e recuperação.';
+}
+function smGravaGrande(k,v){
+  const falha=e=>{SM.erroLocal=smErroLocal(e,'guardar a cópia local');if(typeof toast==='function')toast(SM.erroLocal);return false};
+  try{return Promise.resolve(smArmazem.setItem(k,v)).then(()=>true,falha)}catch(e){return Promise.resolve(falha(e))}
+}
 try{SM.ab=new Set(JSON.parse(localStorage.getItem('sm_abertas')||'[]'))}catch(e){}
-try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
+try{const c=JSON.parse(smArmazem.getItem('sm_cache2')||'null');if(c&&c.d&&c.d.v===2){SM.d=c.d;SM.sha=c.sha;SM.ok=true}}catch(e){}
 // 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
 // SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
 // locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
-try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?smArmazem.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const SM_MERGE_FORA=new Set(['notasDoc','notasPaginas','notasFrases','notas_conflitos']);
@@ -288,7 +304,7 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
 const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
 function smSujo(sim){
   SM.sujo=sim;
-  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
+  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)return smGravaGrande('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');return smArmazem.removeItem('sm_base2')}}catch(e){SM.erroLocal=smErroLocal(e,'guardar a cópia local')}
 }
 // Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
 function smEnviaSujo(){
@@ -307,7 +323,7 @@ const smRotL=iso=>{const x=smDt(iso);return smDOW[x.getDay()]+' '+x.getDate()+'/
 const smDom=iso=>smMais(iso,-smDt(iso).getDay()); // domingo a sábado
 const smSemana=iso=>{const s=smDom(iso);return Array.from({length:7},(_,i)=>smMais(s,i))};
 const smNumSem=iso=>{const x=smDt(smDom(iso)),a=smDt(smDom(`${x.getFullYear()}-01-01`));return Math.floor((Math.round((x-a)/DAY))/7)+1}; // semana iniciada no domingo
-function smGuardaCache(){try{localStorage.setItem('sm_cache2',JSON.stringify({sha:SM.sha,d:SM.d}))}catch(e){}}
+function smGuardaCache(){return smGravaGrande('sm_cache2',JSON.stringify({sha:SM.sha,d:SM.d}))}
 
 // ---------- leitura / gravação ----------
 // Contents omite o base64 acima de 1 MB; o blob identificado pelo SHA mantém a mesma versão (inclusive no histórico).
@@ -376,7 +392,7 @@ function smMudar(fn,msg,aoSalvar){
   const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
   fn(SM.d);
   if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
-  smGuardaCache();smRender();smNativoTarefas();
+  smGuardaCache();smRender();   // a cópia LS é síncrona; o IDB segue em segundo plano e não adia PUT nem marcadorsmNativoTarefas();
   const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
@@ -1598,22 +1614,22 @@ const NT_BASE_PT='bcbr_notaspastas_base_v143',NT_PT_FECHADAS='bcbr_nt_pastas_fec
 // 1.43 nunca altera/remove as bases da 1.42: abas antigas ainda podem usá-las e atualizá-las.
 const NT_BASES_ANTIGAS=['bcbr_notas_base','bcbr_notaspag_base','bcbr_notasfrases_base','bcbr_notaspastas_base'];
 function ntBasesInicia(){
-  for(const antiga of NT_BASES_ANTIGAS){const nova=antiga+'_v143';if(localStorage.getItem(nova)===null){const raw=localStorage.getItem(antiga);if(raw!==null)localStorage.setItem(nova,raw)}}
+  for(const antiga of NT_BASES_ANTIGAS){const nova=antiga+'_v143';if(smArmazem.getItem(nova)===null){const raw=smArmazem.getItem(antiga);if(raw!==null){if(smArmazem===localStorage)localStorage.setItem(nova,raw);else smGravaGrande(nova,raw)}}}
   NT.basesProntas=true;
 }
 const NTB={b:undefined,p:undefined,f:undefined,pt:undefined};
-const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
+const ntLsLista=k=>{try{const b=JSON.parse(smArmazem.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
 function ntBaseLer(){if(NTB.b===undefined)NTB.b=ntLsLista(NT_BASE);return NTB.b}
 // Base = última versão sincronizada (blocos da página principal e lista de páginas). Sem `paginas`, vale o plano atual (chamada de smMudar após o PUT).
 function ntBaseSalva(blocos,paginas=SM.d?.notasPaginas?.paginas||[],frases=SM.d?.notasFrases||[],pastas=SM.d?.notasPaginas?.pastas){
   if(NT.legado)return;
-  if(Array.isArray(blocos)){NTB.b=blocos;try{localStorage.setItem(NT_BASE,JSON.stringify(blocos))}catch(e){}}
+  if(Array.isArray(blocos)){NTB.b=blocos;smGravaGrande(NT_BASE,JSON.stringify(blocos))}
   pgBaseSalva(paginas);frBaseSalva(frases);ptBaseSalva(pastas);
 }
 function ptBaseLer(){if(NTB.pt===undefined)NTB.pt=ntLsLista(NT_BASE_PT);return NTB.pt}
-function ptBaseSalva(l){if(Array.isArray(l)){NTB.pt=l;try{localStorage.setItem(NT_BASE_PT,JSON.stringify(l))}catch(e){}}}
+function ptBaseSalva(l){if(Array.isArray(l)){NTB.pt=l;smGravaGrande(NT_BASE_PT,JSON.stringify(l))}}
 function frBaseLer(){if(NTB.f===undefined)NTB.f=ntLsLista(NT_BASE_F);return NTB.f}
-function frBaseSalva(l){if(Array.isArray(l)){NTB.f=l;try{localStorage.setItem(NT_BASE_F,JSON.stringify(l))}catch(e){}}}
+function frBaseSalva(l){if(Array.isArray(l)){NTB.f=l;smGravaGrande(NT_BASE_F,JSON.stringify(l))}}
 function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.p}
 
 // ===== Páginas: fusão três vias da lista (página nova/apagada/editada) e por campo (título, fixada, ordem) =====
@@ -1660,7 +1676,7 @@ function ntFundeFrases(base,local,remoto){
   }
   return res;
 }
-function pgBaseSalva(paginas){if(Array.isArray(paginas)){NTB.p=paginas;try{localStorage.setItem(NT_BASE_P,JSON.stringify(paginas))}catch(e){}}}
+function pgBaseSalva(paginas){if(Array.isArray(paginas)){NTB.p=paginas;smGravaGrande(NT_BASE_P,JSON.stringify(paginas))}}
 const ntPaginas=()=>Array.isArray(SM.d?.notasPaginas?.paginas)?SM.d.notasPaginas.paginas:[];
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
@@ -1742,7 +1758,7 @@ function ntMigraLegado(){
       if(!confirmada&&JSON.parse(localStorage.getItem(k)).legadoRaw!==raw)throw Error('colisão de revisão');
       // A 1.43 nunca escreve nem apaga o legado; só registra os hashes confirmados pelo PUT.
       NT.legadoRaw=raw;NT.legadoChave=k;NT.legado=false;
-    }catch(e){NT.legado=true;if(!NT.filaCheia){NT.filaCheia=true;toast('Sem espaço para migrar as notas neste aparelho. A fila antiga foi mantida.')}}
+    }catch(e){NT.legado=true;if(!NT.filaCheia){NT.filaCheia=true;toast(smErroLocal(e,'migrar as notas')+' A fila antiga foi mantida.')}}
   };
   // Fora da trava só detecta mudança; os bytes e bases usados na cópia são relidos dentro dela.
   const visto=localStorage.getItem(NT_PEND),pendente=visto!==null&&(visto!==NT.legadoRaw||(localStorage.getItem(NT.legadoChave)===null&&!(ntLsLista(NT_LEGADO_OK)||[]).includes(NT.legadoChave?.split(':').pop())));
@@ -1784,8 +1800,8 @@ function ntPendentes(){
 function ntFilaGrava(campo,base,valor,extra={}){
   if(ntMigraLegado()||NT.legado)return false;
   const em=Math.max(Date.now(),(ntPendentes()[0]?.em||0)+1);
-  try{localStorage.setItem(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
-  catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  try{smLsGrava(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
+  catch(e){toast(smErroLocal(e));return false}
 }
 function ntTemPendentes(){return ntPendentes().length>0||!!NT.migrando||!!NT.legado}
 // Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco; as entradas originais ficam até o PUT confirmar.
@@ -3520,7 +3536,7 @@ async function ntNotionImporta(arquivo){
 
 // 1.44 PARCIAL: observação local. Não é uma fila nem altera o formato/fusão do plano.
 // Só um PUT confirmado marca edições como enviadas; GET observa o remoto ANTES da fusão.
-const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000;
+const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000,RD_BYTES=512*1024;
 const RD={enviando:0,ultima:0,erro:'',localErro:''};
 const rdCopia=x=>JSON.parse(JSON.stringify(x));
 const rdTexto=n=>typeof n==='string'?n:n?.text||((n?.content||[]).map(rdTexto).join(n?.type==='doc'||n?.type==='detailsContent'?'\n':''));
@@ -3530,8 +3546,14 @@ function rdLer(){
   catch(e){RD.localErro='Detector indisponível: não consegui ler o diário local.';return []}
 }
 function rdGuardar(l){
-  try{localStorage.setItem(RD_CHAVE,JSON.stringify(l.filter(e=>e.hora>Date.now()-RD_IDADE).slice(-200)));RD.localErro=''}
-  catch(e){RD.localErro='Detector sem espaço para guardar o diário local. Baixe uma cópia em Ajustes.'}
+  try{
+    const recentes=l.filter(e=>e.hora>Date.now()-RD_IDADE).sort((a,b)=>a.hora-b.hora).slice(-200);
+    let raw=JSON.stringify(recentes);
+    // Conta chave + JSON em UTF-16 (inclusive conteúdo, anterior e escapes). Poda só entradas já confirmadas
+    // pelo PUT, das mais antigas; a mais recente e as não confirmadas ficam mesmo acima do limite.
+    while(2*(RD_CHAVE.length+raw.length)>RD_BYTES){const i=recentes.findIndex((e,n)=>e.enviada===true&&n<recentes.length-1);if(i<0)break;recentes.splice(i,1);raw=JSON.stringify(recentes)}
+    smLsGrava(RD_CHAVE,raw);RD.localErro='';
+  }catch(e){RD.localErro=smErroLocal(e,'guardar o diário local')}
 }
 function rdItens(d){
   const m=new Map(),poe=x=>m.set(rdChave(x),x);
@@ -3670,11 +3692,39 @@ function rdConflitosAbre(){
     if(b.dataset.sim!==undefined){b.disabled=true;const ok=await rdConflitoDescarta(lista[+b.dataset.sim]);ntModalFecha(ov);rdPinta();rdConflitosAbre();if(!ok)toast('Descarte pendente de sincronização; confira a conexão.')}
   });
 }
-function rdBackupHtml(){return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+function rdBackupHtml(){setTimeout(rdUsoAtualiza,0);return `<div class="card"><h3>Backup e recuperação</h3><p id="rd_uso">localStorage: ${Math.ceil(smLocalBytes()/1024)} KB · Consultando armazenamento…</p><button type="button" class="b s" onclick="rdPersistir(this)">Proteger armazenamento neste aparelho</button><p id="rd_persist"></p><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+async function rdUsoAtualiza(){
+  let idb='IDB estimado: indisponível',persist='Persistência não informada pelo navegador.';
+  try{const e=await navigator.storage?.estimate();if(e){const n=e.usageDetails?.indexedDB;idb=n!==undefined?'IDB estimado: '+Math.ceil(n/1024)+' KB':'Armazenamento da origem (IDB + caches): '+Math.ceil((e.usage||0)/1024)+' KB; IDB separado indisponível'}}catch(e){}
+  try{if(navigator.storage?.persisted)persist=await navigator.storage.persisted()?'Armazenamento persistente concedido.':'Armazenamento sujeito à limpeza pelo navegador.'}catch(e){}
+  const el=document.getElementById('rd_uso');if(el)el.textContent='localStorage: '+Math.ceil(smLocalBytes()/1024)+' KB · '+idb;
+  const p=document.getElementById('rd_persist');if(p)p.textContent=persist;
+}
+async function rdPersistir(botao){
+  botao.disabled=true;let msg;
+  try{msg=navigator.storage?.persist?(await navigator.storage.persist()?'Armazenamento persistente concedido.':'O navegador não concedeu persistência. Mantenha uma cópia baixada.'):'Este navegador não oferece armazenamento persistente.'}catch(e){msg='Não foi possível pedir persistência neste navegador.'}
+  const el=document.getElementById('rd_persist');if(el)el.textContent=msg;botao.disabled=false;
+}
+function rdOfertaCopia(){
+  if(document.getElementById('rd_copia_cota'))return;
+  const ov=rdJanela('Armazenamento cheio',`<p>localStorage: ${Math.ceil(smLocalBytes()/1024)} KB. A edição continua aberta. Baixe uma cópia antes de fechar.</p><button type="button" class="b" id="rd_copia_cota">Baixar cópia</button>`);
+  ov.querySelector('#rd_copia_cota').onclick=rdBaixar;
+}
 function rdBaixar(){
   if(typeof ntAntes==='function')ntAntes();if(typeof pgTituloSalva==='function')pgTituloSalva();
   if(!SM.d){toast('O plano ainda não está disponível.');return}
-  const url=URL.createObjectURL(new Blob([JSON.stringify(SM.d,null,2)],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='radio-plano-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const copia=rdCopia(SM.d);
+  // Se a fila não coube, o editor continua sujo e SM.d ainda tem a versão anterior.
+  // Exporta também esse texto sem confirmar a fila nem alterar o plano em memória.
+  for(const c of [typeof NT==='undefined'?null:NT,typeof NP==='undefined'?null:NP]){
+    const pagina=c?.pagina&&copia.notasPaginas?.paginas?.find(p=>p.id===c.pagina);
+    if(pagina&&c.titulo)pagina.titulo=c.titulo.value;
+    if(!c?.ed||!c.sujo)continue;
+    const doc={v:1,blocos:ntBlocos(c.ed.getJSON(),c.shown||[])};
+    if(c.pagina){if(pagina)pagina.doc=doc}
+    else copia.notasDoc=doc;
+  }
+  const url=URL.createObjectURL(new Blob([JSON.stringify(copia,null,2)],{type:'application/json;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='radio-plano-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 window.addEventListener('pageshow',()=>smPuxar());
 window.addEventListener('online',rdPinta);window.addEventListener('offline',rdPinta);

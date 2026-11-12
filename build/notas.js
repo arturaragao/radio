@@ -85,22 +85,22 @@ const NT_BASE_PT='bcbr_notaspastas_base_v143',NT_PT_FECHADAS='bcbr_nt_pastas_fec
 // 1.43 nunca altera/remove as bases da 1.42: abas antigas ainda podem usá-las e atualizá-las.
 const NT_BASES_ANTIGAS=['bcbr_notas_base','bcbr_notaspag_base','bcbr_notasfrases_base','bcbr_notaspastas_base'];
 function ntBasesInicia(){
-  for(const antiga of NT_BASES_ANTIGAS){const nova=antiga+'_v143';if(localStorage.getItem(nova)===null){const raw=localStorage.getItem(antiga);if(raw!==null)localStorage.setItem(nova,raw)}}
+  for(const antiga of NT_BASES_ANTIGAS){const nova=antiga+'_v143';if(smArmazem.getItem(nova)===null){const raw=smArmazem.getItem(antiga);if(raw!==null){if(smArmazem===localStorage)localStorage.setItem(nova,raw);else smGravaGrande(nova,raw)}}}
   NT.basesProntas=true;
 }
 const NTB={b:undefined,p:undefined,f:undefined,pt:undefined};
-const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
+const ntLsLista=k=>{try{const b=JSON.parse(smArmazem.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
 function ntBaseLer(){if(NTB.b===undefined)NTB.b=ntLsLista(NT_BASE);return NTB.b}
 // Base = última versão sincronizada (blocos da página principal e lista de páginas). Sem `paginas`, vale o plano atual (chamada de smMudar após o PUT).
 function ntBaseSalva(blocos,paginas=SM.d?.notasPaginas?.paginas||[],frases=SM.d?.notasFrases||[],pastas=SM.d?.notasPaginas?.pastas){
   if(NT.legado)return;
-  if(Array.isArray(blocos)){NTB.b=blocos;try{localStorage.setItem(NT_BASE,JSON.stringify(blocos))}catch(e){}}
+  if(Array.isArray(blocos)){NTB.b=blocos;smGravaGrande(NT_BASE,JSON.stringify(blocos))}
   pgBaseSalva(paginas);frBaseSalva(frases);ptBaseSalva(pastas);
 }
 function ptBaseLer(){if(NTB.pt===undefined)NTB.pt=ntLsLista(NT_BASE_PT);return NTB.pt}
-function ptBaseSalva(l){if(Array.isArray(l)){NTB.pt=l;try{localStorage.setItem(NT_BASE_PT,JSON.stringify(l))}catch(e){}}}
+function ptBaseSalva(l){if(Array.isArray(l)){NTB.pt=l;smGravaGrande(NT_BASE_PT,JSON.stringify(l))}}
 function frBaseLer(){if(NTB.f===undefined)NTB.f=ntLsLista(NT_BASE_F);return NTB.f}
-function frBaseSalva(l){if(Array.isArray(l)){NTB.f=l;try{localStorage.setItem(NT_BASE_F,JSON.stringify(l))}catch(e){}}}
+function frBaseSalva(l){if(Array.isArray(l)){NTB.f=l;smGravaGrande(NT_BASE_F,JSON.stringify(l))}}
 function pgBaseLer(){if(NTB.p===undefined)NTB.p=ntLsLista(NT_BASE_P);return NTB.p}
 
 // ===== Páginas: fusão três vias da lista (página nova/apagada/editada) e por campo (título, fixada, ordem) =====
@@ -147,7 +147,7 @@ function ntFundeFrases(base,local,remoto){
   }
   return res;
 }
-function pgBaseSalva(paginas){if(Array.isArray(paginas)){NTB.p=paginas;try{localStorage.setItem(NT_BASE_P,JSON.stringify(paginas))}catch(e){}}}
+function pgBaseSalva(paginas){if(Array.isArray(paginas)){NTB.p=paginas;smGravaGrande(NT_BASE_P,JSON.stringify(paginas))}}
 const ntPaginas=()=>Array.isArray(SM.d?.notasPaginas?.paginas)?SM.d.notasPaginas.paginas:[];
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
@@ -229,7 +229,7 @@ function ntMigraLegado(){
       if(!confirmada&&JSON.parse(localStorage.getItem(k)).legadoRaw!==raw)throw Error('colisão de revisão');
       // A 1.43 nunca escreve nem apaga o legado; só registra os hashes confirmados pelo PUT.
       NT.legadoRaw=raw;NT.legadoChave=k;NT.legado=false;
-    }catch(e){NT.legado=true;if(!NT.filaCheia){NT.filaCheia=true;toast('Sem espaço para migrar as notas neste aparelho. A fila antiga foi mantida.')}}
+    }catch(e){NT.legado=true;if(!NT.filaCheia){NT.filaCheia=true;toast(smErroLocal(e,'migrar as notas')+' A fila antiga foi mantida.')}}
   };
   // Fora da trava só detecta mudança; os bytes e bases usados na cópia são relidos dentro dela.
   const visto=localStorage.getItem(NT_PEND),pendente=visto!==null&&(visto!==NT.legadoRaw||(localStorage.getItem(NT.legadoChave)===null&&!(ntLsLista(NT_LEGADO_OK)||[]).includes(NT.legadoChave?.split(':').pop())));
@@ -271,8 +271,8 @@ function ntPendentes(){
 function ntFilaGrava(campo,base,valor,extra={}){
   if(ntMigraLegado()||NT.legado)return false;
   const em=Math.max(Date.now(),(ntPendentes()[0]?.em||0)+1);
-  try{localStorage.setItem(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
-  catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  try{smLsGrava(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
+  catch(e){toast(smErroLocal(e));return false}
 }
 function ntTemPendentes(){return ntPendentes().length>0||!!NT.migrando||!!NT.legado}
 // Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco; as entradas originais ficam até o PUT confirmar.

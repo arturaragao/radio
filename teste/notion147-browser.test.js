@@ -32,9 +32,9 @@ test('Notion 1.47 Chrome: ZIPs v1/v2, diff, decisão parcial, backup, fila, imag
   const textos=atual.doc.blocos.map(b=>b.conteudo.content?.[0]?.text).filter(Boolean);assert.ok(textos.includes('Remover este bloco'));assert.ok(textos.includes('Bloco adicionado'));assert.ok(textos.includes('Texto atualizado'));assert.ok(!textos.includes('Texto antigo com edição local'));
   const antigo=antes.doc.blocos.find(b=>b.conteudo.content?.[0]?.text==='Texto antigo com edição local'),novo=atual.doc.blocos.find(b=>b.conteudo.content?.[0]?.text==='Texto atualizado');assert.equal(novo.id,antigo.id);
   assert.deepEqual(atual.doc.blocos.find(b=>b.conteudo.type==='details'),antes.doc.blocos.find(b=>b.conteudo.type==='details'));assert.deepEqual(atual.doc.blocos.find(b=>b.conteudo.type==='image'),antes.doc.blocos.find(b=>b.conteudo.type==='image'));assert.deepEqual(await ev("pgAchar('outra-ficticia')"),outra);
-  assert.equal(await ev('ntPaginas().length'),3);
+  assert.equal(await ev("ntPaginas().filter(p=>p.id!=='notas').length"),3,'1.48: Notas é página; além dela, importada, outra e a cópia');
   // Recarregar prova PUT da página e do backup; a imagem volta do servidor simulado após tirar o cache.
-  await ev("caches.delete('bcbr-img')");await C.abre('notas');await ev(`ntPainelAbre('${id}')`);await ate("NT.el.querySelector('img')?.complete&&NT.el.querySelector('img').naturalWidth===1");assert.deepEqual(await ev(`ntPaginas().find(p=>p.copiaDe==='${id}').doc`),antes.doc);
+  await ev("caches.delete('bcbr-img')");await C.abre('notas');await ev(`ntPainelAbre('${id}')`);await ate("NT.el.querySelector('img')?.complete&&NT.el.querySelector('img').naturalWidth===1");assert.deepEqual(await ev(`SyncNotas.abrirPagina(ntPaginas().find(p=>p.copiaDe==='${id}').id).then(p=>p.doc)`),antes.doc);
   // Caminho aberto usa edição com Ctrl+Z e continua salvando pela fila normal.
   const revisao=await importa(2,id);assert.ok(revisao.diferencas.includes('removido'));await click('[data-tudo]');await ate("!document.querySelector('.nt-notion-diff')");assert.equal(await C.confirmado(),true);
   assert.ok(!(await ev('NT.ed.state.doc.textContent')).includes('Remover este bloco'));

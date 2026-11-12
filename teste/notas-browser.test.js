@@ -247,12 +247,24 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.equal(antes[0],depois[0]);assert.notEqual(antes[1],depois[1]);assert.equal(antes[2],depois[2]);
   });
 
+  // ===== 1.41 =====
+  const barra=(ctx,m)=>`${ctx} [data-m="${m}"]`;
+  const mouse=async(type,x,y)=>call('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',clickCount:1,buttons:type==='mouseReleased'?0:1});
+  const aguarda=async(expr,ms=6000)=>{const t0=Date.now();while(Date.now()-t0<ms){if(await ev(expr).catch(()=>false))return true;await espera(80)}throw Error('não ocorreu: '+expr)};
+  const item=(t,...filhos)=>({type:'listItem',content:[par(t),...filhos]});
+  const lista=(tipo,...itens)=>({type:tipo,content:itens});
+  const tarefa=t=>({type:'taskItem',attrs:{checked:false},content:[par(t)]});
+  const irItem=async texto=>{await ev(`(()=>{let p=null;NT.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.isText&&n.text===${JSON.stringify(texto)})p=pos+n.nodeSize});if(p==null)throw Error('texto ausente');NT.ed.chain().focus().setTextSelection(p).run()})()`)};
+  const slashCtrl=()=>tecla('/',{code:'Slash',windowsVirtualKeyCode:191,modifiers:2});
+  const esc=()=>tecla('Escape',{code:'Escape',windowsVirtualKeyCode:27});
+  const ids=n=>(n.content||[]).map(c=>c.type);
+
   await t.test('1.41 sem bolha ao selecionar texto: a formatação fica na barra fixa do topo, ao lado do título',async()=>{
     await reset(par('selecionar isto'));await ev("NT.ed.commands.selectAll()");await espera(250);
     assert.equal(await ev("getComputedStyle(NT.bolha).display"),'none','a bolha não aparece');
     assert.equal(await ev("document.querySelectorAll('.nt-bolha-texto').length"),0,'a bolha de texto foi removida');
-    const g=await ev("(()=>{const h=document.querySelector('.nt-topo h2').getBoundingClientRect(),b=document.querySelector('.nt-barra').getBoundingClientRect(),t=document.querySelector('.nt-topo').getBoundingClientRect();return {hx:h.right,hy:h.top+h.height/2,bx:b.left,by:b.top,bh:b.height,tt:t.top,esq:h.left}})()");
-    assert.ok(g.bx>=g.hx-1&&g.by<g.hy&&g.by+g.bh>g.hy,'a barra está na mesma fileira do título "Notas", à direita dele: '+JSON.stringify(g));
+    const g=await ev("(()=>{const h=document.getElementById('nt_titulo').getBoundingClientRect(),b=document.querySelector('.nt-barra').getBoundingClientRect(),t=document.querySelector('.nt-topo').getBoundingClientRect();return {hx:h.right,hy:h.top+h.height/2,bx:b.left,by:b.top,bh:b.height,tt:t.top,esq:h.left}})()");
+    assert.ok(g.bx>=g.hx-1&&g.by<g.hy&&g.by+g.bh>g.hy,'a barra está na mesma fileira do título da página, à direita dele: '+JSON.stringify(g));
     assert.ok(g.esq<80,'no canto superior esquerdo');
     for(const m of ['bold','italic','underline','strike','cor','frase','frases','hist','atalhos'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),true,'botão '+m);
     for(const m of ['link','h1','h2','h3','bullet','ordered','task','tgl'])assert.equal(await ev(`!!document.querySelector('.nt-barra [data-m="${m}"]')`),false,'1.43: o botão '+m+' saiu da barra');
@@ -360,14 +372,15 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.equal(await ev("!!document.querySelector('.nt-pg-it.arrastando')&&!!document.querySelector('.alvo-antes')"),true,'indicador de destino durante o arrasto');
     await mouse('mouseReleased',g.x,a.t+3);
     assert.deepEqual(await secao('pg'),['Gama','Alfa'],'Gama passou para antes de Alfa');
-    assert.equal(await ev("!document.getElementById('nt_pan')"),true,'arrastar não abre a página');
+    assert.equal(await ev(`NT.pagina!==${JSON.stringify(id.Gama)}&&!document.getElementById('nt_pan')`),true,'arrastar não abre a página');
     assert.deepEqual(await secao('fix'),['Beta'],'a seção de fixadas não mudou');
     assert.ok(await confirmado());
     const ord=await ev("Object.fromEntries(ntPaginas().map(p=>[p.titulo,p.ordem]))");assert.ok(ord.Gama<ord.Alfa,'a ordem foi gravada: '+JSON.stringify(ord));
-    // desafixar pelo painel (alfinete) volta para a lista de baixo
-    await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-nome`);await aguarda("!!document.getElementById('nt_pan')");
-    assert.equal(await ev("document.querySelector('#nt_pan [data-a=\"pin\"]').classList.contains('on')"),true,'alfinete aceso no painel');
-    await click('#nt_pan [data-a="pin"]');await esc();
+    // 1.48: clicar abre na área principal (sem painel); desafixar pelo alfinete da lateral volta para a lista de baixo
+    await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-nome`);await aguarda(`NT.pagina===${JSON.stringify(id.Beta)}&&!NT.carregando&&!!NT.ed&&!!document.querySelector('#nt_raiz .nt-pm')`);
+    assert.equal(await ev("!document.getElementById('nt_pan')&&document.getElementById('nt_titulo').value"),'Beta','abriu na área principal com o título');
+    assert.equal(await ev(`document.querySelector('.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-pin').classList.contains('on')`),true,'alfinete aceso na lateral');
+    await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-pin`);
     assert.deepEqual(await secao('pg'),['Gama','Alfa','Beta'],'desafixada vai para o fim de Páginas');assert.equal(await ev("!document.querySelector('.nt-pg-lista[data-sec=\"fix\"]')"),true);
     // recolher e expandir (estado por aparelho)
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display"),'none');assert.equal(await ev("localStorage.getItem('bcbr_nt_lat')"),'0');
@@ -376,6 +389,59 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await click('#nt_lat_bt');assert.equal(await ev("getComputedStyle(document.getElementById('nt_lat')).display!=='none'&&localStorage.getItem('bcbr_nt_lat')"),'1');
   });
 
+
+  // 1.48: o painel flutuante saiu; criar, "/Página" e excluir continuam, agora na área principal.
+  const abrePg=async id=>{await ev(`ntPainelAbre(${JSON.stringify(id)});0`);await aguarda(`NT.pagina===${JSON.stringify(id)}&&!NT.carregando&&!!NT.ed&&!!document.querySelector('#nt_raiz .nt-pm')`)};
+  const pronta=()=>aguarda("!NT.carregando&&!!NT.ed&&!!document.querySelector('#nt_raiz .nt-pm')");
+  await t.test('1.48 páginas: criar pela lateral abre na área principal com o cursor no título; Enter leva ao texto; conteúdo isolado das Notas',async()=>{
+    await abrePg('notas');
+    await click('.nt-pg-novo');await aguarda("NT.pagina!=='notas'");await pronta();
+    const id=await ev('NT.pagina');
+    assert.equal(await ev("!document.getElementById('nt_pan')&&!!document.querySelector('#nt_raiz .nt-pm')"),true,'sem painel flutuante: mesma área principal');
+    await aguarda("document.activeElement?.id==='nt_titulo'");
+    await digita('Página fictícia');await enter();await aguarda('NT.ed.isFocused');
+    await digita('> ');await digita('Titulo T');
+    assert.equal(await ev("document.querySelectorAll('#nt_raiz [data-type=\"details\"]').length"),1,'toggle no mesmo editor');
+    await ev("NT.ed.commands.selectAll()");await click(barra('.nt-barra','bold'));
+    assert.match(JSON.stringify(await ev("NT.ed.getJSON()")),/"type":"bold"/,'a barra formata a página aberta');
+    await ev('ntSalvaDoc()');assert.ok(await confirmado(),'salvou');
+    const p=await ev(`SyncNotas.abrirPagina(${JSON.stringify(id)})`);assert.equal(p.titulo,'Página fictícia');assert.match(JSON.stringify(p.doc.blocos),/Titulo T/);
+    assert.ok(p.doc.blocos.every(b=>b.id&&b.atualizado));
+    assert.match(await ev("document.getElementById('nt_lat').textContent"),/Página fictícia/,'aparece na barra lateral');
+    assert.match(await ev('location.search'),new RegExp('pagina='+id),'URL acompanha a página aberta');
+    assert.equal(await ev("localStorage.getItem('bcbr_ultima_pagina')"),id,'última página lembrada');
+    await abrePg('notas');assert.equal(await ev("NT.ed.getText().includes('Titulo T')"),false,'o texto não vazou para as Notas');
+    await click(`.nt-pg-it[data-pg="${id}"] .nt-pg-nome`);await aguarda(`NT.pagina===${JSON.stringify(id)}`);await pronta();
+    assert.equal(await ev("document.getElementById('nt_titulo').value"),'Página fictícia');assert.match(await ev('NT.ed.getText()'),/Titulo T/);
+  });
+
+  await t.test('1.48 "/Página" nas Notas cria a página, põe o bloco-link e abre; o bloco abre a página; dentro de uma página não há "/Página"',async()=>{
+    await abrePg('notas');await reset(par(''));await aguarda('NT.ed.isFocused');const antes=await ev('ntPaginas().length');
+    await digita('/pag');assert.equal(await ev("document.querySelector('.nt-slash-it b').textContent"),'Página');await enter();
+    await aguarda("NT.pagina!=='notas'");await pronta();const id=await ev('NT.pagina');
+    assert.equal(await ev('ntPaginas().length'),antes+1,'página criada');
+    await aguarda("document.activeElement?.id==='nt_titulo'");await digita('Filha');await ev('ntTituloSalva()');assert.ok(await confirmado());
+    await abrePg('notas');assert.equal((await tipos()).includes('paginaLink'),true,'bloco-link nas Notas');
+    await aguarda("document.querySelector('.nt-plink')?.textContent==='📄 Filha'");
+    await click('.nt-plink');await aguarda(`NT.pagina===${JSON.stringify(id)}`);await pronta();
+    await ev("NT.ed.commands.focus('end')");await aguarda('NT.ed.isFocused');await digita('/pag');await espera(150);
+    assert.equal(await ev("!!document.querySelector('.nt-slash-vazio')"),true,'sem "Página" dentro de uma página');
+    await esc();
+    // apagar o bloco-link não apaga a página
+    await abrePg('notas');
+    await ev("(()=>{let p=null;NT.ed.state.doc.forEach((n,o)=>{if(n.type.name==='paginaLink')p=o});NT.ed.view.dispatch(NT.ed.state.tr.delete(p,p+1))})()");
+    assert.equal(await ev('ntPaginas().length'),antes+1);
+  });
+
+  await t.test('1.48 excluir pela opção da página pede confirmação (Cancelar mantém; Excluir apaga e abre outra página)',async()=>{
+    const id=await ev('ntPaginaCria()');await abrePg(id);const n=await ev('ntPaginas().length');
+    await click('.nt-topo [aria-label="Opções da página"]');await click('#nt_pg_menu [data-excluir]');
+    assert.match(await ev("document.getElementById('nt_pg_menu').textContent"),/Excluir esta página\?/,'pergunta antes de excluir');
+    await click('#nt_pg_menu [data-nao]');assert.equal(await ev('ntPaginas().length'),n,'Cancelar mantém');
+    await click('.nt-topo [aria-label="Opções da página"]');await click('#nt_pg_menu [data-excluir]');await click('#nt_pg_menu [data-sim]');
+    assert.equal(await ev(`ntPaginas().some(p=>p.id===${JSON.stringify(id)})`),false,'página excluída');
+    await aguarda(`NT.pagina&&NT.pagina!==${JSON.stringify(id)}&&!NT.carregando`);assert.ok(await confirmado());
+  });
 
   assert.deepEqual(consoleErros.filter(m=>!/Failed to load resource/.test(m)),[],'nenhum console.error');
 });

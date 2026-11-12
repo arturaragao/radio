@@ -23,10 +23,10 @@ function criarSyncNotas(o){
   try{aparelho||=o.storage?.getItem('bcbr_aparelhoId')}catch(e){}
   aparelho||='a'+Date.now().toString(36)+Math.random().toString(36).slice(2);
   try{o.storage?.setItem('bcbr_aparelhoId',aparelho)}catch(e){}
-  let indice=[],etag='',indiceSha=null,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
-  const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map();
+  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
+  const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map(),legadoPreservado=[];
   const mudou=()=>o.alterou?.();
-  const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{})});
+  const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{}),...(p.copiaDe?{copiaDe:p.copiaDe}:{}),...(p.origem?{origem:clone(p.origem)}:{})});
   const lista=()=>{const m=new Map(indice.map(p=>[p.id,p]));for(const {p} of pend.values()){if(p.excluida)m.delete(p.id);else m.set(p.id,metadados({...m.get(p.id),...p}))}return [...m.values()]};
   function cache(k,v){try{Promise.resolve(o.cache?.set(k,clone(v))).catch(()=>{})}catch(e){}}
   async function cacheLer(k){try{return await o.cache?.get(k)}catch(e){return null}}
@@ -48,26 +48,36 @@ function criarSyncNotas(o){
   const conflito=e=>e.status===409||e.status===422;
   async function listarPaginas(){
     if(leitura)return leitura;
-    leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}erro='';mudou();return clone(lista())}
-      catch(e){if(!indice.length)indice=await cacheLer('notas:indice')||[];erro=e.message;mudou();return clone(lista())}
+    leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
+      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=e.message;mudou();return clone(lista())}
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
   async function abrirPagina(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.clear();abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
     if(atual&&meta?.sha&&shas.get(id)===meta.sha&&!e)return clone(atual);
-    let p;
-    try{const f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);cache('notas:pagina:'+id,{sha:f.sha,p})}
+    let p,f=null;
+    try{f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);cache('notas:pagina:'+id,{sha:f.sha,p})}
     catch(x){const c=await cacheLer('notas:pagina:'+id);if(!c?.p)throw x;p=c.p}
+    if(f?.d){
+      const noIndice=indice.find(x=>x.id===id);
+      if(!noIndice||(noIndice.sha!==f.sha&&String(f.d.atualizado||'')>=String(noIndice.atualizado||''))){
+        indice=[...indice.filter(x=>x.id!==id),metadados({...f.d,sha:f.sha})];mudou();
+        await atualizarIndice(id).catch(()=>{});
+      }
+    }
     const novo=pendente(id);if((revisoes.get(id)||0)!==rev&&novo?.p.doc)p=novo.p;else if(e)p={...p,...e.p};
-    abertas.clear();abertas.set(id,clone(p));return clone(p);
+    if(p.origem===null)delete p.origem;
+    abertas.set(id,clone(p));return clone(p);
   }
   function salvarPagina(p){
     chaveId(p.id);const anterior=pendente(p.id)?.p||abertas.get(p.id)||{},em=Date.now(),
-      novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho},
-      k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
-    pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);if(abertas.has(p.id))abertas.set(p.id,clone(novo));
+      novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho};
+    if(novo.origem===null)delete novo.origem;
+    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
+    pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);
+    if(novo.excluida)abertas.delete(p.id);else if(abertas.has(p.id)||novo.doc)abertas.set(p.id,clone(novo));
     const duravel=persistir(e);clearTimeout(timer);timer=setTimeout(()=>enviar(),duravel?(o.atraso??1500):0);mudou();return true;
   }
   async function atualizarIndice(id){
@@ -85,7 +95,8 @@ function criarSyncNotas(o){
     let f=null,sha=shas.get(p.id);if(soMaisNovo||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
     for(let t=0;t<8;t++){
       if(soMaisNovo&&f?.d&&String(f.d.atualizado||'')>=String(p.atualizado||''))return atualizarIndice(p.id);
-      const completo={...(f?.d||{}),...p};delete completo.sha;if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
+      const completo={...(f?.d||{}),...p};delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)))delete completo.origem;
+      if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
       try{sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);return await atualizarIndice(p.id)}
       catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha}
     }throw Error('Página ocupada; alteração permanece na fila.');
@@ -97,7 +108,8 @@ function criarSyncNotas(o){
       for(const e of [...pend.values()].sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev))){
         const confirmado=await gravar(clone(e.p));ultima=Date.now();erro='';
         if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
-          if(abertas.has(e.p.id))abertas.set(e.p.id,clone(confirmado.d));cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
+          if(e.p.excluida)abertas.delete(e.p.id);else if((abertas.has(e.p.id)||e.p.doc)&&confirmado?.d)abertas.set(e.p.id,clone(confirmado.d));
+          if(confirmado?.d)cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
       }return true;
     }catch(e){erro=e.message;return false}};
     voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
@@ -105,11 +117,14 @@ function criarSyncNotas(o){
   async function versoes(id,opt={}){if(opt.ref)return (await ler(caminho(id)+'?ref='+encodeURIComponent(opt.ref))).d;return api('commits?path='+encodeURIComponent(caminho(id))+'&per_page=30&page='+(opt.pagina||1))}
   async function restaurar(id,ref){const p=await versoes(id,{ref});if(!p?.doc)throw Error('Versão não encontrada');salvarPagina({...p,id,excluida:false,atualizado:new Date().toISOString()});return enviar()}
   const carimbo=doc=>(doc?.blocos||[]).reduce((a,b)=>String(b.atualizado||'')>a?String(b.atualizado):a,'');
+  const maiorData=(...ds)=>ds.filter(Boolean).map(String).sort().at(-1)||'';   // sem data: o arquivo remoto, se existir, vence
+  const lerLista=k=>{try{const v=JSON.parse(o.storage?.getItem(k)||'null');return Array.isArray(v)?v:null}catch(e){return null}};
+  const fnv64=s=>{let h=14695981039346656037n;for(let i=0;i<s.length;i++)h=BigInt.asUintN(64,(h^BigInt(s.charCodeAt(i)))*1099511628211n);return h.toString(16)};
   function paginasLegadas(d){if(!d)return [];const l=(d.notasPaginas?.paginas||[]).filter(p=>p.doc).map(clone);
     if(d.notasDoc)l.push({id:'notas',titulo:'Notas',pasta:'',ordem:0,atualizado:d.notasDoc.atualizado||carimbo(d.notasDoc),doc:clone(d.notasDoc)});
     else if(d.notas?.length&&o.converterAntigas)l.push(o.converterAntigas(d.notas));
     if(d.notas_v138?.length&&o.converterAntigas)l.push({...o.converterAntigas(d.notas_v138),id:'notas-legado-v138',titulo:'Notas — cópia anterior'});
-    if(d.notas_conflitos?.length){const blocos=d.notas_conflitos.filter(c=>c.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||'',conteudo:clone(c.conteudo)}));
+    if(d.notas_conflitos?.length){const blocos=d.notas_conflitos.filter(c=>c.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||'',conteudo:typeof c.conteudo==='string'?{type:'paragraph',content:[{type:'text',text:c.conteudo}]}:clone(c.conteudo)}));
       l.push({id:'notas-recuperadas',titulo:'Notas — cópias recuperadas',doc:{v:1,blocos},atualizado:carimbo({blocos})})}
     return l;
   }
@@ -125,19 +140,61 @@ function criarSyncNotas(o){
       catch(e){if(!conflito(e))throw e;const f=await ler('semana/plano.json');d=f.d;sha=f.sha}
     }throw Error('Plano ocupado; migração será retomada.');})().finally(()=>{migrando=null});return migrando;
   }
+  // Frases/pastas antigas: sem fusão. Item alterado no aparelho (≠ base) entra por id se for mais novo que o do plano; exclusões não são aplicadas.
+  async function aplicarLegadoPlano(x,emIso){
+    const alterados=(l,base)=>(Array.isArray(l)?l:[]).filter(i=>i&&typeof i.id==='string'&&JSON.stringify(i)!==JSON.stringify((base||[]).find(b=>b?.id===i.id)));
+    const fr=alterados(x.frases,x.baseFrases||x.base||lerLista('bcbr_notasfrases_base_v143')||lerLista('bcbr_notasfrases_base')),
+      pt=alterados(x.pastas,x.basePastas||x.base||lerLista('bcbr_notaspastas_base_v143')||lerLista('bcbr_notaspastas_base'));
+    if(!fr.length&&!pt.length)return;
+    const aplica=(lista,itens)=>{const l=Array.isArray(lista)?clone(lista):[];for(const i of itens){const k=l.findIndex(r=>r?.id===i.id);
+      if(k<0)l.push(clone(i));else if(String(i.atualizado||emIso)>String(l[k].atualizado||''))l[k]=clone(i)}return l};
+    for(let t=0;t<8;t++){
+      const f=await ler('semana/plano.json');if(!f.d)throw Error('Plano indisponível; pendência antiga preservada.');const d=clone(f.d);
+      if(fr.length)d.notasFrases=aplica(d.notasFrases,fr);
+      if(pt.length)d.notasPaginas={...(d.notasPaginas||{}),pastas:aplica(d.notasPaginas?.pastas,pt)};
+      try{await put('semana/plano.json',d,f.sha);return}catch(e){if(!conflito(e))throw e}
+    }throw Error('Plano ocupado; pendência antiga será retomada.');
+  }
   // Só lê chaves antigas. Sua remoção não é necessária: recibo local impede replay após confirmação.
   async function receberLegado(){
+    if(!o.storage)return;
     const hash=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),v=>v.toString(16).padStart(2,'0')).join('');
-    const ops=[];try{for(let i=0;i<o.storage.length;i++){const k=o.storage.key(i);if(k==='bcbr_notasdoc_pendente'||k?.startsWith('bcbr_notasdoc_pendente:')){const raw=o.storage.getItem(k),h=await hash(raw);if(o.storage.getItem('bcbr_migrada_v2:'+k)===h)continue;const x=JSON.parse(raw);ops.push({k,raw,x,h})}}}catch(e){erro='Pendência antiga ilegível; preservada no aparelho.';return}
-    for(const {k,x,h} of ops.sort((a,b)=>(a.x.em||0)-(b.x.em||0))){
-      const pags=(x.paginas||[]).filter(p=>p.doc&&JSON.stringify(p)!==JSON.stringify(x.base?.find?.(b=>b.id===p.id)));
-      if(Array.isArray(x.blocos))pags.push({id:'notas',titulo:'Notas',doc:{v:1,blocos:x.blocos},atualizado:carimbo({blocos:x.blocos})});
-      for(const p of pags)await gravar({...p,aparelhoId:aparelho},true);
-      try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
+    const ok143=new Set(lerLista('bcbr_notasdoc_pendente_v143_legado_ok')||[]),ops=[];
+    legadoPreservado.length=0;
+    for(let i=0;i<o.storage.length;i++){
+      const k=o.storage.key(i);if(k!=='bcbr_notasdoc_pendente'&&!k?.startsWith('bcbr_notasdoc_pendente:'))continue;
+      const raw=o.storage.getItem(k);if(raw===null)continue;
+      const h=await hash(raw);if(o.storage.getItem('bcbr_migrada_v2:'+k)===h)continue;
+      try{
+        const x=JSON.parse(raw);
+        if(!x||typeof x!=='object'||!['blocos','paginas','frases','pastas','conflitos'].some(c=>Array.isArray(x[c])))throw Error('formato');
+        ops.push({k,raw,x,h});
+      }catch(e){legadoPreservado.push(k);erro='Pendência antiga ilegível; preservada no aparelho.'}
     }
+    try{
+      for(const {k,raw,x,h} of ops.sort((a,b)=>(Number(a.x.em)||0)-(Number(b.x.em)||0)||a.k.localeCompare(b.k))){
+        if((k==='bcbr_notasdoc_pendente'&&(ok143.has(fnv64(raw))||ops.some(y=>y.k==='bcbr_notasdoc_pendente:legado:'+fnv64(raw))))||(typeof x.legadoRaw==='string'&&ok143.has(fnv64(x.legadoRaw)))){
+          try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}continue;
+        }
+        const emIso=Number.isFinite(x.em)&&x.em>0?new Date(x.em).toISOString():'';
+        const basePag=Array.isArray(x.basePaginas)?x.basePaginas:(!Array.isArray(x.blocos)&&Array.isArray(x.base)?x.base:lerLista('bcbr_notaspag_base_v143')||lerLista('bcbr_notaspag_base')||[]);
+        const pags=[];
+        if(Array.isArray(x.paginas)){
+          for(const p of x.paginas)if(p?.id&&p.doc){const b=basePag.find(y=>y?.id===p.id);if(!b||JSON.stringify(p)!==JSON.stringify(b))pags.push({...p,atualizado:maiorData(p.atualizado,emIso,carimbo(p.doc))})}
+        }
+        if(Array.isArray(x.blocos))pags.push({id:'notas',titulo:'Notas',pasta:'',ordem:0,doc:{v:1,blocos:x.blocos},atualizado:maiorData(emIso,carimbo({blocos:x.blocos}))});
+        if(Array.isArray(x.conflitos)&&x.conflitos.length){
+          const blocos=x.conflitos.filter(c=>c?.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||emIso,conteudo:typeof c.conteudo==='string'?{type:'paragraph',content:[{type:'text',text:c.conteudo}]}:clone(c.conteudo)}));
+          if(blocos.length)pags.push({id:'notas-recuperadas-'+fnv64(k),titulo:'Notas — cópias recuperadas',doc:{v:1,blocos},atualizado:maiorData(emIso,carimbo({blocos}))});
+        }
+        for(const p of pags)await gravar({...p,aparelhoId:aparelho},true);
+        await aplicarLegadoPlano(x,emIso);
+        try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
+      }
+    }catch(e){erro=e.message}
   }
   return {listarPaginas,abrirPagina,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
-    estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo})};
+    estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};
 
@@ -1713,7 +1770,7 @@ function ntBlocos(doc,anteriores,agora=new Date().toISOString()){
 function ntDocumento(blocos){return {type:'doc',content:(blocos||[]).length?blocos.map(b=>b.conteudo):[{type:'paragraph'}]}}
 
 const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
-const ntPaginas=()=>SyncNotas.estado().paginas.map(p=>({...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}));
+const ntPaginas=()=>{const est=SyncNotas.estado(),ab=est.abertas||{};return est.paginas.map(p=>({...ab[p.id],...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}))};
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
@@ -2123,7 +2180,7 @@ function ntSugestao(c,{nome,char,itens,comando,allow,allowSpaces=false,semVazio=
 }
 const ntSlash=c=>ntSugestao(c,{nome:'slashNotas',char:'/',
   allow:({state,range})=>state.doc.resolve(range.from).parent.type.name!=='detailsSummary',
-  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
+  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&c.pagina!=='notas'&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
   comando:(editor,range,it)=>{
     const ch=editor.chain().focus().deleteRange(range);
     if(it[3]){it[3](ch).run();return}
@@ -2287,7 +2344,7 @@ function ntValidos(blocos){
 function ntEditor(c,blocos,aoMudar){
   c.el=document.createElement('div');c.el.className='nt-ed';
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
-    editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina?'Página':'Notas',spellcheck:'true'},
+    editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina&&c.pagina!=='notas'?'Página':'Notas',spellcheck:'true'},
       transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\bsrc="\.\/img\/)[^>]*>/gi,''),
       handlePaste:(v,e)=>{
         const cd=e.clipboardData;if(!cd)return false;
@@ -2353,7 +2410,8 @@ async function ntMonta(){
   if(NT.el.parentNode!==raiz){raiz.replaceChildren();raiz.appendChild(NT.el)}
   const slot=document.getElementById('nt_barra');if(slot&&NT.barra&&NT.barra.parentNode!==slot)slot.appendChild(NT.barra);
   const h=document.querySelector('header');if(h)raiz.closest('.nt')?.style.setProperty('--nt-top',Math.round(h.getBoundingClientRect().height)+'px');
-  if(NT.eraFoco){NT.eraFoco=false;NT.ed.commands.focus(null,{scrollIntoView:false})}
+  if(NT.focoTitulo){NT.focoTitulo=false;document.getElementById('nt_titulo')?.focus()}
+  else if(NT.eraFoco){NT.eraFoco=false;NT.ed.commands.focus(null,{scrollIntoView:false})}
 }
 // Botão + e Alt+A: novo toggle no topo da página (ou da página aberta no painel), já com o cursor no título.
 function ntAbre(){
@@ -2366,7 +2424,7 @@ function vNotas(){
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()"><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
+  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -2389,9 +2447,10 @@ function ntPaginaLink(){
 // A interface só envia páginas alteradas ou patches de metadados. O módulo hidrata quando necessário.
 function pgGrava(l,pastas){
   const antes=ntPaginas(),ids=new Set(l.map(p=>p.id));
-  for(const p of l)if(!ntIgual(p,antes.find(a=>a.id===p.id))){
-    SyncNotas.salvarPagina(p);if(NT.pagina===p.id)NT.paginaDados={...NT.paginaDados,...p};
-  }
+  for(const p of l){const a=antes.find(x=>x.id===p.id);if(!ntIgual(p,a)){
+    if(a&&'origem' in a&&!('origem' in p))p.origem=null;
+    SyncNotas.salvarPagina(p);if(NT.pagina===p.id){NT.paginaDados={...NT.paginaDados,...p};if(p.origem===null)delete NT.paginaDados.origem}
+  }}
   for(const p of antes)if(!ids.has(p.id))SyncNotas.salvarPagina({id:p.id,excluida:true,atualizado:ntAgora()});
   if(pastas)ntPastasMuda(a=>a.splice(0,a.length,...pastas));
   ntLateralPinta();ntPaginaLinks();return true;
@@ -2427,8 +2486,8 @@ function ntPaginaCria(){
   if(!pgMuda(l=>l.push({id,titulo:'',fixada:false,pasta:'',ordem,criado:agora,atualizado:agora,doc:{v:1,blocos:[{id:bid,atualizado:agora,conteudo:{type:'paragraph',attrs:{id:bid}}}]}})))return null;
   return id;
 }
-function ntPaginaNova(){const id=ntPaginaCria();if(id)ntPainelAbre(id);return id}   // botão "+ Nova página"
-function ntPaginaDoSlash(c){const id=ntPaginaCria();c.ed.chain().focus().insertContent({type:'paginaLink',attrs:{pagina:id}}).run();ntPainelAbre(id)}   // "/Página"
+function ntPaginaNova(){const id=ntPaginaCria();if(id){NT.focoTitulo=true;ntPainelAbre(id)}return id}   // botão "+ Nova página"
+function ntPaginaDoSlash(c){const id=ntPaginaCria();c.ed.chain().focus().insertContent({type:'paginaLink',attrs:{pagina:id}}).run();NT.focoTitulo=true;ntPainelAbre(id)}   // "/Página"
 function ntPaginaFixa(id){
   const p=pgAchar(id);if(!p)return;
   pgMuda(l=>{const x=l.find(y=>y.id===id),fixa=!x.fixada;x.fixada=fixa;x.atualizado=ntAgora();   // vai para o fim da seção de destino
@@ -2455,14 +2514,18 @@ function ntPaginaMove(id,ref,depois,pasta){
 async function ntPainelAbre(id){
   if(!SM.d)return;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;
-  NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;
+  NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;NT.latMov=false;
+  const conhecido=pgAchar(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
+  try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
+  if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   if(typeof go==='function'&&tela!=='notas')go('notas');else if(typeof render==='function')render();
   try{
     await smCarga;
     await SyncNotas.listarPaginas();
     let p;
     try{p=await SyncNotas.abrirPagina(id)}catch(e){
-      if(id!=='notas'||e.status!==404||SyncNotas.estado().erro||SM.erro)throw e;
+      const est=SyncNotas.estado(),semNotas=est.indiceConhecido&&!est.paginas.some(x=>x.id==='notas');
+      if(id!=='notas'||(!semNotas&&(e.status!==404||est.erro||SM.erro)))throw e;
       const doc={v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
       SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:ntAgora()});
       p=await SyncNotas.abrirPagina(id);
@@ -2472,7 +2535,7 @@ async function ntPainelAbre(id){
     try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
     if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   }catch(e){if(NT.visita===visita)NT.erro=e.message}
-  finally{if(NT.visita===visita){NT.carregando=false;render()}}
+  finally{if(NT.visita===visita){NT.carregando=false;render();await ntMonta()}}
 }
 const NTA=(()=>{try{const q=new URLSearchParams(location.search);return q.get('pagina')||(q.get('aba')==='notas'?'notas':'')}catch(e){return ''}})();
 const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
@@ -2540,7 +2603,7 @@ function ntPaginaMenu(id,x,y){
   const posiciona=()=>{m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px'};
   m.onclick=e=>{
     if(e.target.closest('[data-versoes]')){fecha();ntHistAbre({pagina:id});return}
-    if(e.target.closest('[data-notion]')){fecha();ntPainelAbre(id).then(()=>ntNotionEscolhe(id));return}
+    if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);ntPainelAbre(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();
@@ -3269,6 +3332,7 @@ function ntNotionCombina(diff,agora=ntAgora()){
     conteudo.attrs={...conteudo.attrs,id};return [{id,atualizado:agora,conteudo}];
   });
 }
+const ntSchema=()=>{if(NT.ed?.state?.schema)return NT.ed.state.schema;if(typeof TT==='undefined')return null;if(!NT._schema){const t=new TT.Editor({extensions:ntExtensoes(NT)});NT._schema=t.schema;t.destroy()}return NT._schema};
 function ntNotionAplicar(id,base,diff,origem){
   if(NT.pagina===id&&NT.sujo)ntSalvaDoc();
   const p=pgAchar(id);if(!p||NT.pagina===id&&NT.sujo)throw Error('Não consegui salvar a edição atual. A atualização não foi aplicada.');
@@ -3276,7 +3340,7 @@ function ntNotionAplicar(id,base,diff,origem){
   if(!diff.some(r=>r.tipo!=='igual'&&r.aplicar))return false;
   const agora=ntAgora(),blocos=ntNotionCombina(diff,agora);
   if(!blocos.length)blocos.push(...ntBlocos({content:[ntPar('')]},[],agora));
-  const ctx=NT.pagina===id?NT:null,schema=(ctx?.ed||NT.ed)?.state.schema;
+  const ctx=NT.pagina===id?NT:null,schema=(ctx?.ed||NT.ed)?.state.schema||ntSchema();
   if(!schema)throw Error('Abra as Notas antes de aplicar.');schema.nodeFromJSON(ntDocumento(blocos)).check();
   const copia={...JSON.parse(JSON.stringify(p)),id:ntNovoId().replace(/^b/,'p'),titulo:(p.titulo||'Sem título')+' (antes de atualizar '+new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+')',fixada:false,criado:agora,atualizado:agora,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+10,copiaDe:id};
   delete copia.origem;
@@ -3295,7 +3359,7 @@ function ntNotionRevisa(id,p,resumo){
   if(vazio(fim)&&!vazio(conteudo.at(-1)))conteudo.push(fim);
   const diff=ntNotionDiff(base.blocos||[],conteudo);
   const ov=ntModal('nt-notion-diff',`<div class="nt-modal-t"><b>Atualizar do Notion: ${esc(atual.titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><p>Compare com suas edições atuais. Aplicar cria uma cópia da página para desfazer.</p><p role="status">${resumo.enviadas} imagens enviadas; ${resumo.reutilizadas} reutilizadas; ${resumo.falhas} falhas; ${resumo.simplificados} itens simplificados.</p><div class="nt-diff-lista"></div><div class="nt-diff-acoes"><button type="button" class="b" data-tudo>Aplicar tudo</button><button type="button" class="b" data-selecao>Aplicar selecionados</button><button type="button" class="b s" data-cancelar>Cancelar</button></div>`);
-  const lista=ov.querySelector('.nt-diff-lista'),schema=(NT.ed).state.schema,serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
+  const lista=ov.querySelector('.nt-diff-lista'),schema=ntSchema(),serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
   const mostra=(pai,no,classe,rotulo)=>{
     if(!no)return;const area=document.createElement('div');area.className='nt-diff-versao '+classe;
     const label=document.createElement('b');label.textContent=rotulo;area.appendChild(label);
@@ -3328,7 +3392,7 @@ async function ntNotionImporta(arquivo,alvo=''){
   const checa=()=>{if(cancelado)throw Error('Importação cancelada.')};
   let enviadas=0,falhas=0,simplificados=0,reutilizadas=0;
   try{
-    if(alvo&&!pgAchar(alvo))throw Error('Página não encontrada.');
+    if(alvo){if(!pgAchar(alvo)?.doc){try{const p=await SyncNotas.abrirPagina(alvo);if(NT.pagina===alvo&&!NT.sujo)NT.paginaDados=p}catch(e){}}if(!pgAchar(alvo))throw Error('Página não encontrada.')}
     if(alvo&&!/\.zip$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip para atualizar.');
     if(arquivo.size>NT_ZIP_MAX)throw Error('O arquivo deve ter no máximo 200 MB.');
     const zip=/\.zip$/i.test(arquivo.name),arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
@@ -3388,7 +3452,7 @@ async function ntNotionImporta(arquivo,alvo=''){
     checa();
     const agora=ntAgora(),pasta=pags.length>1?{id:ntNovoId().replace(/^b/,'f'),titulo:pags[0].titulo,ordem:Math.max(0,...ntPastas().map(f=>+f.ordem||0))+10,criado:agora,atualizado:agora}:null;
     // Validar tudo antes de gravar: sem página parcialmente importada por HTML/ZIP inválido.
-    const schema=(NT.ed)?.state.schema;if(!schema)throw Error('Abra as Notas antes de importar.');
+    const schema=ntSchema();if(!schema)throw Error('Abra as Notas antes de importar.');
     for(const p of pags){const no=schema.nodeFromJSON(p.doc);no.check();p.doc=no.toJSON();p.origem={tipo:'notion-zip',titulo:p.titulo,importadoEm:agora,...(p.notionId?{notionId:p.notionId}:{}),imagens:p.hashes}}
     if(alvo){const r=ntNotionRevisa(alvo,pags[0],{enviadas,falhas,simplificados,reutilizadas});ov.aoFechar=null;ntModalFecha(ov);return r}
     const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,origem:p.origem,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));

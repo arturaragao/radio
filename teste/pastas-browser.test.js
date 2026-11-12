@@ -12,7 +12,7 @@ test('Pastas 1.43: criar, renomear, mover, recolher, arrastar, excluir; desktop 
     assert.equal(await C.confirmado(),true);const id=await ev('ntPastas().at(-1).id');assert.equal(await ev(`document.querySelector('[data-pasta="${id}"] .nt-pt-nome').textContent.includes('Pasta fictícia')`),true);
     await click(`[data-pasta="${id}"] [title="Renomear pasta"]`);await ate("!!document.querySelector('.nt-pt-titulo')");await ev("document.querySelector('.nt-pt-titulo').value='Renomeada'");await click('.nt-pt-form [type=submit]');
     await ate(`ntPastas().find(p=>p.id==='${id}').titulo==='Renomeada'`);assert.equal(await C.confirmado(),true);
-    const pg=await ev('ntPaginaNova()');await ev('ntPainelFecha()');if(largura===375)await click('#nt_lat_bt');
+    const pg=await ev('ntPaginaNova()');await ate('!NT.carregando&&!!NT.ed');if(largura===375)await click('#nt_lat_bt');
     await click(`[data-pg="${pg}"] .nt-pg-mover`);await ate("!!document.querySelector('.nt-mover select')");await ev(`document.querySelector('.nt-mover select').value='${id}'`);await click('.nt-mover button');
     assert.equal(await ev(`pgAchar('${pg}').pasta`),id);
     assert.equal(await ev(`bgDocs().find(p=>p.id==='${pg}').sub`),'Renomeada');assert.match(await ev(`document.querySelector('[data-pg="${pg}"] a').href`),new RegExp('pagina='+pg));
@@ -20,7 +20,7 @@ test('Pastas 1.43: criar, renomear, mover, recolher, arrastar, excluir; desktop 
     await ev('ntLateralPinta()');assert.equal(await ev(`document.querySelector('[data-pasta="${id}"] .nt-pt-nome').getAttribute('aria-expanded')`),'false');
     await click(`[data-pasta="${id}"] .nt-pt-nome`);
     if(largura===1000){
-      const pg2=await ev('ntPaginaNova()');await ev('ntPainelFecha()');assert.equal(await C.confirmado(),true);
+      const pg2=await ev('ntPaginaNova()');await ate('!NT.carregando&&!!NT.ed');assert.equal(await C.confirmado(),true);
       await C.arrasta(await rect(`[data-pg="${pg2}"] .nt-pg-alca`),await rect(`[data-pasta="${id}"] .nt-pt-cab`));
       assert.equal(await ev(`pgAchar('${pg2}').pasta`),id,'mouse move para pasta');
       assert.equal(await C.confirmado(),true);

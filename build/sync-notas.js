@@ -22,10 +22,10 @@ function criarSyncNotas(o){
   try{aparelho||=o.storage?.getItem('bcbr_aparelhoId')}catch(e){}
   aparelho||='a'+Date.now().toString(36)+Math.random().toString(36).slice(2);
   try{o.storage?.setItem('bcbr_aparelhoId',aparelho)}catch(e){}
-  let indice=[],etag='',indiceSha=null,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
-  const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map();
+  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
+  const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map(),legadoPreservado=[];
   const mudou=()=>o.alterou?.();
-  const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{})});
+  const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{}),...(p.copiaDe?{copiaDe:p.copiaDe}:{}),...(p.origem?{origem:clone(p.origem)}:{})});
   const lista=()=>{const m=new Map(indice.map(p=>[p.id,p]));for(const {p} of pend.values()){if(p.excluida)m.delete(p.id);else m.set(p.id,metadados({...m.get(p.id),...p}))}return [...m.values()]};
   function cache(k,v){try{Promise.resolve(o.cache?.set(k,clone(v))).catch(()=>{})}catch(e){}}
   async function cacheLer(k){try{return await o.cache?.get(k)}catch(e){return null}}
@@ -47,26 +47,36 @@ function criarSyncNotas(o){
   const conflito=e=>e.status===409||e.status===422;
   async function listarPaginas(){
     if(leitura)return leitura;
-    leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}erro='';mudou();return clone(lista())}
-      catch(e){if(!indice.length)indice=await cacheLer('notas:indice')||[];erro=e.message;mudou();return clone(lista())}
+    leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
+      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=e.message;mudou();return clone(lista())}
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
   async function abrirPagina(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.clear();abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
     if(atual&&meta?.sha&&shas.get(id)===meta.sha&&!e)return clone(atual);
-    let p;
-    try{const f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);cache('notas:pagina:'+id,{sha:f.sha,p})}
+    let p,f=null;
+    try{f=await ler(caminho(id));if(!f.d||f.d.excluida)throw Object.assign(Error('Página não encontrada'),{status:404});p=f.d;shas.set(id,f.sha);cache('notas:pagina:'+id,{sha:f.sha,p})}
     catch(x){const c=await cacheLer('notas:pagina:'+id);if(!c?.p)throw x;p=c.p}
+    if(f?.d){
+      const noIndice=indice.find(x=>x.id===id);
+      if(!noIndice||(noIndice.sha!==f.sha&&String(f.d.atualizado||'')>=String(noIndice.atualizado||''))){
+        indice=[...indice.filter(x=>x.id!==id),metadados({...f.d,sha:f.sha})];mudou();
+        await atualizarIndice(id).catch(()=>{});
+      }
+    }
     const novo=pendente(id);if((revisoes.get(id)||0)!==rev&&novo?.p.doc)p=novo.p;else if(e)p={...p,...e.p};
-    abertas.clear();abertas.set(id,clone(p));return clone(p);
+    if(p.origem===null)delete p.origem;
+    abertas.set(id,clone(p));return clone(p);
   }
   function salvarPagina(p){
     chaveId(p.id);const anterior=pendente(p.id)?.p||abertas.get(p.id)||{},em=Date.now(),
-      novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho},
-      k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
-    pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);if(abertas.has(p.id))abertas.set(p.id,clone(novo));
+      novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho};
+    if(novo.origem===null)delete novo.origem;
+    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
+    pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);
+    if(novo.excluida)abertas.delete(p.id);else if(abertas.has(p.id)||novo.doc)abertas.set(p.id,clone(novo));
     const duravel=persistir(e);clearTimeout(timer);timer=setTimeout(()=>enviar(),duravel?(o.atraso??1500):0);mudou();return true;
   }
   async function atualizarIndice(id){
@@ -84,7 +94,8 @@ function criarSyncNotas(o){
     let f=null,sha=shas.get(p.id);if(soMaisNovo||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
     for(let t=0;t<8;t++){
       if(soMaisNovo&&f?.d&&String(f.d.atualizado||'')>=String(p.atualizado||''))return atualizarIndice(p.id);
-      const completo={...(f?.d||{}),...p};delete completo.sha;if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
+      const completo={...(f?.d||{}),...p};delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)))delete completo.origem;
+      if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
       try{sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);return await atualizarIndice(p.id)}
       catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha}
     }throw Error('Página ocupada; alteração permanece na fila.');
@@ -96,7 +107,8 @@ function criarSyncNotas(o){
       for(const e of [...pend.values()].sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev))){
         const confirmado=await gravar(clone(e.p));ultima=Date.now();erro='';
         if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
-          if(abertas.has(e.p.id))abertas.set(e.p.id,clone(confirmado.d));cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
+          if(e.p.excluida)abertas.delete(e.p.id);else if((abertas.has(e.p.id)||e.p.doc)&&confirmado?.d)abertas.set(e.p.id,clone(confirmado.d));
+          if(confirmado?.d)cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
       }return true;
     }catch(e){erro=e.message;return false}};
     voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
@@ -104,11 +116,14 @@ function criarSyncNotas(o){
   async function versoes(id,opt={}){if(opt.ref)return (await ler(caminho(id)+'?ref='+encodeURIComponent(opt.ref))).d;return api('commits?path='+encodeURIComponent(caminho(id))+'&per_page=30&page='+(opt.pagina||1))}
   async function restaurar(id,ref){const p=await versoes(id,{ref});if(!p?.doc)throw Error('Versão não encontrada');salvarPagina({...p,id,excluida:false,atualizado:new Date().toISOString()});return enviar()}
   const carimbo=doc=>(doc?.blocos||[]).reduce((a,b)=>String(b.atualizado||'')>a?String(b.atualizado):a,'');
+  const maiorData=(...ds)=>ds.filter(Boolean).map(String).sort().at(-1)||'';   // sem data: o arquivo remoto, se existir, vence
+  const lerLista=k=>{try{const v=JSON.parse(o.storage?.getItem(k)||'null');return Array.isArray(v)?v:null}catch(e){return null}};
+  const fnv64=s=>{let h=14695981039346656037n;for(let i=0;i<s.length;i++)h=BigInt.asUintN(64,(h^BigInt(s.charCodeAt(i)))*1099511628211n);return h.toString(16)};
   function paginasLegadas(d){if(!d)return [];const l=(d.notasPaginas?.paginas||[]).filter(p=>p.doc).map(clone);
     if(d.notasDoc)l.push({id:'notas',titulo:'Notas',pasta:'',ordem:0,atualizado:d.notasDoc.atualizado||carimbo(d.notasDoc),doc:clone(d.notasDoc)});
     else if(d.notas?.length&&o.converterAntigas)l.push(o.converterAntigas(d.notas));
     if(d.notas_v138?.length&&o.converterAntigas)l.push({...o.converterAntigas(d.notas_v138),id:'notas-legado-v138',titulo:'Notas — cópia anterior'});
-    if(d.notas_conflitos?.length){const blocos=d.notas_conflitos.filter(c=>c.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||'',conteudo:clone(c.conteudo)}));
+    if(d.notas_conflitos?.length){const blocos=d.notas_conflitos.filter(c=>c.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||'',conteudo:typeof c.conteudo==='string'?{type:'paragraph',content:[{type:'text',text:c.conteudo}]}:clone(c.conteudo)}));
       l.push({id:'notas-recuperadas',titulo:'Notas — cópias recuperadas',doc:{v:1,blocos},atualizado:carimbo({blocos})})}
     return l;
   }
@@ -124,19 +139,61 @@ function criarSyncNotas(o){
       catch(e){if(!conflito(e))throw e;const f=await ler('semana/plano.json');d=f.d;sha=f.sha}
     }throw Error('Plano ocupado; migração será retomada.');})().finally(()=>{migrando=null});return migrando;
   }
+  // Frases/pastas antigas: sem fusão. Item alterado no aparelho (≠ base) entra por id se for mais novo que o do plano; exclusões não são aplicadas.
+  async function aplicarLegadoPlano(x,emIso){
+    const alterados=(l,base)=>(Array.isArray(l)?l:[]).filter(i=>i&&typeof i.id==='string'&&JSON.stringify(i)!==JSON.stringify((base||[]).find(b=>b?.id===i.id)));
+    const fr=alterados(x.frases,x.baseFrases||x.base||lerLista('bcbr_notasfrases_base_v143')||lerLista('bcbr_notasfrases_base')),
+      pt=alterados(x.pastas,x.basePastas||x.base||lerLista('bcbr_notaspastas_base_v143')||lerLista('bcbr_notaspastas_base'));
+    if(!fr.length&&!pt.length)return;
+    const aplica=(lista,itens)=>{const l=Array.isArray(lista)?clone(lista):[];for(const i of itens){const k=l.findIndex(r=>r?.id===i.id);
+      if(k<0)l.push(clone(i));else if(String(i.atualizado||emIso)>String(l[k].atualizado||''))l[k]=clone(i)}return l};
+    for(let t=0;t<8;t++){
+      const f=await ler('semana/plano.json');if(!f.d)throw Error('Plano indisponível; pendência antiga preservada.');const d=clone(f.d);
+      if(fr.length)d.notasFrases=aplica(d.notasFrases,fr);
+      if(pt.length)d.notasPaginas={...(d.notasPaginas||{}),pastas:aplica(d.notasPaginas?.pastas,pt)};
+      try{await put('semana/plano.json',d,f.sha);return}catch(e){if(!conflito(e))throw e}
+    }throw Error('Plano ocupado; pendência antiga será retomada.');
+  }
   // Só lê chaves antigas. Sua remoção não é necessária: recibo local impede replay após confirmação.
   async function receberLegado(){
+    if(!o.storage)return;
     const hash=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),v=>v.toString(16).padStart(2,'0')).join('');
-    const ops=[];try{for(let i=0;i<o.storage.length;i++){const k=o.storage.key(i);if(k==='bcbr_notasdoc_pendente'||k?.startsWith('bcbr_notasdoc_pendente:')){const raw=o.storage.getItem(k),h=await hash(raw);if(o.storage.getItem('bcbr_migrada_v2:'+k)===h)continue;const x=JSON.parse(raw);ops.push({k,raw,x,h})}}}catch(e){erro='Pendência antiga ilegível; preservada no aparelho.';return}
-    for(const {k,x,h} of ops.sort((a,b)=>(a.x.em||0)-(b.x.em||0))){
-      const pags=(x.paginas||[]).filter(p=>p.doc&&JSON.stringify(p)!==JSON.stringify(x.base?.find?.(b=>b.id===p.id)));
-      if(Array.isArray(x.blocos))pags.push({id:'notas',titulo:'Notas',doc:{v:1,blocos:x.blocos},atualizado:carimbo({blocos:x.blocos})});
-      for(const p of pags)await gravar({...p,aparelhoId:aparelho},true);
-      try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
+    const ok143=new Set(lerLista('bcbr_notasdoc_pendente_v143_legado_ok')||[]),ops=[];
+    legadoPreservado.length=0;
+    for(let i=0;i<o.storage.length;i++){
+      const k=o.storage.key(i);if(k!=='bcbr_notasdoc_pendente'&&!k?.startsWith('bcbr_notasdoc_pendente:'))continue;
+      const raw=o.storage.getItem(k);if(raw===null)continue;
+      const h=await hash(raw);if(o.storage.getItem('bcbr_migrada_v2:'+k)===h)continue;
+      try{
+        const x=JSON.parse(raw);
+        if(!x||typeof x!=='object'||!['blocos','paginas','frases','pastas','conflitos'].some(c=>Array.isArray(x[c])))throw Error('formato');
+        ops.push({k,raw,x,h});
+      }catch(e){legadoPreservado.push(k);erro='Pendência antiga ilegível; preservada no aparelho.'}
     }
+    try{
+      for(const {k,raw,x,h} of ops.sort((a,b)=>(Number(a.x.em)||0)-(Number(b.x.em)||0)||a.k.localeCompare(b.k))){
+        if((k==='bcbr_notasdoc_pendente'&&(ok143.has(fnv64(raw))||ops.some(y=>y.k==='bcbr_notasdoc_pendente:legado:'+fnv64(raw))))||(typeof x.legadoRaw==='string'&&ok143.has(fnv64(x.legadoRaw)))){
+          try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}continue;
+        }
+        const emIso=Number.isFinite(x.em)&&x.em>0?new Date(x.em).toISOString():'';
+        const basePag=Array.isArray(x.basePaginas)?x.basePaginas:(!Array.isArray(x.blocos)&&Array.isArray(x.base)?x.base:lerLista('bcbr_notaspag_base_v143')||lerLista('bcbr_notaspag_base')||[]);
+        const pags=[];
+        if(Array.isArray(x.paginas)){
+          for(const p of x.paginas)if(p?.id&&p.doc){const b=basePag.find(y=>y?.id===p.id);if(!b||JSON.stringify(p)!==JSON.stringify(b))pags.push({...p,atualizado:maiorData(p.atualizado,emIso,carimbo(p.doc))})}
+        }
+        if(Array.isArray(x.blocos))pags.push({id:'notas',titulo:'Notas',pasta:'',ordem:0,doc:{v:1,blocos:x.blocos},atualizado:maiorData(emIso,carimbo({blocos:x.blocos}))});
+        if(Array.isArray(x.conflitos)&&x.conflitos.length){
+          const blocos=x.conflitos.filter(c=>c?.conteudo).map((c,i)=>({id:'recuperado-'+i,atualizado:c.atualizado||c.em||emIso,conteudo:typeof c.conteudo==='string'?{type:'paragraph',content:[{type:'text',text:c.conteudo}]}:clone(c.conteudo)}));
+          if(blocos.length)pags.push({id:'notas-recuperadas-'+fnv64(k),titulo:'Notas — cópias recuperadas',doc:{v:1,blocos},atualizado:maiorData(emIso,carimbo({blocos}))});
+        }
+        for(const p of pags)await gravar({...p,aparelhoId:aparelho},true);
+        await aplicarLegadoPlano(x,emIso);
+        try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
+      }
+    }catch(e){erro=e.message}
   }
   return {listarPaginas,abrirPagina,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
-    estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo})};
+    estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};
 

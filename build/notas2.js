@@ -609,6 +609,7 @@ function ntNotionCombina(diff,agora=ntAgora()){
     conteudo.attrs={...conteudo.attrs,id};return [{id,atualizado:agora,conteudo}];
   });
 }
+const ntSchema=()=>{if(NT.ed?.state?.schema)return NT.ed.state.schema;if(typeof TT==='undefined')return null;if(!NT._schema){const t=new TT.Editor({extensions:ntExtensoes(NT)});NT._schema=t.schema;t.destroy()}return NT._schema};
 function ntNotionAplicar(id,base,diff,origem){
   if(NT.pagina===id&&NT.sujo)ntSalvaDoc();
   const p=pgAchar(id);if(!p||NT.pagina===id&&NT.sujo)throw Error('Não consegui salvar a edição atual. A atualização não foi aplicada.');
@@ -616,7 +617,7 @@ function ntNotionAplicar(id,base,diff,origem){
   if(!diff.some(r=>r.tipo!=='igual'&&r.aplicar))return false;
   const agora=ntAgora(),blocos=ntNotionCombina(diff,agora);
   if(!blocos.length)blocos.push(...ntBlocos({content:[ntPar('')]},[],agora));
-  const ctx=NT.pagina===id?NT:null,schema=(ctx?.ed||NT.ed)?.state.schema;
+  const ctx=NT.pagina===id?NT:null,schema=(ctx?.ed||NT.ed)?.state.schema||ntSchema();
   if(!schema)throw Error('Abra as Notas antes de aplicar.');schema.nodeFromJSON(ntDocumento(blocos)).check();
   const copia={...JSON.parse(JSON.stringify(p)),id:ntNovoId().replace(/^b/,'p'),titulo:(p.titulo||'Sem título')+' (antes de atualizar '+new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+')',fixada:false,criado:agora,atualizado:agora,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+10,copiaDe:id};
   delete copia.origem;
@@ -635,7 +636,7 @@ function ntNotionRevisa(id,p,resumo){
   if(vazio(fim)&&!vazio(conteudo.at(-1)))conteudo.push(fim);
   const diff=ntNotionDiff(base.blocos||[],conteudo);
   const ov=ntModal('nt-notion-diff',`<div class="nt-modal-t"><b>Atualizar do Notion: ${esc(atual.titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><p>Compare com suas edições atuais. Aplicar cria uma cópia da página para desfazer.</p><p role="status">${resumo.enviadas} imagens enviadas; ${resumo.reutilizadas} reutilizadas; ${resumo.falhas} falhas; ${resumo.simplificados} itens simplificados.</p><div class="nt-diff-lista"></div><div class="nt-diff-acoes"><button type="button" class="b" data-tudo>Aplicar tudo</button><button type="button" class="b" data-selecao>Aplicar selecionados</button><button type="button" class="b s" data-cancelar>Cancelar</button></div>`);
-  const lista=ov.querySelector('.nt-diff-lista'),schema=(NT.ed).state.schema,serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
+  const lista=ov.querySelector('.nt-diff-lista'),schema=ntSchema(),serializer=TT.pm.model.DOMSerializer.fromSchema(schema);
   const mostra=(pai,no,classe,rotulo)=>{
     if(!no)return;const area=document.createElement('div');area.className='nt-diff-versao '+classe;
     const label=document.createElement('b');label.textContent=rotulo;area.appendChild(label);
@@ -668,7 +669,7 @@ async function ntNotionImporta(arquivo,alvo=''){
   const checa=()=>{if(cancelado)throw Error('Importação cancelada.')};
   let enviadas=0,falhas=0,simplificados=0,reutilizadas=0;
   try{
-    if(alvo&&!pgAchar(alvo))throw Error('Página não encontrada.');
+    if(alvo){if(!pgAchar(alvo)?.doc){try{const p=await SyncNotas.abrirPagina(alvo);if(NT.pagina===alvo&&!NT.sujo)NT.paginaDados=p}catch(e){}}if(!pgAchar(alvo))throw Error('Página não encontrada.')}
     if(alvo&&!/\.zip$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip para atualizar.');
     if(arquivo.size>NT_ZIP_MAX)throw Error('O arquivo deve ter no máximo 200 MB.');
     const zip=/\.zip$/i.test(arquivo.name),arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
@@ -728,7 +729,7 @@ async function ntNotionImporta(arquivo,alvo=''){
     checa();
     const agora=ntAgora(),pasta=pags.length>1?{id:ntNovoId().replace(/^b/,'f'),titulo:pags[0].titulo,ordem:Math.max(0,...ntPastas().map(f=>+f.ordem||0))+10,criado:agora,atualizado:agora}:null;
     // Validar tudo antes de gravar: sem página parcialmente importada por HTML/ZIP inválido.
-    const schema=(NT.ed)?.state.schema;if(!schema)throw Error('Abra as Notas antes de importar.');
+    const schema=ntSchema();if(!schema)throw Error('Abra as Notas antes de importar.');
     for(const p of pags){const no=schema.nodeFromJSON(p.doc);no.check();p.doc=no.toJSON();p.origem={tipo:'notion-zip',titulo:p.titulo,importadoEm:agora,...(p.notionId?{notionId:p.notionId}:{}),imagens:p.hashes}}
     if(alvo){const r=ntNotionRevisa(alvo,pags[0],{enviadas,falhas,simplificados,reutilizadas});ov.aoFechar=null;ntModalFecha(ov);return r}
     const novas=pags.map((p,i)=>({id:p.id,titulo:p.titulo,origem:p.origem,pasta:pasta?.id||'',fixada:false,ordem:Math.max(0,...ntPaginas().map(p=>+p.ordem||0))+(i+1)*10,criado:agora,atualizado:agora,doc:{v:1,blocos:ntBlocos(p.doc,[],agora)}}));

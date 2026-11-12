@@ -1,8 +1,8 @@
 # Banco CBR (app)
 
-## 1.48.0 — 11/11/2026 — implementação local PARCIAL, não aprovada
+## 1.48.0 — 11/11/2026 — implementação local concluída, não publicada
 
-Modelo por página implementado em build/sync-notas.js; Notas é a página "notas" e todas as páginas usam a área principal. Sem commit/push; repo de dados somente lido. A suíte completa tem regressões e exige escalada antes de publicar. Brief e evidências: teste/validacao-1.48.md. Esta seção substitui o modelo antigo de fusão/conflitos descrito no histórico abaixo.
+Modelo por página implementado em build/sync-notas.js; Notas é a página "notas" e todas as páginas usam a área principal. Sem commit/push; repo de dados somente lido. Escalada concluída: suíte completa 269/269, rápido 8/8 (2,4 s), interpretar 28/28. Fila local legada transportada sem fusão (exclusões antigas não aplicadas; chaves antigas nunca apagadas); abrir página sem entrada no índice reconstrói a entrada. Brief e evidências: teste/validacao-1.48.md. Esta seção substitui o modelo antigo de fusão/conflitos descrito no histórico abaixo.
 
 ### Como salvar funciona
 
@@ -15,7 +15,7 @@ Modelo por página implementado em build/sync-notas.js; Notas é a página "nota
 
 - Mudança de layout: node teste/rapido.js (somente interface/tema/layout, limite de 28 s).
 - Mudança em build/sync-notas.js: node --test teste/ e node teste/interpretar.test.js; regenerar com node build/montar-node.js.
-- Testes do contrato revogado (fusão por bloco, bases e detector) foram substituídos pela suíte teste/sync-notas.test.js. A adaptação das regressões de interface/Notion ainda está incompleta; não considerar a redução de testes como aceite.
+- Testes do contrato revogado (fusão por bloco, bases e detector) foram substituídos por teste/sync-notas.test.js (inclui fila legada e autocura). Regressões de interface readaptadas à área principal; Versões/Restaurar e última página em teste/versoes-browser.test.js.
 
 Complemento 1.45.0: indicador Salvo na mesma linha do titulo Radio v1.45.0, ao lado de Sincronizado, com layout compacto em 375 px; sync/fila/armazenamento inalterados.
 

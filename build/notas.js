@@ -31,7 +31,7 @@ function ntBlocos(doc,anteriores,agora=new Date().toISOString()){
 function ntDocumento(blocos){return {type:'doc',content:(blocos||[]).length?blocos.map(b=>b.conteudo):[{type:'paragraph'}]}}
 
 const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
-const ntPaginas=()=>SyncNotas.estado().paginas.map(p=>({...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}));
+const ntPaginas=()=>{const est=SyncNotas.estado(),ab=est.abertas||{};return est.paginas.map(p=>({...ab[p.id],...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}))};
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
@@ -441,7 +441,7 @@ function ntSugestao(c,{nome,char,itens,comando,allow,allowSpaces=false,semVazio=
 }
 const ntSlash=c=>ntSugestao(c,{nome:'slashNotas',char:'/',
   allow:({state,range})=>state.doc.resolve(range.from).parent.type.name!=='detailsSummary',
-  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
+  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&c.pagina!=='notas'&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
   comando:(editor,range,it)=>{
     const ch=editor.chain().focus().deleteRange(range);
     if(it[3]){it[3](ch).run();return}
@@ -605,7 +605,7 @@ function ntValidos(blocos){
 function ntEditor(c,blocos,aoMudar){
   c.el=document.createElement('div');c.el.className='nt-ed';
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
-    editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina?'Página':'Notas',spellcheck:'true'},
+    editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina&&c.pagina!=='notas'?'Página':'Notas',spellcheck:'true'},
       transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\bsrc="\.\/img\/)[^>]*>/gi,''),
       handlePaste:(v,e)=>{
         const cd=e.clipboardData;if(!cd)return false;
@@ -671,7 +671,8 @@ async function ntMonta(){
   if(NT.el.parentNode!==raiz){raiz.replaceChildren();raiz.appendChild(NT.el)}
   const slot=document.getElementById('nt_barra');if(slot&&NT.barra&&NT.barra.parentNode!==slot)slot.appendChild(NT.barra);
   const h=document.querySelector('header');if(h)raiz.closest('.nt')?.style.setProperty('--nt-top',Math.round(h.getBoundingClientRect().height)+'px');
-  if(NT.eraFoco){NT.eraFoco=false;NT.ed.commands.focus(null,{scrollIntoView:false})}
+  if(NT.focoTitulo){NT.focoTitulo=false;document.getElementById('nt_titulo')?.focus()}
+  else if(NT.eraFoco){NT.eraFoco=false;NT.ed.commands.focus(null,{scrollIntoView:false})}
 }
 // Botão + e Alt+A: novo toggle no topo da página (ou da página aberta no painel), já com o cursor no título.
 function ntAbre(){
@@ -684,7 +685,7 @@ function vNotas(){
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()"><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
+  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><button type="button" class="b s" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo" id="nt_raiz"></div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -707,9 +708,10 @@ function ntPaginaLink(){
 // A interface só envia páginas alteradas ou patches de metadados. O módulo hidrata quando necessário.
 function pgGrava(l,pastas){
   const antes=ntPaginas(),ids=new Set(l.map(p=>p.id));
-  for(const p of l)if(!ntIgual(p,antes.find(a=>a.id===p.id))){
-    SyncNotas.salvarPagina(p);if(NT.pagina===p.id)NT.paginaDados={...NT.paginaDados,...p};
-  }
+  for(const p of l){const a=antes.find(x=>x.id===p.id);if(!ntIgual(p,a)){
+    if(a&&'origem' in a&&!('origem' in p))p.origem=null;
+    SyncNotas.salvarPagina(p);if(NT.pagina===p.id){NT.paginaDados={...NT.paginaDados,...p};if(p.origem===null)delete NT.paginaDados.origem}
+  }}
   for(const p of antes)if(!ids.has(p.id))SyncNotas.salvarPagina({id:p.id,excluida:true,atualizado:ntAgora()});
   if(pastas)ntPastasMuda(a=>a.splice(0,a.length,...pastas));
   ntLateralPinta();ntPaginaLinks();return true;
@@ -745,8 +747,8 @@ function ntPaginaCria(){
   if(!pgMuda(l=>l.push({id,titulo:'',fixada:false,pasta:'',ordem,criado:agora,atualizado:agora,doc:{v:1,blocos:[{id:bid,atualizado:agora,conteudo:{type:'paragraph',attrs:{id:bid}}}]}})))return null;
   return id;
 }
-function ntPaginaNova(){const id=ntPaginaCria();if(id)ntPainelAbre(id);return id}   // botão "+ Nova página"
-function ntPaginaDoSlash(c){const id=ntPaginaCria();c.ed.chain().focus().insertContent({type:'paginaLink',attrs:{pagina:id}}).run();ntPainelAbre(id)}   // "/Página"
+function ntPaginaNova(){const id=ntPaginaCria();if(id){NT.focoTitulo=true;ntPainelAbre(id)}return id}   // botão "+ Nova página"
+function ntPaginaDoSlash(c){const id=ntPaginaCria();c.ed.chain().focus().insertContent({type:'paginaLink',attrs:{pagina:id}}).run();NT.focoTitulo=true;ntPainelAbre(id)}   // "/Página"
 function ntPaginaFixa(id){
   const p=pgAchar(id);if(!p)return;
   pgMuda(l=>{const x=l.find(y=>y.id===id),fixa=!x.fixada;x.fixada=fixa;x.atualizado=ntAgora();   // vai para o fim da seção de destino
@@ -773,14 +775,18 @@ function ntPaginaMove(id,ref,depois,pasta){
 async function ntPainelAbre(id){
   if(!SM.d)return;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;
-  NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;
+  NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;NT.latMov=false;
+  const conhecido=pgAchar(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
+  try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
+  if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   if(typeof go==='function'&&tela!=='notas')go('notas');else if(typeof render==='function')render();
   try{
     await smCarga;
     await SyncNotas.listarPaginas();
     let p;
     try{p=await SyncNotas.abrirPagina(id)}catch(e){
-      if(id!=='notas'||e.status!==404||SyncNotas.estado().erro||SM.erro)throw e;
+      const est=SyncNotas.estado(),semNotas=est.indiceConhecido&&!est.paginas.some(x=>x.id==='notas');
+      if(id!=='notas'||(!semNotas&&(e.status!==404||est.erro||SM.erro)))throw e;
       const doc={v:1,blocos:ntBlocos({content:[ntPar('')]},[])};
       SyncNotas.salvarPagina({id,titulo:'Notas',pasta:'',ordem:0,doc,atualizado:ntAgora()});
       p=await SyncNotas.abrirPagina(id);
@@ -790,7 +796,7 @@ async function ntPainelAbre(id){
     try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
     if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   }catch(e){if(NT.visita===visita)NT.erro=e.message}
-  finally{if(NT.visita===visita){NT.carregando=false;render()}}
+  finally{if(NT.visita===visita){NT.carregando=false;render();await ntMonta()}}
 }
 const NTA=(()=>{try{const q=new URLSearchParams(location.search);return q.get('pagina')||(q.get('aba')==='notas'?'notas':'')}catch(e){return ''}})();
 const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
@@ -858,7 +864,7 @@ function ntPaginaMenu(id,x,y){
   const posiciona=()=>{m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px'};
   m.onclick=e=>{
     if(e.target.closest('[data-versoes]')){fecha();ntHistAbre({pagina:id});return}
-    if(e.target.closest('[data-notion]')){fecha();ntPainelAbre(id).then(()=>ntNotionEscolhe(id));return}
+    if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);ntPainelAbre(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();

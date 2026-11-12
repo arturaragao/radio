@@ -55,10 +55,10 @@ test('edição durante PUT não é confirmada pelo PUT anterior, nem alerta com 
   const primeira=a.c.rdLer().find(e=>e.texto==='Primeira'),segunda=a.c.rdLer().find(e=>e.texto==='SEGUNDA_NAO_ENVIADA');
   assert.equal(primeira.enviada,true);assert.equal(segunda.enviada,false);a.c.rdVerifica(plano());assert.equal(a.c.rdAlertas().length,0);await p2;
 });
-test('diário sobrevive reload, respeita 5 s, Ignorar é persistente e poda 200/14 dias',async()=>{
+test('diário sobrevive reload, respeita 5 s, Ignorar é persistente e poda confirmadas 200/14 dias',async()=>{
   const a=app();await a.c.smMudar(d=>{d.tarefas[0].texto='Confirmado'});a.c.rdVerifica(plano());assert.equal(a.c.rdAlertas().length,0);
   const b=app(a.mem);b.avanca();b.c.rdVerifica(plano());assert.equal(b.c.rdAlertas().length,1);b.c.rdIgnorar(b.c.rdAlertas()[0].uid);b.c.rdVerifica(plano());assert.equal(b.c.rdAlertas().length,0);
-  b.c.rdGuardar(Array.from({length:210},(_,i)=>({id:String(i),texto:'x',hora:b.agora(),uid:String(i)})));assert.equal(b.c.rdLer().length,200);assert.equal(b.c.rdLer()[0].id,'10');b.avanca(15*86400000);b.c.rdGuardar(b.c.rdLer());assert.equal(b.c.rdLer().length,0);assert.equal([...b.mem.values()].includes('[]'),true);
+  b.c.rdGuardar(Array.from({length:210},(_,i)=>({id:'mesmo',texto:'x',hora:b.agora(),uid:String(i),enviada:true})));assert.equal(b.c.rdLer().length,200);assert.equal(b.c.rdLer()[0].uid,'10');b.avanca(15*86400000);b.c.rdGuardar(b.c.rdLer());assert.equal(b.c.rdLer().length,1);assert.equal(b.c.rdLer()[0].uid,'209');
 });
 test('indicador: aguardando, enviando, salvo, offline e motivo real de erro (401/cota/JSON)',async()=>{
   const a=app();assert.equal(a.c.rdEstado(),'Aguardando sincronização');let libera;a.trava(new Promise(r=>libera=r));const p=a.c.smMudar(d=>{d.tarefas[0].texto='novo'});assert.equal(a.c.rdEstado(),'Enviando…');await Promise.resolve();libera();await p;assert.equal(a.c.rdEstado(),'Salvo ✓');

@@ -272,7 +272,7 @@ function ntFilaGrava(campo,base,valor,extra={}){
   if(ntMigraLegado()||NT.legado)return false;
   const em=Math.max(Date.now(),(ntPendentes()[0]?.em||0)+1);
   try{localStorage.setItem(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
-  catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  catch(e){toast(e?.name==='QuotaExceededError'?`Pouco espaco neste aparelho (localStorage ${rdKB(rdUsoLocal().bytes)} KB usados). Suas notas continuam na fila; baixe uma copia em Ajustes > Backup.`:'Sem espaço para salvar as notas neste aparelho.');return false}
 }
 function ntTemPendentes(){return ntPendentes().length>0||!!NT.migrando||!!NT.legado}
 // Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco; as entradas originais ficam até o PUT confirmar.

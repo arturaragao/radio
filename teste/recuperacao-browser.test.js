@@ -50,6 +50,16 @@ test('Radio 1.44 parcial no Chrome',{timeout:120000},async t=>{
     assert.deepEqual(await ev('rdBlob.text().then(JSON.parse)'),await ev('JSON.parse(JSON.stringify(SM.d))'));assert.match(await ev('rdNome'),/^radio-plano-.*\.json$/);assert.equal(await ev('rdReq'),0);
     await ev('URL.createObjectURL=rdURL;URL.revokeObjectURL=rdRevoga;HTMLAnchorElement.prototype.click=rdClick;BCBR.api=rdApiBackup');
   });
+  await t.test('1.46: uso em Ajustes e quota real do Chrome preservam armazenamento e mostram orientação',async()=>{
+    await ate("document.getElementById('rd_estimativa').textContent.includes('Armazenamento da origem')");
+    assert.equal(await ev("document.querySelectorAll('#rd_estimativa').length"),1);
+    const uso=await ev('rdUsoLocal()');assert.ok(uso.bytes>0);assert.ok(uso.chaves.length<=8&&uso.chaves.length>0);
+    assert.equal(await ev("document.getElementById('rd_estimativa').previousElementSibling.children.length"),uso.chaves.length);
+    const antes=await ev('JSON.stringify(Object.entries(localStorage).sort())');
+    assert.equal(await ev("ntFilaGrava('blocos',[],[{id:'quota-ficticia',conteudo:'x'.repeat(12*1024*1024)}])"),false);
+    assert.match(await ev("document.getElementById('toast').textContent"),/^Pouco espaco neste aparelho \(localStorage [\d.]+ KB usados\)\. Suas notas continuam na fila; baixe uma copia em Ajustes > Backup\.$/);
+    assert.equal(await ev('JSON.stringify(Object.entries(localStorage).sort())'),antes);
+  });
   await t.test('375 px: indicador visível e sem estouro horizontal',async()=>{
     await C.call('Emulation.setDeviceMetricsOverride',{width:375,height:812,deviceScaleFactor:1,mobile:true});await ev("go('notas');rdPinta()");
     const r=await ev("(()=>{const r=document.getElementById('rd_sync').getBoundingClientRect();return {l:r.left,r:r.right,w:r.width,scroll:document.documentElement.scrollWidth,v:innerWidth}})()");assert.ok(r.w>0&&r.l>=0&&r.r<=r.v);assert.ok(r.scroll<=r.v);

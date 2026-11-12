@@ -1,4 +1,4 @@
-// Banco CBR app 1.45.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.46.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // ===== INTERPRETAR O TEXTO DE UMA TAREFA (pt-BR, sem API) — 1.17.0 =====
 // interpretarTarefa(texto, hoje) -> [{texto,dia,hora,urg,area,prioridade,etiquetas,repetir}]
 // Pura com hoje explícito; sem hoje usa a data local por compatibilidade com chamadas antigas.
@@ -1785,7 +1785,7 @@ function ntFilaGrava(campo,base,valor,extra={}){
   if(ntMigraLegado()||NT.legado)return false;
   const em=Math.max(Date.now(),(ntPendentes()[0]?.em||0)+1);
   try{localStorage.setItem(NT_PEND+':'+ntNovoId(),JSON.stringify({base,[campo]:valor,...extra,em}));return true}
-  catch(e){toast('Sem espaço para salvar as notas neste aparelho.');return false}
+  catch(e){toast(e?.name==='QuotaExceededError'?`Pouco espaco neste aparelho (localStorage ${rdKB(rdUsoLocal().bytes)} KB usados). Suas notas continuam na fila; baixe uma copia em Ajustes > Backup.`:'Sem espaço para salvar as notas neste aparelho.');return false}
 }
 function ntTemPendentes(){return ntPendentes().length>0||!!NT.migrando||!!NT.legado}
 // Põe o documento pendente em `d`. Se `d` veio do GitHub com outro conteúdo, funde por bloco; as entradas originais ficam até o PUT confirmar.
@@ -3520,17 +3520,31 @@ async function ntNotionImporta(arquivo){
 
 // 1.44 PARCIAL: observação local. Não é uma fila nem altera o formato/fusão do plano.
 // Só um PUT confirmado marca edições como enviadas; GET observa o remoto ANTES da fusão.
-const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000;
+const RD_CHAVE='bcbr_edicoes_v144',RD_IDADE=14*86400000,RD_ESPERA=5000,RD_BYTES=300*1024;
 const RD={enviando:0,ultima:0,erro:'',localErro:''};
 const rdCopia=x=>JSON.parse(JSON.stringify(x));
 const rdTexto=n=>typeof n==='string'?n:n?.text||((n?.content||[]).map(rdTexto).join(n?.type==='doc'||n?.type==='detailsContent'?'\n':''));
 const rdChave=x=>JSON.stringify([x.tipo,x.pagina||'',x.id,x.campo||'']);
 function rdLer(){
-  try{const l=JSON.parse(localStorage.getItem(RD_CHAVE)||'[]');if(!Array.isArray(l))throw Error('formato inválido');return l.filter(e=>e&&typeof e.texto==='string'&&Number.isFinite(e.hora)&&e.hora>Date.now()-RD_IDADE).slice(-200)}
+  try{const l=JSON.parse(localStorage.getItem(RD_CHAVE)||'[]');if(!Array.isArray(l))throw Error('formato inválido');return l.filter(e=>e&&typeof e.texto==='string'&&Number.isFinite(e.hora))}
   catch(e){RD.localErro='Detector indisponível: não consegui ler o diário local.';return []}
 }
+// Limites são subordinados à recuperação: nunca podar pendentes nem a última edição de cada item.
+// Bytes de localStorage estimados por UTF-16 (chave + valor), sem depender de Blob/IndexedDB.
+function rdPodar(l){
+  const ult=new Map();
+  l.forEach((e,i)=>{const k=rdChave(e),j=ult.get(k);if(j===undefined||e.hora>=l[j].hora)ult.set(k,i)});
+  const protegidas=new Set(ult.values()),fora=new Set(),tamanhos=l.map(e=>JSON.stringify(e).length*2);
+  let n=l.length,bytes=RD_CHAVE.length*2+4+tamanhos.reduce((a,b)=>a+b,0)+Math.max(0,n-1)*2;
+  const candidatas=l.map((e,i)=>i).filter(i=>l[i].enviada===true&&!protegidas.has(i)).sort((a,b)=>l[a].hora-l[b].hora||a-b);
+  for(const i of candidatas){
+    if(l[i].hora>Date.now()-RD_IDADE&&n<=200&&bytes<=RD_BYTES)break;
+    fora.add(i);bytes-=tamanhos[i]+(n>1?2:0);n--;
+  }
+  return l.filter((e,i)=>!fora.has(i));
+}
 function rdGuardar(l){
-  try{localStorage.setItem(RD_CHAVE,JSON.stringify(l.filter(e=>e.hora>Date.now()-RD_IDADE).slice(-200)));RD.localErro=''}
+  try{localStorage.setItem(RD_CHAVE,JSON.stringify(rdPodar(l)));RD.localErro=''}
   catch(e){RD.localErro='Detector sem espaço para guardar o diário local. Baixe uma cópia em Ajustes.'}
 }
 function rdItens(d){
@@ -3670,7 +3684,25 @@ function rdConflitosAbre(){
     if(b.dataset.sim!==undefined){b.disabled=true;const ok=await rdConflitoDescarta(lista[+b.dataset.sim]);ntModalFecha(ov);rdPinta();rdConflitosAbre();if(!ok)toast('Descarte pendente de sincronização; confira a conexão.')}
   });
 }
-function rdBackupHtml(){return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button></div>`}
+function rdUsoLocal(){
+  const chaves=[];let bytes=0,erro=false;
+  try{for(let i=0;i<localStorage.length;i++){const chave=localStorage.key(i);if(chave===null)continue;const valor=localStorage.getItem(chave);if(valor===null)continue;const tamanho=(chave.length+valor.length)*2;bytes+=tamanho;chaves.push({chave,bytes:tamanho})}}catch(e){erro=true}
+  chaves.sort((a,b)=>b.bytes-a.bytes||a.chave.localeCompare(b.chave));return {bytes,chaves:chaves.slice(0,8),erro};
+}
+const rdKB=bytes=>(bytes/1024).toFixed(1);
+async function rdStorageAtualiza(){
+  // Cede ao render síncrono de Ajustes. Uma tentativa de persistência por sessão, mesmo se falhar.
+  await Promise.resolve();
+  if(!RD.persistTentada){RD.persistTentada=true;try{RD.persist=typeof navigator.storage?.persist==='function'?await navigator.storage.persist():null}catch(e){RD.persist=null}}
+  let texto='Estimativa do navegador indisponível.';
+  try{if(typeof navigator.storage?.estimate==='function'){const e=await navigator.storage.estimate();if(Number.isFinite(e.usage)&&Number.isFinite(e.quota))texto=`Armazenamento da origem (navegador): ${rdKB(e.usage)} KB usados / ${rdKB(e.quota)} KB de cota.`}}catch(e){}
+  texto+=' Armazenamento persistente: '+(RD.persist===true?'concedido.':RD.persist===false?'não concedido.':'indisponível.');
+  const el=document.getElementById('rd_estimativa');if(el)el.textContent=texto;
+}
+function rdBackupHtml(){
+  const uso=rdUsoLocal();rdStorageAtualiza();
+  return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Escolha a data no branch backups e baixe a cópia do plano.<br>Para recuperar um texto, copie-o dessa versão e salve na tarefa ou nota correspondente.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button><p>localStorage: ${uso.erro?'leitura indisponível':rdKB(uso.bytes)+' KB usados'} (estimativa UTF-16 de chaves e valores).</p><p>8 maiores chaves:</p><ol style="overflow-wrap:anywhere">${uso.chaves.map(c=>`<li>${esc(c.chave)}: ${rdKB(c.bytes)} KB</li>`).join('')}</ol><p id="rd_estimativa" aria-live="polite">Consultando armazenamento do navegador…</p></div>`;
+}
 function rdBaixar(){
   if(typeof ntAntes==='function')ntAntes();if(typeof pgTituloSalva==='function')pgTituloSalva();
   if(!SM.d){toast('O plano ainda não está disponível.');return}

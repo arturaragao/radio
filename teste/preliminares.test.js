@@ -3,7 +3,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 function ctx(extra={}){
   const c=vm.createContext({console,localStorage:{getItem:()=>null},navigator:{onLine:true},document:{},...extra});
-  vm.runInContext('var SM={d:{prelConf:{}}};'+fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8')+'\n;this.P={SM,prelAgrupaDias,prelRotuloDia,prelPeriodo,prelSemRodape,prelTextoPuro,prelCopiaLimpa,prelConferido,prelPendente,prelFalta,prelFaltaTxt,prelFaltaTopo,prelFiltra,prelAgrupa,prelTokens,prelSeguro,prelDiffPalavras,prelCorrigidoHtml,prelData,prelTextoHtml,PRL,prelListaHtml,prelCorpoHtml,prelItem,prelIndexa,prelBuscaLaudos,prelLimpaMemoria,prelIrLaudo,prelLaudosInicia,prelPar,prelErroGeral};',c);
+  vm.runInContext('var SM={d:{prelConf:{}}};'+fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8')+'\n;this.P={SM,prelCfgSalva,prelSalvaChave,prelDbGrava,prelHidrata,prelLocalSet,prelAgrupaDias,prelRotuloDia,prelPeriodo,prelSemRodape,prelTextoPuro,prelCopiaLimpa,prelConferido,prelPendente,prelFalta,prelFaltaTxt,prelFaltaTopo,prelFiltra,prelAgrupa,prelTokens,prelSeguro,prelDiffPalavras,prelCorrigidoHtml,prelData,prelTextoHtml,PRL,prelListaHtml,prelCorpoHtml,prelItem,prelIndexa,prelBuscaLaudos,prelLimpaMemoria,prelIrLaudo,prelLaudosInicia,prelPar,prelErroGeral};',c);
   return c.P;
 }
 const J=x=>JSON.parse(JSON.stringify(x));   // resultados vêm de outro contexto vm
@@ -188,7 +188,37 @@ test('privacidade: o índice dos laudos não toca localStorage/IndexedDB (só o 
   const src=fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8');
   const i0=src.indexOf('function prelIndexa'),i1=src.indexOf('// ---- leitura no GitHub'),trecho=src.slice(i0,i1);
   assert.ok(!/localStorage|indexedDB|caches\.|sessionStorage/.test(trecho));
-  assert.deepEqual([...src.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m=>m[1]).sort(),["'bcbr_prl_modo'","PRL_LS","PRL_LS"].sort());
+  assert.deepEqual([...src.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m=>m[1]).sort(),["'bcbr_prl_modo'","PRL_LS","PRL_LS","PRL_LOCAL_LS"].sort());
+  // 1.55.0: o IndexedDB só existe na seção opt-in ("radio-laudos") e só grava com o interruptor ligado; nunca no cache do SW
+  assert.ok(!/caches\.|sessionStorage/.test(src));
+  const j0=src.indexOf('// ---- 1.55.0'),j1=src.indexOf('// ---- tela ----');
+  assert.deepEqual([...src.matchAll(/indexedDB/g)].map(m=>m.index).filter(i=>i<j0||i>j1),[]);
+  assert.match(src.slice(j0,j1),/function prelDbGrava\(ac,par,etag\)\{\s*if\(!prelLocal\(\)\)return;/);
+});
+test('1.55.0: sem o interruptor nada é gravado no banco; ligado grava o par; desligar apaga; hidratar sobe pares e índice sem rede',async()=>{
+  const ops=[],store={};
+  const idb={open(){const r={};queueMicrotask(()=>{r.result={createObjectStore(){},close(){},transaction:()=>({objectStore:()=>({put:v=>{ops.push('put');store[v.ac]=v},getAll:()=>{const q={};queueMicrotask(()=>{q.result=Object.values(store);q.onsuccess()});return q}})})};r.onupgradeneeded&&r.onupgradeneeded();r.onsuccess()});return r},
+    deleteDatabase(){const r={};ops.push('delete');for(const k in store)delete store[k];queueMicrotask(()=>r.onsuccess());return r}};
+  const ls={};
+  const c=ctx({setTimeout,indexedDB:idb,render:()=>{},localStorage:{getItem:k=>ls[k]??null,setItem:(k,v)=>{ls[k]=String(v)},removeItem:k=>{delete ls[k]}},document:{getElementById:()=>({value:'chave nova'})}});
+  const P=c.PRL,par={preliminar:{texto:'Rim com cisto'},definitivo:{texto:'Rim com cisto simples'}};
+  c.prelDbGrava('1',par,'e1');await new Promise(r=>setTimeout(r,150));assert.deepEqual(ops,[]);   // desligado: nada
+  ls.bcbr_prl_local='1';c.prelDbGrava('1',par,'e1');c.prelDbGrava('2',par,'e2');await new Promise(r=>setTimeout(r,150));assert.deepEqual(ops,['put','put']);
+  P.itens=[{acesso:'1',data:'2026-11-10'},{acesso:'2',data:'2026-11-11'}];
+  await c.prelHidrata();assert.equal(P.pares['1'].etag,'e1');assert.equal(P.nIdx,2);assert.equal(J(c.prelBuscaLaudos('cisto simples')).total,2);   // índice pronto, sem fetch
+  await c.prelLocalSet(false);assert.equal(ls.bcbr_prl_local,undefined);assert.deepEqual(ops,['put','put','delete']);assert.deepEqual(store,{});
+  // trocar a chave apaga o banco e a memória; a flag continua ligada
+  ls.bcbr_prl_local='1';c.prelDbGrava('1',par,'e1');await new Promise(r=>setTimeout(r,150));c.prelLimpaMemoria();await c.prelHidrata();assert.equal(Object.keys(P.pares).length,1);
+  c.prelCfgSalva();assert.equal(ops[ops.length-1],'delete');assert.deepEqual(store,{});assert.deepEqual(J(P.pares),{});assert.equal(P.nIdx,0);assert.equal(ls.bcbr_prl_local,'1');
+  c.prelSalvaChave();assert.equal(ops.filter(o=>o==='delete').length,3);
+});
+test('1.55.0: IndexedDB indisponível ao ligar: avisa, desliga a flag e não diz que vai guardar',async()=>{
+  const ls={},msgs=[];
+  const c=ctx({setTimeout,localStorage:{getItem:k=>ls[k]??null,setItem:(k,v)=>{ls[k]=String(v)},removeItem:k=>{delete ls[k]}},indexedDB:{open(){const r={};queueMicrotask(()=>r.onerror());return r}},document:{getElementById:id=>id==='prl_cm'?{set textContent(t){msgs.push(t)}}:null}});
+  await c.prelLocalSet(true);
+  assert.equal(ls.bcbr_prl_local,undefined);assert.deepEqual(msgs,['Não foi possível guardar neste aparelho; os laudos ficam só na memória.']);
+  const c2=ctx({localStorage:{getItem:()=>null,setItem(){},removeItem(){}},document:{getElementById:id=>id==='prl_cm'?{set textContent(t){msgs.push(t)}}:null}});   // sem indexedDB nenhum
+  await c2.prelLocalSet(true);assert.match(msgs[1],/ficam só na memória/);
 });
 
 // ---- 1.54.0 (revisão): regressões do Ctrl+P / lote em segundo plano ----

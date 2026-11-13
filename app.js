@@ -1,4 +1,4 @@
-// Banco CBR app 1.54.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.55.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -2817,7 +2817,7 @@ function ntLateralHtml(){
   const prel=`<div class="nt-pg-prel${NT.prel?' on':''}"><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
   const itensDe=(xs,comPrel)=>{const h=xs.map(item);if(comPrel){const i=xs.findIndex(x=>norm(x.titulo)==='notas usg');h.splice(i<0?h.length:i+1,0,prel)}return h.join('')};
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${itensDe(res.filter(x=>ntPastaDa(x)===p.id),p===pastaLaudos)||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">🔎 Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos)||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
+  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">+ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos)}</div><div class="nt-pastas">${pastas}</div>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
@@ -3966,6 +3966,7 @@ async function prelLaudosInicia(){
   const L=PRL.lote;if(L.rodando||PRL.semChave||!prelChave())return;
   if(!PRL.itens){await prelCarrega();if(!PRL.itens)return}   // (prelCarrega chama prelLaudosInicia ao terminar; o início de lá vale)
   if(L.rodando)return;
+  if(prelLocal()&&PRL.hid!==(PRL.gen||0)){L.rodando=true;await prelHidrata();L.rodando=false}
   const fila=PRL.itens.filter(i=>{const c=PRL.pares[String(i.acesso)];return !c||(!c.carregando&&!c.fatal&&(!c.par||c.par.status==='aguardando'||i.status==='aguardando'))})
     .sort((a,b)=>(b.data||'').localeCompare(a.data||'')).map(i=>String(i.acesso));
   if(!fila.length)return;
@@ -4044,7 +4045,7 @@ async function prelPar(acesso,forca){
   try{
     const r=await prelGet('preliminares/pares/'+encodeURIComponent(acesso)+'.json',ant&&ant.etag);
     if(g!==PRL.gen)return;   // a memória foi limpa (chave trocada/removida) enquanto baixava: descarta
-    if(!r.naoMudou){try{prelIndexa(acesso,r.json)}catch(e){throw Object.assign(e,{parse:true})}PRL.pares[acesso]={par:r.json,etag:r.etag};mudou=true}
+    if(!r.naoMudou){try{prelIndexa(acesso,r.json)}catch(e){throw Object.assign(e,{parse:true})}PRL.pares[acesso]={par:r.json,etag:r.etag};mudou=true;prelDbGrava(acesso,r.json,r.etag)}
   }catch(e){
     if(g!==PRL.gen)return;
     erro=e;if(!ant)PRL.pares[acesso]={erro:prelMsgErro(e),fatal:e.parse||e.name==='SyntaxError'||e.status===404};   // fatal: não volta para a fila do lote nesta sessão
@@ -4053,6 +4054,55 @@ async function prelPar(acesso,forca){
   if(mudou)prelCorpoPinta(acesso);
   if(typeof bgViva==='function')bgViva();
   return erro;
+}
+// ---- 1.55.0: laudos no aparelho (EXCEÇÃO opt-in à regra de só memória) ----
+// Só com o interruptor ligado em Config > Geral (flag `bcbr_prl_local` no localStorage; os laudos NUNCA vão ao localStorage, ao cache do SW nem ao repo).
+// Os pares ficam num IndexedDB próprio ("radio-laudos", separado do bcbr); desligar o interruptor ou remover a chave apaga o banco.
+const PRL_LOCAL_LS='bcbr_prl_local',PRL_DB='radio-laudos';
+const prelLocal=()=>{try{return localStorage.getItem(PRL_LOCAL_LS)==='1'}catch(e){return false}};
+const prelDb=()=>new Promise((ok,no)=>{const r=indexedDB.open(PRL_DB,1);r.onupgradeneeded=()=>r.result.createObjectStore('pares',{keyPath:'ac'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+// gravação agrupada: fila + uma conexão e transações de até 200 pares
+const prelDbFila=[];let prelDbTimer=0;
+function prelDbGrava(ac,par,etag){
+  if(!prelLocal())return;
+  prelDbFila.push({ac:String(ac),par,etag:etag||''});
+  if(!prelDbTimer)prelDbTimer=setTimeout(prelDbEsvazia,100);
+}
+async function prelDbEsvazia(){
+  prelDbTimer=0;const l=prelDbFila.splice(0),g=PRL.gen||0;if(!l.length||!prelLocal())return;
+  try{const db=await prelDb();
+    for(let i=0;i<l.length&&prelLocal()&&g===(PRL.gen||0);i+=200)await new Promise(ok=>{const t=db.transaction('pares','readwrite'),o=t.objectStore('pares');for(const r of l.slice(i,i+200))o.put(r);t.oncomplete=t.onerror=t.onabort=()=>ok()});
+    db.close()}catch(e){}
+}
+async function prelDbLe(){const db=await prelDb();return new Promise((ok,no)=>{const q=db.transaction('pares').objectStore('pares').getAll();q.onsuccess=()=>{db.close();ok(q.result||[])};q.onerror=()=>{db.close();no(q.error)}})}
+const prelDbApaga=()=>new Promise(ok=>{try{const r=indexedDB.deleteDatabase(PRL_DB);r.onsuccess=r.onerror=r.onblocked=()=>ok()}catch(e){ok()}});
+// sobe do banco os pares que ainda estão no índice (com o índice de busca); o lote só baixa o que falta ou está "aguardando" (ETag)
+async function prelHidrata(){
+  if(!prelLocal()||!PRL.itens)return;
+  const g=PRL.gen||0;PRL.hid=g;let l;try{l=await prelDbLe()}catch(e){return}
+  if(g!==(PRL.gen||0)||!prelLocal())return;
+  const ids=new Set(PRL.itens.map(i=>String(i.acesso)));
+  for(let i=0;i<l.length;i++){
+    const r=l[i];if(ids.has(r.ac)&&!PRL.pares[r.ac]){try{prelIndexa(r.ac,r.par);PRL.pares[r.ac]={par:r.par,etag:r.etag}}catch(e){}}
+    if(i%100===99){await new Promise(ok=>setTimeout(ok,0));if(g!==(PRL.gen||0)||!prelLocal())return}   // cede a thread: milhares de laudos não travam a tela
+  }
+}
+// chave trocada: o banco recomeça vazio (a flag continua como está)
+function prelDbReinicia(){prelDbFila.length=0;return prelLocal()?prelDbApaga():Promise.resolve()}
+async function prelLocalSet(on,aviso=true){
+  if(on){
+    try{(await prelDb()).close()}catch(e){
+      try{localStorage.removeItem(PRL_LOCAL_LS)}catch(e2){}
+      const i=document.querySelector&&document.querySelector('.prl-loc input');if(i)i.checked=false;
+      prelCfgMsg('Não foi possível guardar neste aparelho; os laudos ficam só na memória.');return;
+    }
+    try{localStorage.setItem(PRL_LOCAL_LS,'1')}catch(e){}
+    for(const ac in PRL.pares){const c=PRL.pares[ac];if(c&&c.par)prelDbGrava(ac,c.par,c.etag)}prelLaudosInicia();
+  }else{
+    try{localStorage.removeItem(PRL_LOCAL_LS)}catch(e){}
+    prelDbFila.length=0;await prelDbApaga();
+  }
+  if(aviso)prelCfgMsg(on?'Laudos serão guardados neste aparelho.':'Laudos apagados deste aparelho.');
 }
 // ---- tela ----
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
@@ -4078,14 +4128,14 @@ function prelCorpoHtml(ac){
   const corr=p.mudou===false?`<p class="mut">O chefe não mudou o texto.</p>`+def:cor==null?`<p class="mut">Laudo grande demais para comparar neste aparelho.</p>`:leg+cor;
   const k='c|'+ac+'|';
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
-  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
+  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':'')+`<button type="button" class="prl-cp" onclick="prelCopiaLaudo(event,'${prelEsc(ac)}')" title="Copiar o laudo final (definitivo, sem o rodapé do PACS)">copiar laudo</button>`,corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
 function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
 function prelItem(i){
   const ac=String(i.acesso),acs=prelAcessos(i),k='a|'+ac,ab=prelAberto(k,false),lido=prelLido(i,PRL.lidos),conf=prelConferido(i,prelConf()),rot=acs.join(' + ');
-  // acesso: clique copia o preliminar (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
+  // acesso: clique copia o número (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
   const cx=i.status==='aguardando'?'':`<label class="prl-conf" title="Conferi a correção"><input type="checkbox" ${conf?'checked':''} data-ac="${prelEsc(ac)}" data-acs="${prelEsc(acs.join(','))}" onchange="prelConfClique(this)"><span class="sr">conferi a correção</span></label>`;
-  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac" role="button" title="Copiar o laudo preliminar" onclick="prelCopiaPre(event,'${prelEsc(ac)}')">${prelEsc(rot)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}${cx}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
+  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac" role="button" title="Copiar o número do acesso" onclick="prelCopiaAcesso(event,'${prelEsc(ac)}')">${prelEsc(rot)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}${cx}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
 }
 // marca/desmarca "conferi" no plano do app (sincroniza PC <-> celular pelo mesmo caminho das tarefas: smMudar)
 function prelConfClique(el){
@@ -4094,19 +4144,23 @@ function prelConfClique(el){
   smMudar(d=>{const c=d.prelConf=d.prelConf||{};if(on)c[ac]=hora;else acs.forEach(a=>{delete c[a]})},on?'preliminares: conferido':'preliminares: desmarcado');
   prelRepinta();   // o smRender do plano não redesenha com o foco dentro de .nt
 }
-// clique no número do acesso: copia o laudo PRELIMINAR (texto puro); baixa o par se ainda não estiver na memória
-async function prelCopiaPre(ev,ac){
+// copia texto (e HTML, se houver) para a área de transferência; devolve se conseguiu
+async function prelCopia(t,h){
+  try{if(h&&window.ClipboardItem&&navigator.clipboard.write)await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([t],{type:'text/plain'}),'text/html':new Blob([h],{type:'text/html'})})]);else await navigator.clipboard.writeText(t);return true}catch(e){}
+  const a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();
+  let ok=false;try{ok=document.execCommand('copy')}catch(e2){}a.remove();return ok;
+}
+// clique no número do acesso: copia SÓ o número (sem abrir/fechar o toggle)
+async function prelCopiaAcesso(ev,ac){
   ev.preventDefault();ev.stopPropagation();
-  if(!(PRL.pares[ac]&&PRL.pares[ac].par))await prelPar(ac);
-  for(let n=0;n<50&&PRL.pares[ac]&&PRL.pares[ac].carregando;n++)await new Promise(r=>setTimeout(r,100));
-  const c=PRL.pares[ac],p=c&&c.par;
-  if(!p){toast('Não consegui ler o laudo agora');return}
-  const t=prelTextoPuro(p.preliminar?.html||prelTextoHtml(p.preliminar?.texto));
-  try{await navigator.clipboard.writeText(t)}catch(e){
-    const a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();
-    let ok=false;try{ok=document.execCommand('copy')}catch(e2){}a.remove();if(!ok){toast('Não consegui copiar');return}
-  }
-  toast('Preliminar copiado');
+  toast(await prelCopia(String(ac))?'Acesso copiado':'Não consegui copiar');
+}
+// botão "copiar laudo" no cabeçalho do Corrigido: laudo final = definitivo sem o rodapé do PACS, sem <del>/<ins> (text/plain com quebras + text/html)
+async function prelCopiaLaudo(ev,ac){
+  ev.preventDefault();ev.stopPropagation();
+  const p=PRL.pares[ac]&&PRL.pares[ac].par;if(!p){toast('Não consegui ler o laudo agora');return}
+  const c=prelCopiaLimpa(prelSeguro(prelSemRodape(p.definitivo?.html||prelTextoHtml(p.definitivo?.texto))));
+  toast(await prelCopia(c.texto,c.html)?'Laudo copiado':'Não consegui copiar');
 }
 // fechar um toggle encolhe o que está abaixo dele e, com a página rolada até o fim, o navegador sobe a rolagem e a célula sob o mouse muda.
 // Antes de fechar fixamos a altura da página (espaçador temporário); solta na próxima rolagem/tecla do usuário ou ao redesenhar.
@@ -4161,7 +4215,7 @@ function prelFormChave(){
 function prelSalvaChave(){
   const v=(document.getElementById('prl_k')?.value||'').trim();if(!v)return;
   try{localStorage.setItem(PRL_LS,v)}catch(e){}
-  PRL.itens=null;PRL.semChave=false;prelCarrega(true);
+  PRL.itens=null;prelLimpaMemoria();prelDbReinicia();PRL.semChave=false;prelCarrega(true);
 }
 // ---- aba Config > Geral: "Chave dos laudos" (1.50.1) — a mesma chave da tela de configuração inicial, sem precisar apagar nada ----
 function prelCfgHtml(){
@@ -4170,6 +4224,8 @@ function prelCfgHtml(){
    <p class="mut">A mesma chave do Laudos (GitHub fine-grained, só o repositório <b>laudos-tutu-dados</b>, Contents: Read-only). Serve só para a página Preliminares e fica neste aparelho.</p>
    <p class="mut" id="prl_cs">${tem?'Há uma chave salva neste aparelho.':'Nenhuma chave salva.'}</p>
    <label>Chave <input id="prl_ck" type="password" autocomplete="off" placeholder="${tem?'cole outra para trocar':'cole a chave aqui'}"></label>
+   <label class="prl-loc"><input type="checkbox" ${prelLocal()?'checked':''} onchange="prelLocalSet(this.checked)"> Guardar os laudos neste aparelho (use só em computador pessoal)</label>
+   <p class="mut">Desligado (padrão): os laudos ficam só na memória da página. Ligado: ficam num banco deste aparelho para abrir e buscar mais rápido; desligar ou remover a chave apaga tudo.</p>
    <div class="row"><button class="b" onclick="prelCfgSalva()">Salvar</button><button class="b s" onclick="prelCfgTesta()">Testar</button>${tem?'<button class="b s" onclick="prelCfgRemove()">Remover</button>':''}</div>
    <p class="mut" id="prl_cm" role="status" aria-live="polite"></p></div>`;
 }
@@ -4177,10 +4233,10 @@ const prelCfgMsg=t=>{const m=document.getElementById('prl_cm');if(m)m.textConten
 function prelCfgSalva(){
   const v=(document.getElementById('prl_ck')?.value||'').trim();if(!v){prelCfgMsg('Cole a chave primeiro.');return}
   try{localStorage.setItem(PRL_LS,v)}catch(e){prelCfgMsg('Não consegui guardar neste aparelho.');return}
-  PRL.itens=null;prelLimpaMemoria();PRL.semChave=false;PRL.erro='';
+  PRL.itens=null;prelLimpaMemoria();prelDbReinicia();PRL.semChave=false;PRL.erro='';
   render();prelCfgMsg('Chave salva. Toque em Testar para conferir.');
 }
-function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}PRL.itens=null;prelLimpaMemoria();PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
+function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}prelLocalSet(false,false);PRL.itens=null;prelLimpaMemoria();PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
 async function prelCfgTesta(){
   const digitada=(document.getElementById('prl_ck')?.value||'').trim();
   if(!digitada&&!prelChave()){prelCfgMsg('Sem chave para testar.');return}

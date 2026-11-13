@@ -48,3 +48,6 @@
 .prl-conf input{width:20px;height:20px;margin:0;cursor:pointer;accent-color:var(--ok)}
 .prl-ac{cursor:copy;text-decoration:underline dotted;text-underline-offset:3px}
 .prl-laudo mark{background:color-mix(in srgb,var(--pri) 40%,transparent);color:inherit;border-radius:2px}
+
+.prl-cp{margin-left:auto;font:inherit;font-size:.78rem;font-weight:400;background:none;border:0;color:var(--mut);text-decoration:underline dotted;text-underline-offset:3px;cursor:copy;padding:2px 4px;min-height:24px}.prl-cp:hover{color:var(--tx)}
+.prl-chave .prl-loc{flex-direction:row;align-items:center;gap:8px;margin:8px 0}.prl-chave .prl-loc input{width:18px;height:18px;min-height:0;padding:0}

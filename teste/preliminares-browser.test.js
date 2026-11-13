@@ -15,7 +15,7 @@ const PARES={'9000101':{preliminar:{html:'<p><b>Doppler de carótidas</b></p><p>
   definitivo:{html:'<p><b>Doppler de carótidas</b></p><p>Placa ateromatosa <u>mista</u> no bulbo à direita, com estenose de <i>40%</i>.</p><ul><li>Vertebrais pérvias com fluxo anterógrado</li></ul><p>Este laudo foi assinado eletronicamente.12/11/2026 09:33:25 / Informamos que o exame, composto por laudo e imagens, deve ser apresentado ao médico solicitante... Hospital Santa Isabel não realiza contato com pacientes para agendamento de consultas baseado no laudo do exame realizado.</p>'},mudou:true},
   '9000102':{preliminar:{html:'<p>Exame sem alterações.</p>'},definitivo:{html:'<p>Exame sem alterações.</p>'},mudou:false},
   '9000103':{preliminar:{texto:'Artérias pérvias.'},definitivo:{texto:'Artérias pérvias, sem estenoses.'},mudou:true}};
-test('Radio 1.54: página Preliminares (Chrome, dados sintéticos)',{timeout:120000},async t=>{
+test('Radio 1.55: página Preliminares (Chrome, dados sintéticos)',{timeout:120000},async t=>{
   const C=await iniciar({porta:8794,env:{BCBR_QS:'10'}});t.after(()=>C.fim());
   const {ev,ate,call}=C;await C.abre();
   const INST=`(()=>{window.__req=[];const f=window.fetch;window.fetch=(u,o)=>{u=String(u);
@@ -74,7 +74,7 @@ test('Radio 1.54: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     await ev("document.querySelector('.prl-n3>summary').click()");
     await ate("document.querySelectorAll('.prl-sub').length===3");
     assert.equal((await ev("window.__req")).filter(r=>r==='preliminares/pares/9000101.json').length,1,'o par já veio em segundo plano: abrir o toggle não baixa de novo');
-    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-sub>summary')].map(s=>s.textContent)"),['Laudo preliminar','Laudo definitivo','Corrigido']);
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-sub>summary')].map(s=>s.firstChild.textContent)"),['Laudo preliminar','Laudo definitivo','Corrigido']);
     await ev("document.querySelectorAll('.prl-sub>summary').forEach(s=>s.click())");await espera(150);
     const cor=await ev("document.querySelectorAll('.prl-sub')[2].querySelector('.prl-laudo').innerHTML");
     assert.match(cor,/<del>calcificada<\/del>/);
@@ -204,23 +204,38 @@ test('Radio 1.54: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     assert.match(await ev("document.getElementById('prl_cont').textContent"),/^6 laudos de 6$/);
     await ev("window.Date=window.__D;prelLimpa();0");
   });
-  await t.test('clicar no número do acesso copia o PRELIMINAR em texto puro, com aviso, sem abrir/fechar o toggle',async()=>{
+  await t.test('clicar no número do acesso copia SÓ o número, com aviso, sem abrir/fechar o toggle',async()=>{
     await ev("window.__cp=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:t=>{window.__cp.push(t);return Promise.resolve()}},configurable:true});0");
     await ev(ABRE);await ate("document.querySelectorAll('.prl-n3').length===3");
     await ev("document.querySelector('.prl-n3[data-ac=\"9000101\"]>summary').scrollIntoView({block:'center'});0");
     await clica('.prl-n3[data-ac="9000101"] .prl-ac');
     await ate("window.__cp.length===1");
-    assert.equal(await ev("window.__cp[0]"),'Doppler de carótidas\nPlaca ateromatosa calcificada no bulbo à direita, com estenose de 30%.\nVertebrais pérvias');
+    assert.equal(await ev("window.__cp[0]"),'9000101');
     assert.equal(await ev("document.querySelector('.prl-n3[data-ac=\"9000101\"]').open"),true,'não fecha');
-    assert.equal(await ev("document.getElementById('toast').textContent"),'Preliminar copiado');
-    // acesso fechado e sem o par na memória: baixa e copia, sem abrir
+    assert.equal(await ev("document.getElementById('toast').textContent"),'Acesso copiado');
+    // acesso fechado e sem o par na memória: copia o número, sem baixar nada nem abrir
     await ev("PRL.estado={'d|2026-11-10':true,'c1|2026-11-10|Ultrassom':true,'c2|2026-11-10|Ultrassom|Doppler arterial de MMII':true};PRL.pares={};render();0");
     await ate("document.querySelector('.prl-n3[data-ac=\"9000103\"]')");
     await ev("document.querySelector('.prl-n3[data-ac=\"9000103\"]>summary').scrollIntoView({block:'center'});0");
     await clica('.prl-n3[data-ac="9000103"] .prl-ac');
     await ate("window.__cp.length===2");
-    assert.equal(await ev("window.__cp[1]"),'Artérias pérvias.');
+    assert.equal(await ev("window.__cp[1]"),'9000103');
     assert.equal(await ev("document.querySelector('.prl-n3[data-ac=\"9000103\"]').open"),false,'não abre');
+  });
+  await t.test('botão "copiar laudo" no cabeçalho do Corrigido: não alterna o toggle e copia o definitivo limpo, sem rodapé do PACS',async()=>{
+    await ev("window.__cw=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:t=>{window.__cw.push({txt:t});return Promise.resolve()},write:async it=>{const o=it[0],tx=await (await o.getType('text/plain')).text(),ht=await (await o.getType('text/html')).text();window.__cw.push({txt:tx,html:ht})}},configurable:true});0");
+    await ev(ABRE);await ate("document.querySelector('.prl-cor')");
+    await ev("document.querySelector('.prl-cor').closest('details').scrollIntoView({block:'center'});0");
+    const sel='.prl-sub[data-k="c|9000101|c"]';
+    assert.equal(await ev(`document.querySelector('${sel}').open`),true);
+    await clica(sel+'>summary .prl-cp');
+    await ate("window.__cw.length===1");
+    assert.equal(await ev(`document.querySelector('${sel}').open`),true,'não fecha o toggle');
+    const r=await ev("window.__cw[0]");
+    assert.equal(r.txt,'Doppler de carótidas\nPlaca ateromatosa mista no bulbo à direita, com estenose de 40%.\nVertebrais pérvias com fluxo anterógrado');
+    assert.ok(!/<del|<ins|calcificada|assinado|Informamos/.test(r.html+r.txt));assert.match(r.html,/<b>Doppler de carótidas<\/b>/);
+    assert.equal(await ev("document.getElementById('toast').textContent"),'Laudo copiado');
+    assert.equal(await ev(`(()=>{const b=document.querySelector('${sel} .prl-cp').getBoundingClientRect(),s=document.querySelector('${sel}>summary').getBoundingClientRect();return s.right-b.right<30})()`),true,'no canto direito');
   });
   await t.test('copiar no Corrigido: só o texto final (sem o apagado, sem <ins>/<del>), em text/plain e text/html',async()=>{
     await ev(ABRE);await ate("document.querySelector('.prl-cor del')");
@@ -321,6 +336,41 @@ test('Radio 1.54: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     await ate("document.querySelector('.prl-n1[data-k=\"c1|*|Ultrassom\"] .prl-n3[data-ac=\"9000101\"] mark')");
     await ev("prelModoSet('dia');prelLimpa();PRL.estado={};0");await ate("document.querySelector('.prl-n0')");
     assert.equal(await ev("localStorage.getItem('bcbr_prl_modo')"),'dia');
+  });
+  const bancos=()=>ev("indexedDB.databases().then(l=>l.map(d=>d.name))");
+  await t.test('laudos no aparelho (opt-in): desligado não grava nada; ligado persiste e o Ctrl+P acha sem novo download após recarregar; desligar apaga o banco',async()=>{
+    assert.equal(await ev("localStorage.getItem('bcbr_prl_local')"),null,'desligado por padrão');
+    assert.ok(!(await bancos()).includes('radio-laudos'),'flag desligada: nada no IndexedDB');
+    await ev("cfgTab='geral';go('config');0");await ate("document.querySelector('.prl-loc input')");
+    assert.match(await ev("document.querySelector('.prl-loc').textContent"),/Guardar os laudos neste aparelho \(use só em computador pessoal\)/);
+    assert.equal(await ev("document.querySelector('.prl-loc input').checked"),false);
+    await ev("document.querySelector('.prl-loc input').click()");
+    await ate("localStorage.getItem('bcbr_prl_local')==='1'");
+    await ate("PRL.itens&&!PRL.lote.rodando&&PRL.nIdx===3");
+    await ate("indexedDB.databases().then(l=>l.some(d=>d.name==='radio-laudos'))");
+    await espera(300);
+    assert.equal(await ev("new Promise(r=>{const q=indexedDB.open('radio-laudos');q.onsuccess=()=>{const g=q.result.transaction('pares').objectStore('pares').getAllKeys();g.onsuccess=()=>{q.result.close();r(g.result.sort().join())}}})"),'9000101,9000102,9000103');
+    assert.equal(await ev("Object.keys(localStorage).some(k=>/anterógrado|calcificada|ateromatosa|pérvias/.test(k+localStorage.getItem(k)))"),false);
+    // recarrega: os pares sobem do banco, o índice já está pronto e só o que não tem arquivo é pedido de novo
+    await C.abre();await ev(INST);
+    await ate("!PRL.carregando");await ev("PRL.semChave=false;PRL.erro='';PRL.itens=null;window.__req.length=0;0");   // (a página recém-aberta já tentou ler antes de o teste trocar o fetch)
+    await ev("bgAbre();0");await ate("document.querySelector('.bg-in')");
+    await ate("PRL.itens&&!PRL.lote.rodando&&PRL.nIdx===3");
+    await digita('anterogrado');
+    assert.deepEqual(await ev("[...document.querySelectorAll('.bg-it b')].map(b=>b.textContent.split(' · ')[0])"),['9000101']);
+    assert.deepEqual((await ev("window.__req")).filter(r=>/pares\/(9000101|9000102|9000103)\.json/.test(r)),[],'sem novo download dos pares guardados');
+    // desligar apaga o banco
+    await ev("ntModalFecha(document.querySelector('.nt-modal'));cfgTab='geral';go('config');0");await ate("document.querySelector('.prl-loc input')");
+    assert.equal(await ev("document.querySelector('.prl-loc input').checked"),true);
+    await ev("document.querySelector('.prl-loc input').click()");
+    await ate("indexedDB.databases().then(l=>!l.some(d=>d.name==='radio-laudos'))");
+    assert.equal(await ev("localStorage.getItem('bcbr_prl_local')"),null);
+    // ligado de novo e chave removida: também apaga
+    await ev("document.querySelector('.prl-loc input').click()");await ate("indexedDB.databases().then(l=>l.some(d=>d.name==='radio-laudos'))");
+    await ev("prelCfgRemove();0");
+    await ate("indexedDB.databases().then(l=>!l.some(d=>d.name==='radio-laudos'))");
+    assert.equal(await ev("localStorage.getItem('bcbr_prl_local')"),null);
+    await ev("localStorage.setItem('bcbr_gh_token_dados','ghp_chave_de_teste');PRL.semChave=false;PRL.erro='';PRL.itens=null;go('preliminares');0");await ate("document.querySelector('.prl-n0')");
   });
   await t.test('capturas e acessibilidade: claro/escuro, 375 px e PC; sem rolagem horizontal; alvos de toque',async()=>{
     await ev("PRL.estado={'d|2026-11-12':true,'c1|2026-11-12|Ultrassom':true,'c2|2026-11-12|Ultrassom|Doppler de carótidas e vertebrais':true,'a|9000101':true,'c|9000101|c':true,'c|9000101|d':true};PRL.pares={};render();0");

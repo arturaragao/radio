@@ -51,11 +51,11 @@ http.createServer((req, res) => {
       return j({},404);
     }
     let m;
-    if ((m = u.match(/contents\/(dados|progresso|semana)$/))) {
+    if ((m = u.match(/contents\/(dados|progresso|semana|resumos)$/))) {
       const d = D + '/' + m[1]; if (!fs.existsSync(d)) return j([]);
       return j(fs.readdirSync(d).filter(f => fs.statSync(d + '/' + f).isFile()).map(f => ({ name: f, sha: m[1] + '|' + f, type: 'file' })));
     }
-    if ((m = u.match(/git\/blobs\/(.+)$/))) { const [a, b] = m[1].split('|'); if (!/^(dados|progresso|semana)$/.test(a) || b.includes('..')) { res.writeHead(404); return res.end(); } res.writeHead(200); return res.end(fs.readFileSync(D + '/' + a + '/' + b)); }
+    if ((m = u.match(/git\/blobs\/(.+)$/))) { const [a, b] = m[1].split('|'); if (!/^(dados|progresso|semana|resumos)$/.test(a) || b.includes('..')) { res.writeHead(404); return res.end(); } res.writeHead(200); return res.end(fs.readFileSync(D + '/' + a + '/' + b)); }
     if ((m = u.match(/contents\/imagens\/(.+)$/))) {
       const p = path.join(D, 'imagens', path.basename(m[1]));
       if (!fs.existsSync(p)) { res.writeHead(404); return res.end(); }

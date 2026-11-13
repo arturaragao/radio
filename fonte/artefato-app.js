@@ -129,6 +129,16 @@ let log=all.filter(l=>!l.x);         // respostas válidas
 let pon=load('cbr_pon',{});          // id -> {t,u} ponto de ensino editado
 let ia=load('cbr_ia',{});            // id -> resumo gerado pelo Claude
 let cards=load('cbr_cards',[]);      // {id,f,v,tg,u,x}
+// 1.52.0: cartões dos resumos (resumos/indice.json, window.RESUMOS_IDX) entram só em memória (_rs:1), sem dirty nem gravação: vêm do arquivo a cada abertura.
+// Cartão já existente sem _rs (editado/excluído por você, ou vindo do sync) vence o do arquivo. Editar/excluir tira o _rs e passa a ser gravado pelo fluxo normal.
+function rsSemeia(){
+  const vistos=new Set(),idx=new Map(cards.map(c=>[c.id,c]));
+  (window.RESUMOS_IDX||[]).forEach(r=>(r.cards||[]).forEach(k=>{
+    if(!k||!k.id)return;vistos.add(k.id);const tg='Resumo: '+r.titulo+';',ex=idx.get(k.id);
+    if(!ex){const c={id:k.id,f:k.f,v:k.v,tg,u:0,_rs:1};cards.push(c);idx.set(c.id,c)}
+    else if(ex._rs)Object.assign(ex,{f:k.f,v:k.v,tg})}));
+  cards=cards.filter(c=>!c._rs||vistos.has(c.id))}
+rsSemeia();
 let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
 let over=load('cbr_over',{});        // id -> areaId (manual)
 let uimg=load('cbr_uimg',{});        // id -> dataURL das imagens que você adicionou nas questões (referência "u:ID")
@@ -196,7 +206,7 @@ async function flush(){
     const col=DB.collection('cbr');
     if(estDirty){estDirty=false;await col.doc('estado').set({over,cfg,u:estU,resetAt})}
     for(const wk of [...dirty]){dirty.delete(wk);
-      if(wk.startsWith('c:')){const k=+wk.slice(2);await col.doc('cards_'+k).set({items:cards.filter(c=>hk(c.id,32)===k).map(c=>[c.id,c.f,c.v,c.tg||'',c.u||0,c.x?1:0])})}
+      if(wk.startsWith('c:')){const k=+wk.slice(2);await col.doc('cards_'+k).set({items:cards.filter(c=>!c._rs&&hk(c.id,32)===k).map(c=>[c.id,c.f,c.v,c.tg||'',c.u||0,c.x?1:0])})}
       else if(wk.startsWith('g:')){const id=wk.slice(2);if(uimg[id])await col.doc('uimg_'+id).set({d:uimg[id]})}
       else if(wk.startsWith('m:'))await col.doc('metodo').set({t:metodo,u:metoU})
       else if(wk.startsWith('p:')){const k=+wk.slice(2),o={};Object.keys(pon).forEach(id=>{if(hk(id,8)===k)o[id]=pon[id]});await col.doc('pon_'+k).set({m:o})}
@@ -228,7 +238,7 @@ function mergeRemote(docs){
     else if(d.id.startsWith('cards_')){const it=x.items||[];rc[d.id]=it.length;
       it.forEach(a=>{const ex=cidx.get(a[0]);
         if(!ex){const c={id:a[0],f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]};cards.push(c);cidx.set(c.id,c);changed=true}
-        else if((a[4]||0)>(ex.u||0)){Object.assign(ex,{f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]});changed=true}})}
+        else if((a[4]||0)>(ex.u||0)){Object.assign(ex,{f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]});delete ex._rs;changed=true}})}
     else if(d.id==='metodo'){if((x.u||0)>metoU){metodo=x.t;metoU=x.u;saveL('cbr_metodo',{t:metodo,u:metoU});lerManual(metodo);changed=true}}
     else if(d.id.startsWith('pon_')){const o=x.m||{};Object.keys(o).forEach(id=>{if(!pon[id]||(o[id].u||0)>(pon[id].u||0)){pon[id]=o[id];changed=true}})}
     else if(d.id.startsWith('uimg_')){const id=d.id.slice(5);if(x.d&&!uimg[id]){uimg[id]=x.d;changed=true}}
@@ -238,7 +248,7 @@ function mergeRemote(docs){
   });
   const lc={};all.forEach(l=>{const w=wkKey(l.t);lc[w]=(lc[w]||0)+1});
   Object.keys(lc).forEach(w=>{if(lc[w]>(rc['log_'+w]||0))dirty.add(w)});
-  const cc={};cards.forEach(c=>{const k=hk(c.id,32);cc[k]=(cc[k]||0)+1});
+  const cc={};cards.forEach(c=>{if(c._rs)return;const k=hk(c.id,32);cc[k]=(cc[k]||0)+1});
   Object.keys(cc).forEach(k=>{if(cc[k]>(rc['cards_'+k]||0))dirty.add('c:'+k)});
   if(metoU&&!docs.some(d=>d.id==='metodo'||false))dirty.add('m:0');
   else{const md=docs.find(d=>d.id==='metodo');if(md&&(md.data().u||0)<metoU)dirty.add('m:0')}
@@ -1062,9 +1072,9 @@ function fcImportar(){
 }
 function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:rtHtml(c.f),v:rtHtml(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
 function fcEditSalva(){const c=cardBy(fcEdit.id),f=rtVal(fcEdit.f),v=rtVal(fcEdit.v);if(!f){toast('A frente não pode ficar vazia.');return}
-  Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
+  Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});delete c._rs;persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
 function fcSusp(id){const s=fst(id).slice();s[6]=s[6]?0:1;s[5]=Date.now();fcs[id]=s;persist('s:'+hk(id,8));render()}
-function fcDel(id){if(fcDelId!==id){fcDelId=id;render();return}fcDelId=null;const c=cardBy(id);c.x=1;c.u=Date.now();persist('c:'+hk(id,32));render();toast('Cartão excluído')}
+function fcDel(id){if(fcDelId!==id){fcDelId=id;render();return}fcDelId=null;const c=cardBy(id);c.x=1;c.u=Date.now();delete c._rs;persist('c:'+hk(id,32));render();toast('Cartão excluído')}
 function vFc(){
   const c=fcContagem(),q=norm(fcBusca||'');
   const lista=cards.filter(x=>!x.x&&cTagOk(x)&&(!q||norm(rtTxt(x.f)+' '+rtTxt(x.v)+' '+(x.tg||'')).includes(q))).slice(0,60);
@@ -1329,7 +1339,7 @@ function zerar(){
 function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display="none",2500)}
 function exportar(){$("#bk").value=JSON.stringify({log:all,over,cfg,cards,fcs})}
 function copiar(){exportar();const t=$("#bk");t.select();try{navigator.clipboard.writeText(t.value).then(()=>toast("Copiado"),()=>toast("Selecionado: use Ctrl+C"))}catch(e){toast("Selecionado: use Ctrl+C")}}
-function importar(){try{const d=JSON.parse($("#bk").value);all=(d.log||[]).map(l=>({...l}));cards=d.cards||cards;fcs=d.fcs||fcs;cards.forEach(c=>dirty.add('c:'+hk(c.id,32)));Object.keys(fcs).forEach(id=>dirty.add('s:'+hk(id,8)));over=d.over||{};cfg=normCfg(d.cfg);
+function importar(){try{const d=JSON.parse($("#bk").value);all=(d.log||[]).map(l=>({...l}));cards=(d.cards||cards).map(c=>{c={...c};delete c._rs;return c});rsSemeia();fcs=d.fcs||fcs;cards.forEach(c=>{if(!c._rs)dirty.add('c:'+hk(c.id,32))});Object.keys(fcs).forEach(id=>dirty.add('s:'+hk(id,8)));over=d.over||{};cfg=normCfg(d.cfg);
   recalc();reArea();all.forEach(l=>dirty.add(wkKey(l.t)));persist('_est');aplicaTema();render();toast("Importado")}catch(e){toast("Texto inválido")}}
 function setPeso(id,v){if(v==='')delete cfg.pesos[id];else cfg.pesos[id]=+v;persist('_est')}
 

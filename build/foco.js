@@ -77,6 +77,12 @@ let foUlt=null,foBaseSel='cbr',foOrd='inc',foAbertos=new Set();
 const foP=v=>v==null?'—':(v*100).toLocaleString('pt-BR',{maximumFractionDigits:v<.1?1:0})+'%';
 const foFmd=(f,m,d)=>`<span style="color:var(--ok)">${f}</span>/${m}/<span style="color:var(--bad,#c0392b)">${d}</span>`;
 const foNome=r=>`${esc(AREA_BY[r.a].nome)} › ${esc(r.t)}`;
+// 1.52.0: resumos ligados (window.RESUMOS_IDX = resumos/indice.json: {pagina,titulo,chave:'area|Tema|Subtema',cards}); chave no formato de foKS
+const foRes=()=>window.RESUMOS_IDX||[];
+const foResTema=k=>foRes().filter(r=>String(r.chave||'').startsWith(k+'|'));
+const foResSub=k=>foRes().filter(r=>r.chave===k);
+const foResBtn=r=>`<button class="b s" style="padding:2px 8px;font-size:.74rem;margin:3px 4px 0 0" onclick="foResAbre('${esc(r.pagina)}')" title="Abrir o resumo nas Notas">📖 ${esc(r.titulo)}</button>`;
+function foResAbre(id){if(typeof ntPainelAbre==='function')ntPainelAbre(id)}
 function foN(){return [10,20,30].includes(+cfg.focoN)?+cfg.focoN:20}
 function foSetN(v){cfg.focoN=+v;persist('_est');render()}
 function foSetPref(c){cfg.focoCbr=!!c;persist('_est');render()}
@@ -94,12 +100,12 @@ function foSet(k,v){if(k==='b')foBaseSel=v;else foOrd=v;render()}
 function foTabHtml(nivel){
   const T=foTab(Q,log,{nivel,base:foBaseSel,ordem:foOrd,all});
   const nm=r=>nivel==='area'?esc(AREA_BY[r.q0._a].nome):nivel==='tema'?foNome({a:r.q0._a,t:r.q0.cl[0]}):`${esc(AREA_BY[r.q0._a].nome)} › ${esc(r.q0.cl[0])} › ${esc(r.q0.cl[1]||'—')}`;
-  return `<div class="tw"><table><tr><th>${nivel==='area'?'Área':nivel==='tema'?'Tema':'Subtema'}</th><th>n</th><th>%</th><th>f/m/d</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th></tr>${T.rows.map(r=>`<tr><td>${nm(r)}</td><td>${r.n}</td><td>${foP(r.pct)}</td><td>${foFmd(r.f,r.m,r.d)}</td><td>${r.feitas}</td><td>${r.acerto==null?'—':foP(r.acerto)}</td><td>${r.restam}</td></tr>`).join('')}</table></div>`}
+  return `<div class="tw"><table><tr><th>${nivel==='area'?'Área':nivel==='tema'?'Tema':'Subtema'}</th><th>n</th><th>%</th><th>f/m/d</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th></tr>${T.rows.map(r=>`<tr><td>${nm(r)}${nivel==='sub'&&foResSub(r.k).length?`<div>${foResSub(r.k).map(foResBtn).join('')}</div>`:''}</td><td>${r.n}</td><td>${foP(r.pct)}</td><td>${foFmd(r.f,r.m,r.d)}</td><td>${r.feitas}</td><td>${r.acerto==null?'—':foP(r.acerto)}</td><td>${r.restam}</td></tr>`).join('')}</table></div>`}
 function vFoco(){
   const orc=Math.max(0,diasProva())*RI_DIARIA,F=focoCalc(Q,log,{orcamento:orc,all}),r=F.resumo;foUlt=F;
   const sel=(k,v,ops)=>`<select onchange="foSet('${k}',this.value)">${ops.map(([x,t])=>`<option value="${x}" ${v===x?'selected':''}>${t}</option>`).join('')}</select>`;
-  const linhas=F.top.map((t,i)=>`<tr><td>${i+1}</td><td style="min-width:150px"><b>${foNome(t)}</b>${t.viaGeral?' <span class="tag">pelo banco geral</span>':''}${t.subs.length?`<div class="mut" style="font-size:.76rem">${t.subs.map(s=>esc(s.s)+' ('+s.n+')').join(' · ')}</div>`:''}</td>
-    <td>${foP(t.incC)} (${t.nC})</td><td>${foP(t.incG)}</td><td>${t.nC?foFmd(t.fC,t.mC,t.dC):'—'}</td><td>${t.feitas}/${t.n}</td><td>${t.acerto==null?'—':foP(t.acerto)}</td><td>${t.restam}</td><td><b>${t.meta}</b></td>
+  const linhas=F.top.map((t,i)=>`<tr><td>${i+1}</td><td style="min-width:150px"><b>${foNome(t)}</b>${t.viaGeral?' <span class="tag">pelo banco geral</span>':''}${t.subs.length?`<div class="mut" style="font-size:.76rem">${t.subs.map(s=>esc(s.s)+' ('+s.n+')'+(foResSub(t.k+'|'+s.s).length?' 📖':'')).join(' · ')}</div>`:''}${foResTema(t.k).length?`<div>${foResTema(t.k).map(foResBtn).join('')}</div>`:''}</td>
+    <td>${foP(t.incC)} (${t.nC})</td><td>${foP(t.incG)}</td><td>${t.nC?foFmd(t.fC,t.mC,t.dC):'—'}</td><td>${t.feitas}/${t.n}</td><td>${t.acerto==null?'—':foP(t.acerto)}</td><td>${t.restam}</td>
     <td><button class="b s" style="padding:4px 10px" onclick="foTreinar(${i})">Treinar</button></td></tr>`).join('');
   const D=foDifCmp(Q,log),dp=(c,n)=>['f','m','d'].map(k=>foP(n?c[k]/n:0)).join(' / '),da=['f','m','d'].map(k=>D.acerto[k]==null?'—':foP(D.acerto[k])).join(' / ');
   const pan=(k,nome)=>`<details ${foAbertos.has(k)?'open':''} ontoggle="foTog('${k}',this)" style="margin-top:6px"><summary><b>${nome}</b></summary>${foAbertos.has(k)?foTabHtml(k):''}</details>`;
@@ -108,8 +114,8 @@ function vFoco(){
   Você fez <b>${r.feitasC}</b> do CBR${r.acertoC==null?'':` (acerto ${foP(r.acertoC)})`} · acerto geral ${foP(r.acertoGeral)}<br>
   <b>${diasProva()}</b> dias até a prova · orçamento <b>${orc}</b> questões (${RI_DIARIA}/dia)</p>
   <h3>Top ${F.top.length} prioridades (tema)</h3>
-  <p class="mut">Incidência no CBR (75%) e no banco (25%) × seu erro × facilidade × o que ainda não fez. A meta divide o orçamento entre os temas, só com fáceis e médias que faltam.</p>
-  ${F.top.length?`<div class="tw"><table><tr><th>#</th><th>Área › Tema</th><th>Incid. CBR</th><th>Incid. geral</th><th>f/m/d CBR</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th><th>Meta</th><th></th></tr>${linhas}</table></div>`:'<p class="mut">Nenhum tema com fáceis ou médias pendentes.</p>'}
+  <p class="mut">Incidência no CBR (75%) e no banco (25%) × seu erro × facilidade × o que ainda não fez.</p>
+  ${F.top.length?`<div class="tw"><table><tr><th>#</th><th>Área › Tema</th><th>Incid. CBR</th><th>Incid. geral</th><th>f/m/d CBR</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th><th></th></tr>${linhas}</table></div>`:'<p class="mut">Nenhum tema com fáceis ou médias pendentes.</p>'}
   <div class="row" style="margin-top:10px"><label>Bloco ${sel('n',String(foN()),[['10','10'],['20','20'],['30','30']]).replace("foSet('n',this.value)","foSetN(this.value)")}</label>
    <label class="row"><input type="checkbox" ${cfg.focoCbr!==false?'checked':''} onchange="foSetPref(this.checked)"> preferir questões do CBR</label>
    <button class="b" ${F.top.length?'':'disabled'} onclick="foMisto()">Bloco misto dos ${F.top.length} temas</button></div>

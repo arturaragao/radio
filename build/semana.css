@@ -461,3 +461,12 @@ body.smd-on .smd-alvo{outline:2px solid var(--pri)!important;outline-offset:-2px
 :root[data-theme="dark"] .qa-cd:hover{background:color-mix(in srgb,var(--pri) 16%,transparent)}
 :root[data-theme="dark"] .qa-cd.hoje{color:var(--pri-tx)}
 :root[data-theme="dark"] .qa-cd.cur{border-color:var(--pri-tx);background:color-mix(in srgb,var(--pri) 18%,transparent)}
+/* 1.52.0: fileira de cima do dia (HOJE ✓0 título [chips] [editar dia]) sempre em UMA linha: título encolhe com reticências, chips rolam se faltar espaço; no celular mês abreviado e fonte menor */
+.sm-hh{flex-wrap:nowrap;min-width:0}
+.sm-hh>*{flex:0 0 auto}
+.sm-hh h2{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-hh .sm-ags{flex:0 1 auto;min-width:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+.sm-hh .sm-ags::-webkit-scrollbar{display:none}
+.sm-hh .sm-ags>*{flex:0 0 auto}
+.sm-mcu{display:none}
+@media(max-width:640px){.sm-hh{gap:4px 6px}.sm-hh h2{font-size:1.02rem}.sm-ml{display:none}.sm-mcu{display:inline}.sm-hh .sm-ags{gap:4px}.sm-hh .sm-agc{padding:1px 7px;font-size:.72rem}.sm-hh .sm-tagb{padding:1px 6px}}

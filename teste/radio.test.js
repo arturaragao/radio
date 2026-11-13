@@ -44,7 +44,7 @@ test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legív
 
 test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; nada técnico foi renomeado',()=>{
   const index=ler('index.html'),man=JSON.parse(ler('manifest.webmanifest'));
-  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.51.0<\/small><\/div>/);
+  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.52.0<\/small><\/div>/);
   assert.equal(man.name,'Radio');assert.equal(man.short_name,'Radio');assert.equal(man.theme_color,'#2f2923');assert.equal(man.background_color,'#221e1a');
   assert.match(index,/<meta name="theme-color" content="#2f2923" media="\(prefers-color-scheme: dark\)">/);
   assert.match(index,/<meta name="theme-color" content="#4a3320" media="\(prefers-color-scheme: light\)">/);

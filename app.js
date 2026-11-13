@@ -1,4 +1,4 @@
-// Banco CBR app 1.51.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.52.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -992,7 +992,7 @@ function smHojeGrande(){
   if(!smItensDe(hj).length)return '';
   return `<div class="card sm-hoje sm-hoje1" data-drop="${hj}"><div class="sm-hl">
     <div class="sm-hh"><span class="kick">${hj===smHoje()?'Hoje':'Tarefas do dia'}${tp!=='estudo'?` · ${smTipoNome[tp].toLowerCase()}`:''}</span>${smFeitasBotao(hj)}
-     <h2>${['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][x.getDay()]}, ${x.getDate()} de ${smMES[x.getMonth()]}</h2>
+     <h2 title="${x.getDate()} de ${smMES[x.getMonth()]}">${['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][x.getDay()]}, ${x.getDate()} de <span class="sm-ml">${smMES[x.getMonth()]}</span><span class="sm-mcu" aria-hidden="true">${smMES[x.getMonth()].slice(0,3)}.</span></h2>
      <div class="sm-ags">${smNt(smNoite(hj))}${smEvs(hj)}${smEstagio(hj.slice(0,7))?`<span class="sm-agc">${esc(smEstagio(hj.slice(0,7)))}</span>`:''}${smFeriado(hj)?`<span class="sm-fe">${esc(smFeriado(hj))}</span>`:''}${smAgResto(ag)?`<span class="sm-agc">${esc(smAgResto(ag))}</span>`:''}${smDia(hj).tema?`<span class="sm-htm">${esc(smDia(hj).tema)}</span>`:''}${smDia(hj).foco?`<span class="sm-fo">+ ${esc(smDia(hj).foco)}</span>`:''}<button class="sm-tagb" onclick="smSel('${hj}')">editar dia</button></div></div>
     ${smGrupos(its)}${smAddLinha(hj)}</div>
   </div>`;
@@ -2507,12 +2507,24 @@ function ntAbre(){
   c.ed.chain().insertContentAt(0,{type:'details',content:[{type:'detailsSummary'},{type:'detailsContent',content:[{type:'paragraph'}]}]}).setTextSelection(2).focus().run();
   window.scrollTo({top:0});
 }
+// 1.52.0: botão no FIM da página de um resumo ligado (resumos/indice.json), fora do editor Tiptap (não entra no conteúdo nem é salvo na página).
+function ntResumoBtn(){
+  const r=NT.pagina&&(window.RESUMOS_IDX||[]).find(x=>x.pagina===NT.pagina);if(!r)return '';
+  const tag=norm('Resumo: '+r.titulo),A=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag));if(!A.length)return '';
+  const now=Date.now(),hj=A.filter(c=>{const s=fcs[c.id];return !s||s[2]===0||s[3]<=now}).length;
+  return `<div class="nt-rs"><button type="button" class="b s" onclick="ntResumoFc('${esc(r.pagina)}')">🃏 Flashcards deste resumo (${A.length})${hj?` · ${hj} para hoje`:''}</button></div>`;
+}
+// Abre direto o estudo dos cartões deste resumo (vencidos + todos os novos, sem o limite diário de novos); nada pendente → aba Flashcards com a tag marcada.
+function ntResumoFc(id){const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===id);if(!r)return;const tag=norm('Resumo: '+r.titulo),now=Date.now();fcTags=new Set([tag]);
+  const q=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag)).filter(c=>{const s=fcs[c.id];return !s||s[2]===0||s[3]<=now}).map(c=>c.id);
+  if(!q.length){go('fc');toast('Tudo em dia neste resumo.');return}
+  fq={queue:q,shown:false,hist:[],re:new Set(),tot:q.length};go('fcstudy')}
 function vNotas(){
   if(!SM.d)return '<div class="card"><p class="mut">As notas ainda não estão disponíveis neste aparelho. Tente novamente com conexão.</p></div>';
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt${NT.prel?' prel':''}"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-pg-opcoes" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.prel?NT_PREL:NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo">${NT.prel?`<div id="nt_raiz" class="nt-prel-raiz">${vPreliminares()}</div>`:`<input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><div id="nt_raiz"></div>`}</div></div></div>`;
+  return `<div class="nt${NT.prel?' prel':''}"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-pg-opcoes" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.prel?NT_PREL:NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo">${NT.prel?`<div id="nt_raiz" class="nt-prel-raiz">${vPreliminares()}</div>`:`<input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><div id="nt_raiz"></div>${ntResumoBtn()}`}</div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -4336,6 +4348,12 @@ let foUlt=null,foBaseSel='cbr',foOrd='inc',foAbertos=new Set();
 const foP=v=>v==null?'—':(v*100).toLocaleString('pt-BR',{maximumFractionDigits:v<.1?1:0})+'%';
 const foFmd=(f,m,d)=>`<span style="color:var(--ok)">${f}</span>/${m}/<span style="color:var(--bad,#c0392b)">${d}</span>`;
 const foNome=r=>`${esc(AREA_BY[r.a].nome)} › ${esc(r.t)}`;
+// 1.52.0: resumos ligados (window.RESUMOS_IDX = resumos/indice.json: {pagina,titulo,chave:'area|Tema|Subtema',cards}); chave no formato de foKS
+const foRes=()=>window.RESUMOS_IDX||[];
+const foResTema=k=>foRes().filter(r=>String(r.chave||'').startsWith(k+'|'));
+const foResSub=k=>foRes().filter(r=>r.chave===k);
+const foResBtn=r=>`<button class="b s" style="padding:2px 8px;font-size:.74rem;margin:3px 4px 0 0" onclick="foResAbre('${esc(r.pagina)}')" title="Abrir o resumo nas Notas">📖 ${esc(r.titulo)}</button>`;
+function foResAbre(id){if(typeof ntPainelAbre==='function')ntPainelAbre(id)}
 function foN(){return [10,20,30].includes(+cfg.focoN)?+cfg.focoN:20}
 function foSetN(v){cfg.focoN=+v;persist('_est');render()}
 function foSetPref(c){cfg.focoCbr=!!c;persist('_est');render()}
@@ -4353,12 +4371,12 @@ function foSet(k,v){if(k==='b')foBaseSel=v;else foOrd=v;render()}
 function foTabHtml(nivel){
   const T=foTab(Q,log,{nivel,base:foBaseSel,ordem:foOrd,all});
   const nm=r=>nivel==='area'?esc(AREA_BY[r.q0._a].nome):nivel==='tema'?foNome({a:r.q0._a,t:r.q0.cl[0]}):`${esc(AREA_BY[r.q0._a].nome)} › ${esc(r.q0.cl[0])} › ${esc(r.q0.cl[1]||'—')}`;
-  return `<div class="tw"><table><tr><th>${nivel==='area'?'Área':nivel==='tema'?'Tema':'Subtema'}</th><th>n</th><th>%</th><th>f/m/d</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th></tr>${T.rows.map(r=>`<tr><td>${nm(r)}</td><td>${r.n}</td><td>${foP(r.pct)}</td><td>${foFmd(r.f,r.m,r.d)}</td><td>${r.feitas}</td><td>${r.acerto==null?'—':foP(r.acerto)}</td><td>${r.restam}</td></tr>`).join('')}</table></div>`}
+  return `<div class="tw"><table><tr><th>${nivel==='area'?'Área':nivel==='tema'?'Tema':'Subtema'}</th><th>n</th><th>%</th><th>f/m/d</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th></tr>${T.rows.map(r=>`<tr><td>${nm(r)}${nivel==='sub'&&foResSub(r.k).length?`<div>${foResSub(r.k).map(foResBtn).join('')}</div>`:''}</td><td>${r.n}</td><td>${foP(r.pct)}</td><td>${foFmd(r.f,r.m,r.d)}</td><td>${r.feitas}</td><td>${r.acerto==null?'—':foP(r.acerto)}</td><td>${r.restam}</td></tr>`).join('')}</table></div>`}
 function vFoco(){
   const orc=Math.max(0,diasProva())*RI_DIARIA,F=focoCalc(Q,log,{orcamento:orc,all}),r=F.resumo;foUlt=F;
   const sel=(k,v,ops)=>`<select onchange="foSet('${k}',this.value)">${ops.map(([x,t])=>`<option value="${x}" ${v===x?'selected':''}>${t}</option>`).join('')}</select>`;
-  const linhas=F.top.map((t,i)=>`<tr><td>${i+1}</td><td style="min-width:150px"><b>${foNome(t)}</b>${t.viaGeral?' <span class="tag">pelo banco geral</span>':''}${t.subs.length?`<div class="mut" style="font-size:.76rem">${t.subs.map(s=>esc(s.s)+' ('+s.n+')').join(' · ')}</div>`:''}</td>
-    <td>${foP(t.incC)} (${t.nC})</td><td>${foP(t.incG)}</td><td>${t.nC?foFmd(t.fC,t.mC,t.dC):'—'}</td><td>${t.feitas}/${t.n}</td><td>${t.acerto==null?'—':foP(t.acerto)}</td><td>${t.restam}</td><td><b>${t.meta}</b></td>
+  const linhas=F.top.map((t,i)=>`<tr><td>${i+1}</td><td style="min-width:150px"><b>${foNome(t)}</b>${t.viaGeral?' <span class="tag">pelo banco geral</span>':''}${t.subs.length?`<div class="mut" style="font-size:.76rem">${t.subs.map(s=>esc(s.s)+' ('+s.n+')'+(foResSub(t.k+'|'+s.s).length?' 📖':'')).join(' · ')}</div>`:''}${foResTema(t.k).length?`<div>${foResTema(t.k).map(foResBtn).join('')}</div>`:''}</td>
+    <td>${foP(t.incC)} (${t.nC})</td><td>${foP(t.incG)}</td><td>${t.nC?foFmd(t.fC,t.mC,t.dC):'—'}</td><td>${t.feitas}/${t.n}</td><td>${t.acerto==null?'—':foP(t.acerto)}</td><td>${t.restam}</td>
     <td><button class="b s" style="padding:4px 10px" onclick="foTreinar(${i})">Treinar</button></td></tr>`).join('');
   const D=foDifCmp(Q,log),dp=(c,n)=>['f','m','d'].map(k=>foP(n?c[k]/n:0)).join(' / '),da=['f','m','d'].map(k=>D.acerto[k]==null?'—':foP(D.acerto[k])).join(' / ');
   const pan=(k,nome)=>`<details ${foAbertos.has(k)?'open':''} ontoggle="foTog('${k}',this)" style="margin-top:6px"><summary><b>${nome}</b></summary>${foAbertos.has(k)?foTabHtml(k):''}</details>`;
@@ -4367,8 +4385,8 @@ function vFoco(){
   Você fez <b>${r.feitasC}</b> do CBR${r.acertoC==null?'':` (acerto ${foP(r.acertoC)})`} · acerto geral ${foP(r.acertoGeral)}<br>
   <b>${diasProva()}</b> dias até a prova · orçamento <b>${orc}</b> questões (${RI_DIARIA}/dia)</p>
   <h3>Top ${F.top.length} prioridades (tema)</h3>
-  <p class="mut">Incidência no CBR (75%) e no banco (25%) × seu erro × facilidade × o que ainda não fez. A meta divide o orçamento entre os temas, só com fáceis e médias que faltam.</p>
-  ${F.top.length?`<div class="tw"><table><tr><th>#</th><th>Área › Tema</th><th>Incid. CBR</th><th>Incid. geral</th><th>f/m/d CBR</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th><th>Meta</th><th></th></tr>${linhas}</table></div>`:'<p class="mut">Nenhum tema com fáceis ou médias pendentes.</p>'}
+  <p class="mut">Incidência no CBR (75%) e no banco (25%) × seu erro × facilidade × o que ainda não fez.</p>
+  ${F.top.length?`<div class="tw"><table><tr><th>#</th><th>Área › Tema</th><th>Incid. CBR</th><th>Incid. geral</th><th>f/m/d CBR</th><th>Feitas</th><th>Acerto</th><th>Restam f+m</th><th></th></tr>${linhas}</table></div>`:'<p class="mut">Nenhum tema com fáceis ou médias pendentes.</p>'}
   <div class="row" style="margin-top:10px"><label>Bloco ${sel('n',String(foN()),[['10','10'],['20','20'],['30','30']]).replace("foSet('n',this.value)","foSetN(this.value)")}</label>
    <label class="row"><input type="checkbox" ${cfg.focoCbr!==false?'checked':''} onchange="foSetPref(this.checked)"> preferir questões do CBR</label>
    <button class="b" ${F.top.length?'':'disabled'} onclick="foMisto()">Bloco misto dos ${F.top.length} temas</button></div>
@@ -4509,6 +4527,16 @@ let log=all.filter(l=>!l.x);         // respostas válidas
 let pon=load('cbr_pon',{});          // id -> {t,u} ponto de ensino editado
 let ia=load('cbr_ia',{});            // id -> resumo gerado pelo Claude
 let cards=load('cbr_cards',[]);      // {id,f,v,tg,u,x}
+// 1.52.0: cartões dos resumos (resumos/indice.json, window.RESUMOS_IDX) entram só em memória (_rs:1), sem dirty nem gravação: vêm do arquivo a cada abertura.
+// Cartão já existente sem _rs (editado/excluído por você, ou vindo do sync) vence o do arquivo. Editar/excluir tira o _rs e passa a ser gravado pelo fluxo normal.
+function rsSemeia(){
+  const vistos=new Set(),idx=new Map(cards.map(c=>[c.id,c]));
+  (window.RESUMOS_IDX||[]).forEach(r=>(r.cards||[]).forEach(k=>{
+    if(!k||!k.id)return;vistos.add(k.id);const tg='Resumo: '+r.titulo+';',ex=idx.get(k.id);
+    if(!ex){const c={id:k.id,f:k.f,v:k.v,tg,u:0,_rs:1};cards.push(c);idx.set(c.id,c)}
+    else if(ex._rs)Object.assign(ex,{f:k.f,v:k.v,tg})}));
+  cards=cards.filter(c=>!c._rs||vistos.has(c.id))}
+rsSemeia();
 let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
 let over=load('cbr_over',{});        // id -> areaId (manual)
 let uimg=load('cbr_uimg',{});        // id -> dataURL das imagens que você adicionou nas questões (referência "u:ID")
@@ -4576,7 +4604,7 @@ async function flush(){
     const col=DB.collection('cbr');
     if(estDirty){estDirty=false;await col.doc('estado').set({over,cfg,u:estU,resetAt})}
     for(const wk of [...dirty]){dirty.delete(wk);
-      if(wk.startsWith('c:')){const k=+wk.slice(2);await col.doc('cards_'+k).set({items:cards.filter(c=>hk(c.id,32)===k).map(c=>[c.id,c.f,c.v,c.tg||'',c.u||0,c.x?1:0])})}
+      if(wk.startsWith('c:')){const k=+wk.slice(2);await col.doc('cards_'+k).set({items:cards.filter(c=>!c._rs&&hk(c.id,32)===k).map(c=>[c.id,c.f,c.v,c.tg||'',c.u||0,c.x?1:0])})}
       else if(wk.startsWith('g:')){const id=wk.slice(2);if(uimg[id])await col.doc('uimg_'+id).set({d:uimg[id]})}
       else if(wk.startsWith('m:'))await col.doc('metodo').set({t:metodo,u:metoU})
       else if(wk.startsWith('p:')){const k=+wk.slice(2),o={};Object.keys(pon).forEach(id=>{if(hk(id,8)===k)o[id]=pon[id]});await col.doc('pon_'+k).set({m:o})}
@@ -4608,7 +4636,7 @@ function mergeRemote(docs){
     else if(d.id.startsWith('cards_')){const it=x.items||[];rc[d.id]=it.length;
       it.forEach(a=>{const ex=cidx.get(a[0]);
         if(!ex){const c={id:a[0],f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]};cards.push(c);cidx.set(c.id,c);changed=true}
-        else if((a[4]||0)>(ex.u||0)){Object.assign(ex,{f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]});changed=true}})}
+        else if((a[4]||0)>(ex.u||0)){Object.assign(ex,{f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]});delete ex._rs;changed=true}})}
     else if(d.id==='metodo'){if((x.u||0)>metoU){metodo=x.t;metoU=x.u;saveL('cbr_metodo',{t:metodo,u:metoU});lerManual(metodo);changed=true}}
     else if(d.id.startsWith('pon_')){const o=x.m||{};Object.keys(o).forEach(id=>{if(!pon[id]||(o[id].u||0)>(pon[id].u||0)){pon[id]=o[id];changed=true}})}
     else if(d.id.startsWith('uimg_')){const id=d.id.slice(5);if(x.d&&!uimg[id]){uimg[id]=x.d;changed=true}}
@@ -4618,7 +4646,7 @@ function mergeRemote(docs){
   });
   const lc={};all.forEach(l=>{const w=wkKey(l.t);lc[w]=(lc[w]||0)+1});
   Object.keys(lc).forEach(w=>{if(lc[w]>(rc['log_'+w]||0))dirty.add(w)});
-  const cc={};cards.forEach(c=>{const k=hk(c.id,32);cc[k]=(cc[k]||0)+1});
+  const cc={};cards.forEach(c=>{if(c._rs)return;const k=hk(c.id,32);cc[k]=(cc[k]||0)+1});
   Object.keys(cc).forEach(k=>{if(cc[k]>(rc['cards_'+k]||0))dirty.add('c:'+k)});
   if(metoU&&!docs.some(d=>d.id==='metodo'||false))dirty.add('m:0');
   else{const md=docs.find(d=>d.id==='metodo');if(md&&(md.data().u||0)<metoU)dirty.add('m:0')}
@@ -5431,9 +5459,9 @@ function fcImportar(){
 }
 function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:rtHtml(c.f),v:rtHtml(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
 function fcEditSalva(){const c=cardBy(fcEdit.id),f=rtVal(fcEdit.f),v=rtVal(fcEdit.v);if(!f){toast('A frente não pode ficar vazia.');return}
-  Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
+  Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});delete c._rs;persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
 function fcSusp(id){const s=fst(id).slice();s[6]=s[6]?0:1;s[5]=Date.now();fcs[id]=s;persist('s:'+hk(id,8));render()}
-function fcDel(id){if(fcDelId!==id){fcDelId=id;render();return}fcDelId=null;const c=cardBy(id);c.x=1;c.u=Date.now();persist('c:'+hk(id,32));render();toast('Cartão excluído')}
+function fcDel(id){if(fcDelId!==id){fcDelId=id;render();return}fcDelId=null;const c=cardBy(id);c.x=1;c.u=Date.now();delete c._rs;persist('c:'+hk(id,32));render();toast('Cartão excluído')}
 function vFc(){
   const c=fcContagem(),q=norm(fcBusca||'');
   const lista=cards.filter(x=>!x.x&&cTagOk(x)&&(!q||norm(rtTxt(x.f)+' '+rtTxt(x.v)+' '+(x.tg||'')).includes(q))).slice(0,60);
@@ -5972,7 +6000,7 @@ function zerar(){
 function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display="none",2500)}
 function exportar(){$("#bk").value=JSON.stringify({log:all,over,cfg,cards,fcs})}
 function copiar(){exportar();const t=$("#bk");t.select();try{navigator.clipboard.writeText(t.value).then(()=>toast("Copiado"),()=>toast("Selecionado: use Ctrl+C"))}catch(e){toast("Selecionado: use Ctrl+C")}}
-function importar(){try{const d=JSON.parse($("#bk").value);all=(d.log||[]).map(l=>({...l}));cards=d.cards||cards;fcs=d.fcs||fcs;cards.forEach(c=>dirty.add('c:'+hk(c.id,32)));Object.keys(fcs).forEach(id=>dirty.add('s:'+hk(id,8)));over=d.over||{};cfg=normCfg(d.cfg);
+function importar(){try{const d=JSON.parse($("#bk").value);all=(d.log||[]).map(l=>({...l}));cards=(d.cards||cards).map(c=>{c={...c};delete c._rs;return c});rsSemeia();fcs=d.fcs||fcs;cards.forEach(c=>{if(!c._rs)dirty.add('c:'+hk(c.id,32))});Object.keys(fcs).forEach(id=>dirty.add('s:'+hk(id,8)));over=d.over||{};cfg=normCfg(d.cfg);
   recalc();reArea();all.forEach(l=>dirty.add(wkKey(l.t)));persist('_est');aplicaTema();render();toast("Importado")}catch(e){toast("Texto inválido")}}
 function setPeso(id,v){if(v==='')delete cfg.pesos[id];else cfg.pesos[id]=+v;persist('_est')}
 

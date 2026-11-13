@@ -133,14 +133,27 @@
       if (await kvGet("f:" + nome)) { await kvSet("f:" + nome, null); mudou = true; }
       return "";
     };
-    const [q, m, mt, tax, sim] = await Promise.all([pegar("questoes.json"), sha["metodologia.md"] ? pegar("metodologia.md") : "", metodos(), opcional("taxonomia-pr.json"), opcional("simulados-pr.json")]);
-    if (!fundo) { window.QUESTOES = adaptar(JSON.parse(q)); window.METODO = m; window.METODOS_DADOS = mt ? JSON.parse(mt) : null; window.TAXONOMIA_PR = tax ? JSON.parse(tax) : null; window.SIMULADOS_PR = sim ? JSON.parse(sim) : null; }
+    // 1.52.0: resumos/indice.json (pasta própria, opcional): lista de resumos ligados ao painel Foco e aos flashcards. Sem o arquivo (404), segue sem erro.
+    const resumos = async () => {
+      let lista = [];
+      try { lista = await api(`/repos/${REPO}/contents/resumos`); }
+      catch (e) { if (e.chave) throw e; if (e.status !== 404) { const c = await kvGet("f:resumos-indice.json"); return c ? c.txt : ""; } }   // sem rede: usa a cópia do aparelho
+      const f = Array.isArray(lista) && lista.find((x) => x.name === "indice.json");
+      if (!f) { if (await kvGet("f:resumos-indice.json")) { await kvSet("f:resumos-indice.json", null); mudou = true; } return ""; }
+      const c = await kvGet("f:resumos-indice.json");
+      if (c && c.sha === f.sha) return c.txt;
+      const txt = await raw(f.sha); mudou = true; await kvSet("f:resumos-indice.json", { sha: f.sha, txt }); return txt;
+    };
+    const lerResumos = (t) => { try { const j = t ? JSON.parse(t) : null; return Array.isArray(j) ? j : null; } catch (e) { return null; } };
+    const [q, m, mt, tax, sim, rs] = await Promise.all([pegar("questoes.json"), sha["metodologia.md"] ? pegar("metodologia.md") : "", metodos(), opcional("taxonomia-pr.json"), opcional("simulados-pr.json"), resumos()]);
+    if (!fundo) { window.RESUMOS_IDX = lerResumos(rs); window.QUESTOES = adaptar(JSON.parse(q)); window.METODO = m; window.METODOS_DADOS = mt ? JSON.parse(mt) : null; window.TAXONOMIA_PR = tax ? JSON.parse(tax) : null; window.SIMULADOS_PR = sim ? JSON.parse(sim) : null; }
     return mudou;
   }
   async function dadosDoCache() {
     const q = await kvGet("f:questoes.json"), m = await kvGet("f:metodologia.md"), mt = await kvGet("f:metodos.json");
     if (!q) return false;
-    const tax = await kvGet("f:taxonomia-pr.json"), sim = await kvGet("f:simulados-pr.json");
+    const tax = await kvGet("f:taxonomia-pr.json"), sim = await kvGet("f:simulados-pr.json"), rs = await kvGet("f:resumos-indice.json");
+    try { const j = rs && rs.txt ? JSON.parse(rs.txt) : null; window.RESUMOS_IDX = Array.isArray(j) ? j : null; } catch (e) { window.RESUMOS_IDX = null; }
     window.QUESTOES = adaptar(JSON.parse(q.txt)); window.METODO = m ? m.txt : ""; window.METODOS_DADOS = mt ? JSON.parse(mt.txt) : null; window.TAXONOMIA_PR = tax ? JSON.parse(tax.txt) : null; window.SIMULADOS_PR = sim ? JSON.parse(sim.txt) : null; return true;
   }
 

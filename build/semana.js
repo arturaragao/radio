@@ -493,7 +493,7 @@ function smHojeGrande(){
   if(!smItensDe(hj).length)return '';
   return `<div class="card sm-hoje sm-hoje1" data-drop="${hj}"><div class="sm-hl">
     <div class="sm-hh"><span class="kick">${hj===smHoje()?'Hoje':'Tarefas do dia'}${tp!=='estudo'?` · ${smTipoNome[tp].toLowerCase()}`:''}</span>${smFeitasBotao(hj)}
-     <h2>${['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][x.getDay()]}, ${x.getDate()} de ${smMES[x.getMonth()]}</h2>
+     <h2 title="${x.getDate()} de ${smMES[x.getMonth()]}">${['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][x.getDay()]}, ${x.getDate()} de <span class="sm-ml">${smMES[x.getMonth()]}</span><span class="sm-mcu" aria-hidden="true">${smMES[x.getMonth()].slice(0,3)}.</span></h2>
      <div class="sm-ags">${smNt(smNoite(hj))}${smEvs(hj)}${smEstagio(hj.slice(0,7))?`<span class="sm-agc">${esc(smEstagio(hj.slice(0,7)))}</span>`:''}${smFeriado(hj)?`<span class="sm-fe">${esc(smFeriado(hj))}</span>`:''}${smAgResto(ag)?`<span class="sm-agc">${esc(smAgResto(ag))}</span>`:''}${smDia(hj).tema?`<span class="sm-htm">${esc(smDia(hj).tema)}</span>`:''}${smDia(hj).foco?`<span class="sm-fo">+ ${esc(smDia(hj).foco)}</span>`:''}<button class="sm-tagb" onclick="smSel('${hj}')">editar dia</button></div></div>
     ${smGrupos(its)}${smAddLinha(hj)}</div>
   </div>`;

@@ -14,7 +14,7 @@ test('Offline 1.42: app abre do aparelho sem internet, enfileira e envia ao volt
   await ev("navigator.serviceWorker.ready.then(()=>1)");await espera(2500);   // instala e guarda o app
   const tempos=[];
   for(let i=0;i<4;i++){
-    await C.call('Page.navigate',{url:C.URL_});await C.esperaApp();
+    await C.call('Page.navigate',{url:C.URL_});await C.esperaApp('tarefas');
     tempos.push(await ev("window.__tt"));
   }
   assert.equal(await ev("!!navigator.serviceWorker.controller"),true,'o service worker controla a página');
@@ -22,14 +22,14 @@ test('Offline 1.42: app abre do aparelho sem internet, enfileira e envia ao volt
   const quente=tempos.slice(1);   // a 1ª ainda pode baixar a versão nova por trás
   console.log('  aba Tarefas com cache quente (ms até a 1ª tarefa na tela):',tempos.map(x=>Math.round(x)).join(', '));
   assert.ok(Math.min(...quente)<1000&&Math.max(...quente)<1500,'meta < 1 s: '+quente.join(','));
-  assert.equal(await ev("document.title"),'Radio');
+  assert.match(await ev("document.title"),/^(Radio|Notas)$/);   // 1.53.0: o app abre em Notas (o título da página fica até trocar de página)
 
   // ---- servidor desligado ----
   await C.paraServidor();
-  await C.call('Page.navigate',{url:C.URL_});await C.esperaApp();
+  await C.call('Page.navigate',{url:C.URL_});await C.esperaApp('tarefas');
   const off=await ev("window.__tt");console.log('  mesma abertura SEM servidor:',Math.round(off),'ms');
   assert.ok(off<1500,'abre sem internet em '+off);
-  assert.equal(await ev("tela"),'tarefas');assert.equal(await ev("document.title"),'Radio');
+  assert.equal(await ev("tela"),'tarefas');assert.match(await ev("document.title"),/^(Radio|Notas)$/);
   assert.equal(await ev("Q.length"),5700,'banco de questões vem do IndexedDB');
   assert.equal(await ev("document.querySelectorAll('.sm-row[data-tid]').length>0"),true,'tarefas do cache');
   assert.equal(await ev("!!document.querySelector('script[src*=\"vendor\"]')||!!window.TT"),true,'vendor do cache');

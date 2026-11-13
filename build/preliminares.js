@@ -2,20 +2,43 @@
 // (contrato: Ditado-Laudos-ui/docs/robo-pacs-novo/FORMATO-PARES.md). Nada desses dados fica no repo do app nem no cache do SW.
 // Índice primeiro (preliminares/indice.json + lidos.json); cada par (preliminares/pares/<acesso>.json) só ao abrir o toggle do acesso.
 const PRL_REPO='arturaragao/laudos-tutu-dados',PRL_LS='bcbr_gh_token_dados',PRL_ORDEM=['Tomografia','Ultrassom','Ressonância','Radiografia','Mamografia','Outros'];
-const PRL={itens:null,lidos:{},pares:{},estado:{},erro:'',carregando:false,etag:'',filtro:{texto:'',de:'',ate:'',so:''},semChave:false};
+const PRL={itens:null,lidos:{},espaco:null,pares:{},estado:{},erro:'',carregando:false,etag:'',filtro:{texto:'',de:'',ate:'',so:''},semChave:false};
 const prelEsc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const prelNorm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const prelData=d=>/^\d{4}-\d{2}-\d{2}/.test(d||'')?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):(d||'');
 // ---- lógica pura (testada em teste/preliminares.test.js) ----
+// Acessos do mesmo laudo (indice.json: acessos + descricoes) formam um item só; sem o campo é só o acesso (leitor antigo/índice antigo).
+const prelAcessos=i=>{const l=Array.isArray(i.acessos)?i.acessos.map(String):[];return l.length>1&&l.includes(String(i.acesso))?l:[String(i.acesso)]};
+const prelLido=(i,lidos)=>prelAcessos(i).some(a=>lidos&&lidos[a]);
+// 1.53.0: "conferi a correção" = marcação do Artur, gravada no plano do app (SM.d.prelConf = {acesso: 'AAAA-MM-DDTHH:MM:SS'}): só número do acesso + hora, nenhum texto de laudo.
+// Marcado por qualquer acesso do grupo = marcado. Laudo aguardando o definitivo não conta como pendente.
+const prelConf=()=>(typeof SM!=='undefined'&&SM.d&&SM.d.prelConf)||{};
+const prelConferido=(i,conf)=>prelAcessos(i).some(a=>conf&&conf[a]);
+const prelPendente=(i,conf)=>i.status!=='aguardando'&&!prelConferido(i,conf);
+const prelFalta=(its,conf)=>its.filter(i=>prelPendente(i,conf)).length;
+const prelFaltaTxt=n=>n===1?'1 falta conferir':n+' faltam conferir';
+const prelIso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const prelHoje=()=>prelIso(new Date());
+const prelAgora=()=>{const d=new Date();return prelIso(d)+'T'+[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':')};
+const prelMaisDias=(iso,n)=>{const [y,m,d]=iso.split('-').map(Number);return prelIso(new Date(y,m-1,d+n,12))};
+const prelPeriodo=(n,hoje=prelHoje())=>({de:prelMaisDias(hoje,1-n),ate:hoje});   // últimos n dias, contando hoje
+const PRL_DOW=['dom.','seg.','ter.','qua.','qui.','sex.','sáb.'];
+function prelRotuloDia(dia,hoje=prelHoje()){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(dia||''))return 'Sem data';
+  if(dia===hoje)return 'Hoje';if(dia===prelMaisDias(hoje,-1))return 'Ontem';
+  const [y,m,d]=dia.split('-').map(Number);return PRL_DOW[new Date(y,m-1,d,12).getDay()]+' '+prelData(dia);
+}
+const prelDiaDe=i=>String(i.data||'').slice(0,10);
 function prelFiltra(itens,f={}){
   const t=prelNorm(f.texto).trim().split(/\s+/).filter(Boolean),lidos=f.lidos||{};
   return (itens||[]).filter(i=>{
     if(f.de&&(i.data||'')<f.de)return false;
     if(f.ate&&(i.data||'')>f.ate)return false;
     if(f.so==='mudou'&&!i.mudou)return false;
-    if(f.so==='naolidos'&&lidos[i.acesso])return false;
+    if(f.so==='naolidos'&&prelLido(i,lidos))return false;
+    if(f.so==='naoconf'&&!prelPendente(i,f.conf))return false;
     if(!t.length)return true;
-    const h=prelNorm([i.acesso,i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data)].join(' '));
+    const h=prelNorm([...prelAcessos(i),...(Array.isArray(i.descricoes)?i.descricoes:[]),i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data)].join(' '));
     return t.every(p=>h.includes(p));
   });
 }
@@ -32,6 +55,11 @@ function prelAgrupa(itens){
     const exames=[...m].sort((a,b)=>a[0].localeCompare(b[0],'pt-BR')).map(([exame,its])=>({exame,total:its.length,itens:its.slice().sort((a,b)=>(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso)))}));
     return {categoria,total:exames.reduce((s,x)=>s+x.total,0),exames};
   });
+}
+// Dia (mais recente primeiro; sem data por último) > itens. Dentro de cada dia vale prelAgrupa (categoria > exame).
+function prelAgrupaDias(itens){
+  const m=new Map();for(const i of itens){const d=prelDiaDe(i);if(!m.has(d))m.set(d,[]);m.get(d).push(i)}
+  return [...m].sort((a,b)=>!a[0]?1:!b[0]?-1:b[0].localeCompare(a[0])).map(([dia,its])=>({dia,total:its.length,itens:its}));
 }
 const PRL_OK_TAGS=new Set('p br b strong i em u s strike del ins sub sup ul ol li h1 h2 h3 h4 h5 h6 div span blockquote table thead tbody tr td th'.split(' '));
 const PRL_BLOCO=new Set('p br ul ol li h1 h2 h3 h4 h5 h6 div blockquote table tr td th'.split(' '));
@@ -88,6 +116,34 @@ function prelCorrigidoHtml(preHtml,defHtml){
   if(fila.length)out.splice(fim,0,' '+del(fila).trim());   // o que sobrou no fim fica junto da última palavra, dentro do último bloco
   return out.join('').replace(/<\/ins> <ins>/g,' ').replace(/<\/del> <del>/g,' ');
 }
+// 1.53.0: o rodapé do PACS ("Este laudo foi assinado eletronicamente.<data> / Informamos que o exame…") não é parte do laudo: some do definitivo (até o fim) antes do diff e da exibição.
+function prelSemRodape(html){
+  const t=prelTokens(html),p=[];t.forEach((x,k)=>{if(x.k==='pal')p.push(k)});
+  const alvo=['este','laudo','foi','assinado','eletronicamente'];
+  for(let a=0;a+4<p.length;a++){
+    if(!alvo.every((w,j)=>{const s=t[p[a+j]].s.toLowerCase();return j===4?s.startsWith(w):s===w}))continue;
+    let c=p[a];while(c>0&&(t[c-1].k==='esp'||(t[c-1].k==='tag'&&!t[c-1].fecha)))c--;   // tags de abertura soltas antes do rodapé saem junto
+    return prelUne(t.slice(0,c));
+  }
+  return html;
+}
+// HTML -> texto puro com quebra de linha por bloco (copiar o preliminar; texto do Corrigido copiado)
+const PRL_QUEBRA=new Set('p div li h1 h2 h3 h4 h5 h6 blockquote tr'.split(' '));
+function prelTextoPuro(html){
+  let o='';
+  for(const t of prelTokens(html)){if(t.k==='pal')o+=t.s;else if(t.k==='esp')o+=' ';else if(t.n==='br'||(t.fecha&&PRL_QUEBRA.has(t.n)))o+='\n';else if(t.fecha&&(t.n==='td'||t.n==='th'))o+=' '}
+  return o.replace(/[ \t]*\n[ \t]*/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/ {2,}/g,' ').trim();
+}
+// Corrigido copiado = texto final como no definitivo: sem o que foi apagado (<del>) e sem marcas (<ins>)
+function prelCopiaLimpa(html){const h=String(html??'').replace(/<del>[\s\S]*?<\/del> ?/g,'').replace(/<\/?ins>/g,'').replace(/ {2,}/g,' ');return {html:h,texto:prelTextoPuro(h)}}
+function prelCopiaCorrigido(e){
+  const s=getSelection();if(!s||!s.rangeCount||s.isCollapsed)return;
+  const r=s.getRangeAt(0),n=r.commonAncestorContainer,el=n.nodeType===1?n:n.parentElement;
+  if(!el||!el.closest('.prl-cor'))return;
+  const d=document.createElement('div');d.appendChild(r.cloneContents());
+  const c=prelCopiaLimpa(d.innerHTML);
+  e.clipboardData.setData('text/html',c.html);e.clipboardData.setData('text/plain',c.texto);e.preventDefault();
+}
 // ---- leitura no GitHub (repo privado de dados; chave própria, senão a do app) ----
 const prelChave=()=>{try{return localStorage.getItem(PRL_LS)||localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}};
 async function prelGet(caminho,etag){
@@ -132,43 +188,89 @@ function prelTg(el){
   if(el.dataset.ac)prelPar(el.dataset.ac);
   else{const d=el.querySelector(':scope>.prl-in');if(d&&!d.firstChild){d.innerHTML=prelFilhosHtml(k);prelPares()}}   // níveis 1 e 2 geram os filhos só quando abertos
 }
-const prelSub=(rotulo,html,k,padrao=false)=>`<details class="prl-sub" data-k="${prelEsc(k)}" ${prelAberto(k,padrao)?'open':''} ontoggle="PRL.estado[this.dataset.k]=this.open"><summary>${rotulo}</summary><div class="prl-laudo">${html}</div></details>`;
+const prelSub=(rotulo,html,k,padrao=false,cls='')=>`<details class="prl-sub" data-k="${prelEsc(k)}" ${prelAberto(k,padrao)?'open':''} ontoggle="PRL.estado[this.dataset.k]=this.open"><summary>${rotulo}</summary><div class="prl-laudo${cls}">${html}</div></details>`;
 function prelCorpoHtml(ac){
   const c=PRL.pares[ac];
   if(!c||c.carregando)return `<p class="mut" role="status">Carregando o laudo…</p>`;
   if(c.erro)return `<p class="prl-erro" role="alert">${prelEsc(c.erro)} <button class="b s" onclick="PRL.pares['${prelEsc(ac)}']=null;prelPar('${prelEsc(ac)}')">Tentar de novo</button></p>`;
-  const p=c.par,preH=p.preliminar?.html||prelTextoHtml(p.preliminar?.texto),defH=p.definitivo?.html||prelTextoHtml(p.definitivo?.texto);
+  const p=c.par,preH=p.preliminar?.html||prelTextoHtml(p.preliminar?.texto),defH=prelSemRodape(p.definitivo?.html||prelTextoHtml(p.definitivo?.texto));
   const def=prelSeguro(defH),cor=p.mudou===false?null:prelCorrigidoHtml(preH,defH);
   const leg='';   // 1.50.5: o Artur pediu para tirar a legenda (cores já são conhecidas)
   const corr=p.mudou===false?`<p class="mut">O chefe não mudou o texto.</p>`+def:cor==null?`<p class="mut">Laudo grande demais para comparar neste aparelho.</p>`:leg+cor;
   const k='c|'+ac+'|';
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
-  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c',true);   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
+  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
 function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e)e.innerHTML=prelCorpoHtml(ac)}
 function prelItem(i){
-  const ac=String(i.acesso),k='a|'+ac,ab=prelAberto(k,false),lido=!!PRL.lidos[ac];
-  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac">${prelEsc(ac)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
+  const ac=String(i.acesso),acs=prelAcessos(i),k='a|'+ac,ab=prelAberto(k,false),lido=prelLido(i,PRL.lidos),conf=prelConferido(i,prelConf()),rot=acs.join(' + ');
+  // acesso: clique copia o preliminar (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
+  const cx=i.status==='aguardando'?'':`<label class="prl-conf" title="Conferi a correção"><input type="checkbox" ${conf?'checked':''} data-ac="${prelEsc(ac)}" data-acs="${prelEsc(acs.join(','))}" onchange="prelConfClique(this)"><span class="sr">conferi a correção</span></label>`;
+  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac" role="button" title="Copiar o laudo preliminar" onclick="prelCopiaPre(event,'${prelEsc(ac)}')">${prelEsc(rot)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}${cx}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
 }
-const prelVis=()=>prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos});
-function prelN2(c,at,tot){
+// marca/desmarca "conferi" no plano do app (sincroniza PC <-> celular pelo mesmo caminho das tarefas: smMudar)
+function prelConfClique(el){
+  const ac=el.dataset.ac,acs=el.dataset.acs.split(','),on=el.checked,hora=prelAgora();
+  if(typeof SM==='undefined'||!SM.d||typeof smMudar!=='function'){el.checked=!on;if(typeof toast==='function')toast('O plano ainda está carregando; tente de novo');return}
+  smMudar(d=>{const c=d.prelConf=d.prelConf||{};if(on)c[ac]=hora;else acs.forEach(a=>{delete c[a]})},on?'preliminares: conferido':'preliminares: desmarcado');
+  prelRepinta();   // o smRender do plano não redesenha com o foco dentro de .nt
+}
+// clique no número do acesso: copia o laudo PRELIMINAR (texto puro); baixa o par se ainda não estiver na memória
+async function prelCopiaPre(ev,ac){
+  ev.preventDefault();ev.stopPropagation();
+  if(!(PRL.pares[ac]&&PRL.pares[ac].par))await prelPar(ac);
+  for(let n=0;n<50&&PRL.pares[ac]&&PRL.pares[ac].carregando;n++)await new Promise(r=>setTimeout(r,100));
+  const c=PRL.pares[ac],p=c&&c.par;
+  if(!p){toast('Não consegui ler o laudo agora');return}
+  const t=prelTextoPuro(p.preliminar?.html||prelTextoHtml(p.preliminar?.texto));
+  try{await navigator.clipboard.writeText(t)}catch(e){
+    const a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();
+    let ok=false;try{ok=document.execCommand('copy')}catch(e2){}a.remove();if(!ok){toast('Não consegui copiar');return}
+  }
+  toast('Preliminar copiado');
+}
+// fechar um toggle encolhe o que está abaixo dele e, com a página rolada até o fim, o navegador sobe a rolagem e a célula sob o mouse muda.
+// Antes de fechar fixamos a altura da página (espaçador temporário); solta na próxima rolagem/tecla do usuário ou ao redesenhar.
+function prelFixaAltura(e){
+  const s=e.target.closest&&e.target.closest('.prl summary');if(!s||!s.parentElement.open)return;
+  const r=s.closest('.prl');if(!r)return;
+  prelSoltaAltura();r.style.minHeight=r.offsetHeight+'px';PRL.espaco=r;
+}
+function prelSoltaAltura(){if(PRL.espaco){PRL.espaco.style.minHeight='';PRL.espaco=null}}
+if(typeof document.addEventListener==='function'){
+  document.addEventListener('click',prelFixaAltura,true);document.addEventListener('copy',prelCopiaCorrigido);
+  for(const t of ['wheel','touchmove','keydown'])document.addEventListener(t,prelSoltaAltura,{passive:true});
+}
+const prelVis=()=>prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos,conf:prelConf()});
+const prelPend=n=>n?`<span class="prl-pend">${prelFaltaTxt(n)}</span>`:'';
+const prelFalta2=its=>prelFalta(its,prelConf());
+function prelN2(c,dia,at,tot){
   return c.exames.map(x=>{
-    const k2='c2|'+c.categoria+'|'+x.exame,def=at&&tot<=60&&PRL.estado[k2]===undefined,ab2=prelAberto(k2,def);
-    return `<details class="prl-n2" data-k="${prelEsc(k2)}" ${def?'data-def="1"':''} ${ab2?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(x.exame)}</span><span class="prl-n">${x.total}</span></summary><div class="prl-in">${ab2?x.itens.map(prelItem).join(''):''}</div></details>`}).join('');
+    const k2='c2|'+dia+'|'+c.categoria+'|'+x.exame,def=at&&tot<=60&&PRL.estado[k2]===undefined,ab2=prelAberto(k2,def);
+    return `<details class="prl-n2" data-k="${prelEsc(k2)}" ${def?'data-def="1"':''} ${ab2?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(x.exame)}</span>${prelPend(prelFalta2(x.itens))}<span class="prl-n">${x.total}</span></summary><div class="prl-in">${ab2?x.itens.map(prelItem).join(''):''}</div></details>`}).join('');
 }
-// filhos de um toggle de nível 1 ('c1|cat') ou 2 ('c2|cat|exame') aberto depois da pintura inicial
+// categorias de um dia
+function prelN1(g,dia,at,tot){
+  return g.map(c=>{
+    const k1='c1|'+dia+'|'+c.categoria,def=at&&PRL.estado[k1]===undefined,ab1=prelAberto(k1,def);
+    return `<details class="prl-n1" data-k="${prelEsc(k1)}" ${def?'data-def="1"':''} ${ab1?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(c.categoria)}</span>${prelPend(prelFalta2(c.exames.flatMap(x=>x.itens)))}<span class="prl-n">${c.total}</span></summary><div class="prl-in">${ab1?prelN2(c,dia,at,tot):''}</div></details>`;
+  }).join('');
+}
+// filhos de um toggle de dia ('d|dia'), categoria ('c1|dia|cat') ou exame ('c2|dia|cat|exame') aberto depois da pintura inicial
 function prelFilhosHtml(k){
-  const its=prelVis(),g=prelAgrupa(its),[n,cat,...r]=k.split('|'),c=g.find(x=>x.categoria===cat);if(!c)return '';
-  if(n==='c1')return prelN2(c,prelFiltroAtivo(),its.length);
+  const its=prelVis(),[n,dia,cat,...r]=k.split('|'),g=prelAgrupa(its.filter(i=>prelDiaDe(i)===dia));
+  if(n==='d')return prelN1(g,dia,prelFiltroAtivo(),its.length);
+  const c=g.find(x=>x.categoria===cat);if(!c)return '';
+  if(n==='c1')return prelN2(c,dia,prelFiltroAtivo(),its.length);
   const x=c.exames.find(e=>e.exame===r.join('|'));return x?x.itens.map(prelItem).join(''):'';
 }
 function prelListaHtml(){
   if(!PRL.itens)return '';
-  const its=prelVis(),g=prelAgrupa(its),at=prelFiltroAtivo();
+  const its=prelVis(),at=prelFiltroAtivo();
   if(!its.length)return `<p class="mut" role="status">${PRL.itens.length?'Nada encontrado com esse filtro.':'Ainda não há laudos preliminares gravados.'}</p>`;
-  return g.map(c=>{
-    const k1='c1|'+c.categoria,def=at&&PRL.estado[k1]===undefined,ab1=prelAberto(k1,def);
-    return `<details class="prl-n1" data-k="${prelEsc(k1)}" ${def?'data-def="1"':''} ${ab1?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(c.categoria)}</span><span class="prl-n">${c.total}</span></summary><div class="prl-in">${ab1?prelN2(c,at,its.length):''}</div></details>`;
+  return prelAgrupaDias(its).map(d=>{
+    const k0='d|'+d.dia,def=at&&PRL.estado[k0]===undefined,ab0=prelAberto(k0,def);
+    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${def?'data-def="1"':''} ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
   }).join('');
 }
 function prelFormChave(){
@@ -209,15 +311,19 @@ async function prelCfgTesta(){
   }catch(e){prelCfgMsg(navigator.onLine?'Não consegui falar com o GitHub agora.':'Sem conexão. Teste de novo quando voltar.')}
 }
 function prelRepinta(){if(typeof tela!=='undefined'&&tela==='notas'&&NT.prel&&typeof render==='function')render()}
-const prelContagem=()=>{if(!PRL.itens)return '';const t=prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos}).length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
+const prelFaltaTopo=()=>{if(!PRL.itens)return '';const v=prelVis();return v.length?(prelFalta2(v)?' · '+prelFaltaTxt(prelFalta2(v)):' · tudo conferido'):''};
+const prelContagem=()=>{if(!PRL.itens)return '';const t=prelVis().length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
 function prelFiltroMuda(){
   const g=id=>document.getElementById(id)?.value||'';
   PRL.filtro={texto:g('prl_q'),de:g('prl_de'),ate:g('prl_ate'),so:g('prl_so')};
   const l=document.getElementById('prl_lista');if(l){l.innerHTML=prelListaHtml();prelPares()}
   const n=document.getElementById('prl_cont');if(n)n.textContent=prelContagem();
+  const q=document.getElementById('prl_pend');if(q)q.textContent=prelFaltaTopo();
 }
+function prelPeriodoSet(n){PRL.filtro={...PRL.filtro,...prelPeriodo(n)};prelRepinta()}
 function prelLimpa(){PRL.filtro={texto:'',de:'',ate:'',so:''};prelRepinta()}
 function vPreliminares(){
+  prelSoltaAltura();
   setTimeout(prelPares,0);
   if(!PRL.itens&&!PRL.carregando&&!PRL.semChave&&!PRL.erro)setTimeout(()=>prelCarrega(),0);
   const f=PRL.filtro,topo=`<div class="prl-topo"><h1>Preliminares</h1><button class="b s" onclick="prelCarrega(true)" ${PRL.carregando?'disabled':''}>${PRL.carregando?'Atualizando…':'Atualizar'}</button></div>`;
@@ -228,9 +334,10 @@ function vPreliminares(){
     <label class="prl-busca">Buscar<input id="prl_q" type="search" value="${prelEsc(f.texto)}" placeholder="acesso, exame, chefe…" oninput="prelFiltroMuda()"></label>
     <label>De<input id="prl_de" type="date" value="${prelEsc(f.de)}" onchange="prelFiltroMuda()"></label>
     <label>Até<input id="prl_ate" type="date" value="${prelEsc(f.ate)}" onchange="prelFiltroMuda()"></label>
-    <label>Mostrar<select id="prl_so" onchange="prelFiltroMuda()"><option value="">Todos</option><option value="mudou" ${f.so==='mudou'?'selected':''}>Só com correção</option><option value="naolidos" ${f.so==='naolidos'?'selected':''}>Só não lidos</option></select></label>
+    <label>Mostrar<select id="prl_so" onchange="prelFiltroMuda()"><option value="">Todos</option><option value="mudou" ${f.so==='mudou'?'selected':''}>Só com correção</option><option value="naoconf" ${f.so==='naoconf'?'selected':''}>Só não conferidos</option><option value="naolidos" ${f.so==='naolidos'?'selected':''}>Só não lidos</option></select></label>
     <button class="b s" onclick="prelLimpa()">Limpar</button>
    </div>
-   <p class="mut prl-cont" id="prl_cont" aria-live="polite">${prelContagem()}</p>
+   <div class="prl-per" role="group" aria-label="Período rápido">${[[1,'Hoje'],[3,'Últimos 3 dias'],[7,'Últimos 7 dias'],[30,'Últimos 30 dias']].map(([n,r])=>{const p=prelPeriodo(n);return `<button class="b s" aria-pressed="${f.de===p.de&&f.ate===p.ate}" onclick="prelPeriodoSet(${n})">${r}</button>`}).join('')}</div>
+   <p class="mut prl-cont" aria-live="polite"><span id="prl_cont">${prelContagem()}</span><b class="prl-pendtot" id="prl_pend">${prelFaltaTopo()}</b></p>
    <div id="prl_lista">${prelListaHtml()}</div></div>`;
 }

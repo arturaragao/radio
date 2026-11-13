@@ -34,7 +34,7 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
     if(tema)await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:tema}]});
     for(let i=0;i<60;i++){try{if((await fetch(URL_)).ok)break}catch{}await espera(100)}
     const esperaApp=async(aba)=>{
-      for(let i=0;i<150;i++){if(await ev("typeof SM!=='undefined'&&SM.ok&&typeof TABS!=='undefined'&&!!document.querySelector('.sm')").catch(()=>false))break;await espera(100)}
+      for(let i=0;i<150;i++){if(await ev("typeof SM!=='undefined'&&SM.ok&&typeof TABS!=='undefined'&&!!document.querySelector('.sm,.nt')").catch(()=>false))break;await espera(100)}
       if(aba){await ev(`go('${aba}')`);if(aba==='notas')for(let i=0;i<100;i++){if(await ev("typeof NT!=='undefined'&&!!NT.ed&&!!document.querySelector('.nt-pm')").catch(()=>false))break;await espera(100)}}
       await espera(600);await ev("SM.fila.then(()=>1)");
     };

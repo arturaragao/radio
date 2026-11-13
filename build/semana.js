@@ -137,6 +137,8 @@ async function smPuxar1(){
   }
 }
 function smRender(){
+  // 1.53: Notas já montada não é redesenhada por mudança do plano (outro aparelho, lembretes): só a lateral se atualiza; o texto não pisca nem a página pula
+  if(tela==='notas'&&typeof NT!=='undefined'&&NT.ed&&NT.el?.isConnected&&typeof ntLateralPinta==='function'){ntLateralPinta();return}
   if(['semana','tarefas','notas','hoje'].includes(tela)&&!(tela==='notas'&&document.activeElement?.closest?.('.nt')))render()}
 // toda mudança é uma função idempotente: aplica na hora e de novo na gravação (se outro aparelho mudou o arquivo, relê e reaplica)
 // 1.40: mudanças que chegam enquanto outra grava (ou no mesmo instante) vão juntas num único commit (SM.lote), sem rajada.

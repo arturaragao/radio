@@ -29,8 +29,10 @@ test('Calendário, Tarefas e Notas 1.30: aceite no Chrome, desktop e celular', {
   await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
   for(let i=0;i<50;i++){try{if((await fetch('http://127.0.0.1:8766/')).ok)break}catch{}await espera(100)}
   await call('Page.navigate',{url:'http://127.0.0.1:8766/'});
-  for(let i=0;i<100;i++){if(await ev("typeof SM!=='undefined'&&SM.ok&&typeof TABS!=='undefined'&&document.querySelector('.sm.sm-tarefas')!==null"))break;await espera(100)}
-  // 1.31.0: o app abre direto na aba Tarefas, sem moldura/seleção na célula única
+  for(let i=0;i<100;i++){if(await ev("typeof SM!=='undefined'&&SM.ok&&typeof TABS!=='undefined'&&!!document.querySelector('.sm,.nt')"))break;await espera(100)}
+  assert.equal(await ev("tela"),'notas','1.53.0: o app abre direto em Notas');
+  await ev("go('tarefas')");for(let i=0;i<100;i++){if(await ev("document.querySelector('.sm.sm-tarefas')!==null"))break;await espera(100)}
+  // 1.31.0: a aba Tarefas abre sem moldura/seleção na célula única
   assert.equal(await ev("tela==='tarefas'&&!!document.querySelector('.sm.sm-tarefas')"),true,'abre na aba Tarefas');
   assert.equal(await ev("(()=>{const c=document.querySelector('.sm-tarefas .sm-hoje1');if(!c)return true;c.classList.add('kbsel');const s=getComputedStyle(c);const r=s.outlineStyle==='none'&&s.boxShadow==='none';c.classList.remove('kbsel');return r})()"),true,'célula da aba Tarefas sem seleção');
   await ev("go('semana')");

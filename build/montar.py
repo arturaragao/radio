@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.52.0"
+VERSAO = "1.53.0"
+# 1.53.0: abre em Notas; Preliminares: conferido (plano), por dia, período rápido, rodapé do PACS fora, copiar preliminar/corrigido, rolagem estável
 # 1.52.0: fileira do dia em uma linha; Foco sem Meta; resumos ligados ao Foco, aos flashcards e às Notas (resumos/indice.json)
 # 1.51.0: tabelas nas Notas (Tiptap extension-table; "/Tabela", minibarra de linhas e colunas, importação do Notion como tabela)
 # 1.50.5: Preliminares sem ícone de página e sem legenda; "sem correção" → "sem mudanças"
@@ -99,7 +100,7 @@ troca("return [...sv,...ids.filter(i=>!sv.includes(i))]};", "return (r=>sv.inclu
 troca("{id:'seg',nome:'Segurança do paciente',kw:['seguranca']}", "{id:'seg',nome:'Segurança, qualidade e estatística',kw:['seguranca','estatistica','informatica']}")
 troca("if(!log.length)return `<div class=\"card\">Responda algumas questões para o painel aparecer.</div>`+vIncidencia();", "if(!log.length)return vFoco()+`<div class=\"card\">Responda algumas questões para o painel aparecer.</div>`+vIncidencia();")
 # aba Semana (substitui o artefato "Minha Semana", 21/10/2026)
-troca("let sess=null,tela='hoje',sub=null;", "let sess=null,tela='tarefas',sub=null;")
+troca("let sess=null,tela='hoje',sub=null;", "let sess=null,tela='notas',sub=null;")
 troca("aplicaTema();render();iniciaSync();", "aplicaTema();smkIni();render();iniciaSync();smAtalhosInicia();")
 # Atalhos aguardam o primeiro resultado de progresso, inclusive o caminho de erro/offline.
 troca("if(!db)return;", "if(!db){smSyncResolve();return;}")

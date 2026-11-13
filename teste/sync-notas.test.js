@@ -198,3 +198,48 @@ test('1.49.1: gravação que reduziria >50% do texto sem apagar nesta sessão gu
   novo.s.salvarPagina({...pa,doc:{v:1,blocos:[bloco('A','',new Date().toISOString())]}});await novo.s.enviar();
   assert.equal(g.files.get(path('notas-recuperadas')).d.doc.blocos.length,n);
 });
+// 1.53: duplicação ao unir. Um lado moveu o bloco B para dentro de um toggle (Tab; o id de B continua no nó aninhado) e o outro ainda o tem no topo:
+// a união por id somava as duas cópias. Agora a cópia de topo idêntica a um nó aninhado com o mesmo id sai; conteúdo diferente fica nos dois (nada se perde).
+const par153=(id,t)=>({type:'paragraph',attrs:{id},content:[{type:'text',text:t}]});
+const topo153=(id,t,at='2026-11-12T08:00:00Z')=>({id,atualizado:at,conteudo:par153(id,t)});
+const tog153=(id,filhos,at)=>({id,atualizado:at,conteudo:{type:'details',attrs:{id},content:[{type:'detailsSummary',content:[{type:'text',text:'T'}]},{type:'detailsContent',content:filhos}]}});
+const textosTodos=d=>{const o=[];const v=n=>{if(typeof n?.text==='string')o.push(n.text);Object.values(n||{}).forEach(x=>typeof x==='object'&&v(x))};v(d.doc);return o};
+async function cenario153(localBlocos,remotoBlocos){
+  const a=setup(),base=[topo153('A','a'),topo153('B','b'),tog153('T',[par153('x','dentro')],'2026-11-12T08:00:00Z')];
+  a.s.salvarPagina({...page('p'),doc:{v:1,blocos:base}});await a.s.enviar();
+  const o=setup(a.g,armazenamento(),{aparelhoId:'outro'});await o.s.listarPaginas();const po=await o.s.abrirPagina('p');
+  o.s.salvarPagina({...po,atualizado:'2026-11-12T09:00:00Z',doc:{v:1,blocos:remotoBlocos(base)}});await o.s.enviar();
+  a.s.salvarPagina({...page('p'),atualizado:'2026-11-12T09:05:00Z',doc:{v:1,blocos:localBlocos(base)}});assert.equal(await a.s.enviar(),true);
+  return a.g.files.get(path('p')).d;
+}
+test('1.53 duplicação: B movido para dentro do toggle aqui + outro aparelho editou outro bloco (409) = B uma vez só',async()=>{
+  const d=await cenario153(
+    base=>[base[0],tog153('T',[par153('x','dentro'),par153('B','b')],'2026-11-12T09:05:00Z')],           // local: Tab levou B para dentro de T
+    base=>[topo153('A','a editado','2026-11-12T09:00:00Z'),base[1],base[2]]);                             // remoto: editou A, B ainda no topo
+  const t=textosTodos(d);assert.equal(t.filter(x=>x==='b').length,1,'B não duplicou: '+JSON.stringify(t));
+  assert.ok(t.includes('a editado')&&t.includes('dentro'),'nenhum texto se perdeu');
+  assert.deepEqual(d.doc.blocos.map(b=>b.id),['A','T']);
+});
+test('1.53 duplicação: o outro aparelho moveu B para dentro do toggle e este ainda o tem no topo',async()=>{
+  const d=await cenario153(
+    base=>[topo153('A','a editado aqui','2026-11-12T09:05:00Z'),base[1],base[2]],
+    base=>[base[0],tog153('T',[par153('x','dentro'),par153('B','b')],'2026-11-12T09:00:00Z')]);
+  const t=textosTodos(d);assert.equal(t.filter(x=>x==='b').length,1,JSON.stringify(t));assert.ok(t.includes('a editado aqui'));
+});
+test('1.53 duplicação: B movido aqui e EDITADO no outro aparelho: nada se perde (as duas versões ficam)',async()=>{
+  const d=await cenario153(
+    base=>[base[0],tog153('T',[par153('x','dentro'),par153('B','b')],'2026-11-12T09:05:00Z')],
+    base=>[base[0],topo153('B','b editado remoto','2026-11-12T09:00:00Z'),base[2]]);
+  const t=textosTodos(d);assert.ok(t.includes('b editado remoto')&&t.includes('b'),JSON.stringify(t));
+});
+test('1.53 duplicação: união repetida (várias gravações com base antiga) continua sem acumular cópias',async()=>{
+  const a=setup(),base=[topo153('A','a'),topo153('B','b'),tog153('T',[par153('x','dentro')])];
+  a.s.salvarPagina({...page('p'),doc:{v:1,blocos:base}});await a.s.enviar();
+  const moved=[base[0],tog153('T',[par153('x','dentro'),par153('B','b')],'2026-11-12T09:05:00Z')];
+  for(let i=0;i<3;i++){
+    const o=setup(a.g,armazenamento(),{aparelhoId:'o'+i});await o.s.listarPaginas();const po=await o.s.abrirPagina('p');
+    o.s.salvarPagina({...po,atualizado:'2026-11-12T09:0'+i+':00Z',doc:{v:1,blocos:po.doc.blocos.map(b=>b.id==='A'?topo153('A','a'+i,'2026-11-12T09:0'+i+':00Z'):b)}});await o.s.enviar();
+    a.s.salvarPagina({...page('p'),atualizado:'2026-11-12T09:1'+i+':00Z',doc:{v:1,blocos:moved}});await a.s.enviar();
+  }
+  const t=textosTodos(a.g.files.get(path('p')).d);assert.equal(t.filter(x=>x==='b').length,1,JSON.stringify(t));
+});

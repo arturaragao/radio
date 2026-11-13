@@ -91,6 +91,15 @@ function ntAbertosGrava(s){try{localStorage.setItem(NT_ABERTOS,JSON.stringify([.
 function ntAberto(id){return !!id&&ntAbertosLer().has(id)}
 function ntAbertoSalva(id,aberto){if(!id)return;const s=ntAbertosLer();aberto?s.add(id):s.delete(id);ntAbertosGrava(s)}
 function ntPoeAberto(dom,aberto){dom.classList.toggle('is-open',aberto);dom.querySelector(':scope>button')?.setAttribute('aria-expanded',String(aberto))}
+// 1.53: abrir/fechar à mão mantém o toggle onde está na tela. Ao fechar, o editor guarda a altura que tinha (min-height até a próxima edição) para a página
+// não encolher e subir sozinha no fim da rolagem; o resto (altura mudando acima) é compensado pela diferença de `top`.
+function ntAbreFixo(dom,aberto){
+  const el=dom.closest('.ProseMirror')?.parentElement,antes=dom.getBoundingClientRect().top;
+  if(el&&!aberto)el.style.minHeight=el.offsetHeight+'px';
+  ntPoeAberto(dom,aberto);
+  const d=dom.getBoundingClientRect().top-antes;if(d)window.scrollBy(0,d);
+}
+function ntSoltaAltura(c){if(c.el?.style.minHeight)c.el.style.minHeight=''}
 // Ctrl+Alt+T abre/fecha todos os toggles da página do editor `c`; Ctrl+Enter, o toggle do cursor. Só estado de tela (classe + localStorage): fora do documento, do histórico e do sync.
 function ntTodosNo(c){
   const ds=[...c.el.querySelectorAll('[data-type="details"]')];
@@ -101,7 +110,7 @@ function ntTodosNo(c){
 }
 function ntToggleCursor(c){
   const sel=c.ed.state.selection,$=sel.$from,n=sel.node;
-  const abre=(pos,no)=>{const dom=c.ed.view.nodeDOM(pos);if(dom instanceof Element){const a=!dom.classList.contains('is-open');ntPoeAberto(dom,a);ntAbertoSalva(no.attrs.id,a)}return true};
+  const abre=(pos,no)=>{const dom=c.ed.view.nodeDOM(pos);if(dom instanceof Element){const a=!dom.classList.contains('is-open');ntAbreFixo(dom,a);ntAbertoSalva(no.attrs.id,a)}return true};
   if(n?.type.name==='details')return abre(sel.from,n);
   for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details')return abre($.before(d),$.node(d));
   return false;
@@ -127,11 +136,12 @@ function ntSemCor(ed){return ed.chain().focus().unsetColor().unsetBackgroundColo
 // ===== Movimento de blocos (Tab/Shift+Tab, menu da alça) =====
 // Bloco "movível" no ponto: item de lista, ou filho direto de documento/toggle/destaque/citação (parágrafo, título, toggle, imagem…).
 const NT_PAIS=new Set(['doc','detailsContent','callout','blockquote']);
+const ntEhItem=n=>n.type.name==='listItem'||n.type.name==='taskItem';
 function ntBlocoEm(doc,pos){
   const $p=doc.resolve(Math.max(0,Math.min(pos,doc.content.size)));
   for(let d=$p.depth;d>=1;d--){
     const n=$p.node(d),pai=$p.node(d-1);
-    if(n.type.name==='listItem'||n.type.name==='taskItem'||(NT_PAIS.has(pai.type.name)&&!['bulletList','orderedList','taskList'].includes(n.type.name)))
+    if(n.type.name==='listItem'||n.type.name==='taskItem'||(NT_PAIS.has(pai.type.name)&&!['bulletList','orderedList','taskList'].includes(n.type.name))||(ntEhItem(pai)&&$p.index(d-1)>0))   // (1.53) filho de item de lista, depois do 1º parágrafo, também é um bloco
       return {pos:$p.before(d),node:n,pai,idx:$p.index(d-1),depth:d};
   }return null;
 }
@@ -149,11 +159,12 @@ function ntMovePara(ed,b,destino,selDeslocada=true){
   if(destino<=b.pos){tr.delete(b.pos,b.pos+tam);tr.insert(destino,b.node);novo=destino}
   else{tr.insert(destino,b.node);tr.delete(b.pos,b.pos+tam);novo=destino-tam}
   const S=TT.pm.state;
-  try{tr.setSelection(dentro&&selDeslocada?S.TextSelection.create(tr.doc,novo+Math.min(off,tam-1)):S.Selection.near(tr.doc.resolve(novo+1)))}catch(e){}
+  try{tr.setSelection(state.selection.node&&dentro?S.NodeSelection.create(tr.doc,novo):dentro&&selDeslocada?S.TextSelection.create(tr.doc,novo+Math.min(off,tam-1)):S.Selection.near(tr.doc.resolve(novo+1)))}catch(e){}   // (1.53: imagem/divisória selecionada continua selecionada)
   view.dispatch(tr.scrollIntoView());return novo;
 }
 function ntSobeDesce(ed,b,dir){
   const {pai,idx}=b;if(dir<0&&idx===0||dir>0&&idx>=pai.childCount-1)return false;
+  if(ntEhItem(pai)&&(dir<0?idx-1:idx)===0)return false;   // o 1º filho de um item de lista tem de ser parágrafo
   if(dir<0){ntMovePara(ed,b,b.pos-pai.child(idx-1).nodeSize);return true}
   ntMovePara(ed,b,b.pos+b.node.nodeSize+pai.child(idx+1).nodeSize);return true;
 }
@@ -188,6 +199,32 @@ function ntItemSaiToggle(ed,b){
   try{tr.setSelection(S.TextSelection.create(tr.doc,tr.mapping.slice(passos).map(destino+1)+Math.min(off,tam-1)))}catch(e){}
   view.dispatch(tr.scrollIntoView());return true;
 }
+// 1.53: seleção no bloco recém-posto em `pos`: texto no mesmo ponto de antes; imagem/divisória selecionada.
+function ntSelBloco(tr,pos,node,off){const S=TT.pm.state;try{tr.setSelection(node.isTextblock?S.TextSelection.create(tr.doc,pos+1+Math.min(Math.max(off,0),node.content.size)):S.NodeSelection.create(tr.doc,pos))}catch(e){}}
+// 1.53: Tab numa linha logo depois de um parágrafo comum: o parágrafo anterior vira o título de um toggle (mesmo id, mesmo texto) e a linha, o conteúdo dele.
+function ntParaVirouToggle(ed,b,ant){
+  const {state,view}=ed,N=state.schema.nodes,ini=b.pos-ant.nodeSize,off=state.selection.from-b.pos,tam=b.node.nodeSize;
+  const det=N.details.create({id:ant.attrs.id},[N.detailsSummary.create(null,ant.content),N.detailsContent.create(null,b.node)]);
+  ntAbertoSalva(ant.attrs.id,true);
+  const tr=state.tr.replaceWith(ini,b.pos+tam,det);
+  ntSelBloco(tr,ini+2+ant.content.size+2,b.node,off);
+  view.dispatch(tr.scrollIntoView());const dom=view.nodeDOM(ini);if(dom instanceof Element)ntPoeAberto(dom,true);
+  return true;
+}
+// 1.53: Shift+Tab num bloco que é filho (2º em diante) de um item de lista: sai para logo depois da lista; os itens que vinham depois dele formam outra lista.
+function ntSaiDoItem(ed,b){
+  const {state,view}=ed,doc=state.doc,$=doc.resolve(b.pos),item=$.parent,lista=$.node($.depth-1),iItem=$.index($.depth-1),listaPos=$.before($.depth-1);
+  const tam=b.node.nodeSize,off=state.selection.from-b.pos,itemPos=$.before(),itemNovo=item.type.create(item.attrs,item.content.cut(0,b.pos-$.start())),
+    resto=item.content.cut(b.pos-$.start()+tam);
+  // (o bloco sai; o que vinha depois dele no mesmo item e os itens seguintes viram uma nova lista logo depois dele)
+  const seguintes=[];if(resto.childCount)seguintes.push(item.type.create(item.attrs,resto));
+  for(let i=iItem+1;i<lista.childCount;i++)seguintes.push(lista.child(i));
+  const partes=[lista.copy(lista.content.cut(0,itemPos-$.start($.depth-1)).addToEnd(itemNovo)),b.node];
+  if(seguintes.length)partes.push(lista.type.create({...lista.attrs,id:null},seguintes));
+  const tr=state.tr.replaceWith(listaPos,listaPos+lista.nodeSize,partes);
+  ntSelBloco(tr,listaPos+partes[0].nodeSize,b.node,off);
+  view.dispatch(tr.scrollIntoView());return true;
+}
 function ntAninha(ed,b,sai){
   if(NT_ITENS.includes(b.node.type.name)){
     const t=b.node.type.name;ed.chain().focus().setTextSelection(b.pos+2).run();
@@ -196,7 +233,10 @@ function ntAninha(ed,b,sai){
   }
   const {state}=ed,doc=state.doc;
   if(!sai){
-    if(b.idx===0)return false;const ant=b.pai.child(b.idx-1);if(ant.type.name!=='details')return false;
+    if(b.idx===0)return false;const ant=b.pai.child(b.idx-1);
+    if(NT_LISTAS.includes(ant.type.name))return ntMovePara(ed,b,b.pos-2),true;   // 1.53: vira filho do último item da lista anterior
+    if(ant.type.name==='paragraph')return ntParaVirouToggle(ed,b,ant);   // 1.53: o parágrafo anterior vira o título de um toggle
+    if(ant.type.name!=='details')return false;
     const ini=b.pos-ant.nodeSize,fimConteudo=ini+ant.nodeSize-2,conteudo=ant.lastChild;
     const soVazio=conteudo.childCount===1&&conteudo.firstChild.type.name==='paragraph'&&!conteudo.firstChild.content.size;
     if(soVazio){   // o parágrafo vazio que o toggle novo traz é substituído
@@ -208,6 +248,7 @@ function ntAninha(ed,b,sai){
     ntAbertoSalva(ant.attrs.id,true);const dom=ed.view.nodeDOM(ini);if(dom)ntPoeAberto(dom,true);
     return true;
   }
+  if(ntEhItem(b.pai))return ntSaiDoItem(ed,b);   // 1.53: filho de um item de lista sai para depois da lista
   if(b.pai.type.name!=='detailsContent')return false;
   const $p=doc.resolve(b.pos),det=$p.before($p.depth-1),detNode=doc.nodeAt(det);
   if(b.pai.childCount===1){   // único filho: o toggle fica com um parágrafo vazio
@@ -351,7 +392,7 @@ function ntToggle(){
       const conteudo=document.createElement('div');conteudo.className='nt-tgl-c';dom.append(tg,conteudo);
       let id=node.attrs.id;const poe=()=>{if(id)dom.dataset.id=id;ntPoeAberto(dom,ntAberto(id))};poe();
       tg.addEventListener('mousedown',e=>e.preventDefault());   // não rouba o foco do editor (teclado do celular não aparece)
-      tg.addEventListener('click',()=>{const a=!dom.classList.contains('is-open');ntPoeAberto(dom,a);ntAbertoSalva(id,a)});
+      tg.addEventListener('click',()=>{const a=!dom.classList.contains('is-open');ntAbreFixo(dom,a);ntAbertoSalva(id,a)});
       return {dom,contentDOM:conteudo,
         ignoreMutation:m=>m.type==='selection'?false:tg.contains(m.target)||!dom.contains(m.target)||dom===m.target,
         update(n){if(n.type!==node.type)return false;if(n.attrs.id!==id){id=n.attrs.id;poe()}return true}};
@@ -379,8 +420,29 @@ function ntIds(){
 }
 
 // "> " no começo da linha vira toggle (citação fica no menu "/")
+// 1.53: "> " na linha que já tem texto (ou vazia) vira toggle com o texto como título, como no Notion. No 1º parágrafo de um item de lista (onde um
+// toggle não cabe) o item inteiro vira o toggle e o que havia dentro dele (lista aninhada etc.) vira o conteúdo; a lista se divide em volta dele.
+function ntLinhaViraToggle({tr,dispatch,state}){
+  const $=tr.selection.$from,tb=$.parent,N=state.schema.nodes,d=$.depth,pai=$.node(d-1);
+  if(!tb.isTextblock||!['paragraph','heading'].includes(tb.type.name))return false;
+  const noItem=ntEhItem(pai)&&$.index(d-1)===0;
+  if(!noItem&&!pai.canReplaceWith($.index(d-1),$.index(d-1)+1,N.details))return false;
+  if(!dispatch)return true;
+  const id=tb.attrs.id||null,filhos=noItem?pai.content.cut(tb.nodeSize):null,resto=filhos&&filhos.childCount?filhos:N.paragraph.create(),
+    det=N.details.create({id},[N.detailsSummary.create(null,tb.content),N.detailsContent.create(null,resto)]);
+  ntAbertoSalva(id,true);let pos=$.before();
+  if(!noItem)tr.replaceWith(pos,pos+tb.nodeSize,det);
+  else{
+    const lista=$.node(d-2),listaPos=$.before(d-2),antes=lista.content.cut(0,$.before(d-1)-$.start(d-2)),depois=lista.content.cut($.after(d-1)-$.start(d-2)),partes=[];
+    if(antes.childCount)partes.push(lista.copy(antes));
+    pos=listaPos+(partes[0]?.nodeSize||0);partes.push(det);
+    if(depois.childCount)partes.push(lista.type.create(antes.childCount?{...lista.attrs,id:null}:lista.attrs,depois));
+    tr.replaceWith(listaPos,listaPos+lista.nodeSize,partes);
+  }
+  tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,pos+2+$.parentOffset));return true;
+}
 function ntRegraToggle(){
-  return TT.Extension.create({name:'regraToggle',addInputRules(){return [new TT.InputRule({find:/^\s*>\s$/,handler:({range,chain})=>{chain().deleteRange(range).setDetails().run()}})]}});
+  return TT.Extension.create({name:'regraToggle',addInputRules(){return [new TT.InputRule({find:/^\s*>\s$/,handler:({range,chain})=>{chain().deleteRange(range).command(ntLinhaViraToggle).run()}})]}});
 }
 function ntAtalhos(c){
   return TT.Extension.create({name:'atalhosNotas',priority:1000,addKeyboardShortcuts(){return {
@@ -662,7 +724,7 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;c.sujo=true;aoMudar()});
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;aoMudar()});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
   for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba

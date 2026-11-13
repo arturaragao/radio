@@ -34,7 +34,7 @@ test('Notion 1.43 no Chrome: conversor e importação com imagem persistida',{ti
     const png=Buffer.from(await ev("(()=>{const c=document.createElement('canvas');c.width=3;c.height=3;c.getContext('2d').fillRect(0,0,3,3);return c.toDataURL('image/png').split(',')[1]})()"),'base64');
     const dados=zip([{nome:raizNome,dados:html,metodo:8},{nome:filhaNome,dados:'<title>Filha fictícia</title><article><div class="page-body"><p>Conteúdo da filha</p></div></article>',metodo:0},{nome:'Raiz fictícia/pixel azul.png',dados:png}]);
     const pasta=fs.mkdtempSync(path.join(os.tmpdir(),'radio-notion-')),arquivo=path.join(pasta,'ExportBlock-ficticio.zip');t.after(()=>fs.rmSync(pasta,{recursive:true,force:true}));fs.writeFileSync(arquivo,zip([{nome:'Part-1.zip',dados}]));
-    await call('Page.setInterceptFileChooserDialog',{enabled:true});await click('[onclick="ntNotionEscolhe()"]');
+    await call('Page.setInterceptFileChooserDialog',{enabled:true});await ev(`document.querySelector('[onclick="ntNotionEscolhe()"]').click()`);   // 1.53.0: o app abre em Notas e a barra lateral ainda se acomoda; o clique por coordenada errava o botão
     const dom=await call('DOM.getDocument'),q=await call('DOM.querySelector',{nodeId:dom.root.nodeId,selector:'.nt-notion-arquivo'});assert.ok(q.nodeId);await call('DOM.setFileInputFiles',{nodeId:q.nodeId,files:[arquivo]});
     await ate("document.querySelector('.nt-importa-status')?.textContent.includes('2 páginas criadas')");
     assert.match(await ev("document.querySelector('.nt-importa-status').textContent"),/1 imagens enviadas, 0 falhas/);assert.equal(await C.confirmado(),true);

@@ -100,12 +100,21 @@ function criarSyncNotas(o){
   const blocosDe=d=>Array.isArray(d?.blocos)?d.blocos:[];
   const docVazio=d=>blocosDe(d).every(b=>b?.conteudo?.type==='paragraph'&&!textoDe(b.conteudo));
   const chaveB=b=>b?.id||JSON.stringify(b?.conteudo);
+  // 1.53: um bloco de topo cujo id (e conteúdo idêntico) já existe ANINHADO em outro bloco foi só movido (Tab para dentro de toggle/lista) por um dos lados:
+  // a cópia de topo é a versão antiga e sai; nada de texto se perde (o aninhado tem o mesmo conteúdo). Conteúdo diferente (editado dos dois lados) fica nos dois.
+  const canon=n=>Array.isArray(n)?n.map(canon):n&&typeof n==='object'?Object.fromEntries(Object.keys(n).sort().map(k=>[k,canon(n[k])]).filter(([k,v])=>v!==null&&v!==undefined&&!(k==='attrs'&&!Object.keys(v).length)&&!(k==='marks'&&!v.length))):n;
+  function semMovidosDuplicados(blocos){
+    const aninhados=new Map(),colhe=(n,topo)=>{if(!n||typeof n!=='object')return;if(Array.isArray(n)){n.forEach(x=>colhe(x,topo));return}
+      if(!topo&&n.attrs?.id)(aninhados.get(n.attrs.id)||aninhados.set(n.attrs.id,[]).get(n.attrs.id)).push(canon(n));(n.content||[]).forEach(x=>colhe(x,false))};
+    blocos.forEach(b=>(b?.conteudo?.content||[]).forEach(x=>colhe(x,false)));
+    return blocos.filter(b=>{const c=b?.conteudo,id=c?.attrs?.id;if(!id||!aninhados.has(id))return true;const j=JSON.stringify(canon(c));return !aninhados.get(id).some(x=>JSON.stringify(x)===j)});
+  }
   function unirBlocos(local,remoto){
     if(docVazio({blocos:local}))return clone(remoto);if(docVazio({blocos:remoto}))return clone(local);
     const R=new Map(remoto.map(b=>[chaveB(b),b])),res=local.map(b=>{const r=R.get(chaveB(b));return clone(r&&String(r.atualizado||'')>String(b.atualizado||'')?r:b)});
     let ant=null;for(const r of remoto){const k=chaveB(r),i=res.findIndex(b=>chaveB(b)===k);
       if(i>=0){ant=k;continue}const a=ant===null?-1:res.findIndex(b=>chaveB(b)===ant);res.splice(a+1,0,clone(r));ant=k}
-    return res;
+    return semMovidosDuplicados(res);
   }
   const apagou=new Set(),tamanhos=new Map();   // apagou: o usuário reduziu o texto nesta sessão (intencional); tamanhos: texto do último remoto conhecido
   async function guardarCopia(id,f){   // rede de segurança: versão remota inteira vai para "Notas — cópias recuperadas"

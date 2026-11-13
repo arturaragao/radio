@@ -29,8 +29,8 @@
 .prl-corpo{padding:0 10px 10px}
 .prl-sub{border-top:1px solid var(--bd)}
 .prl-sub>summary{font-weight:600;font-size:.92rem;padding:8px 6px}
-.prl-laudo{padding:2px 8px 12px;font-size:.92rem;line-height:1.6;overflow-wrap:anywhere}
-.prl-laudo p{margin:.4em 0}.prl-laudo ul,.prl-laudo ol{margin:.4em 0;padding-left:1.4em}
+.prl-laudo{margin:4px 6px 12px;padding:14px 18px;background:#fff;color:#111;border:1px solid var(--bd);border-radius:6px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.35;overflow-wrap:anywhere}
+.prl-laudo p,.prl-laudo div{margin:0}.prl-laudo ul,.prl-laudo ol{margin:.4em 0;padding-left:1.4em}
 .prl-laudo table{border-collapse:collapse}.prl-laudo td,.prl-laudo th{border:1px solid var(--bd);padding:2px 6px}
 .prl-laudo del,.prl-leg del{color:var(--bad);text-decoration:line-through;text-decoration-thickness:2px}
 .prl-laudo ins,.prl-leg ins{color:var(--ok);text-decoration:underline;text-decoration-thickness:2px;background:none}

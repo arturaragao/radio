@@ -132,7 +132,7 @@ function prelTg(el){
   if(el.dataset.ac)prelPar(el.dataset.ac);
   else{const d=el.querySelector(':scope>.prl-in');if(d&&!d.firstChild){d.innerHTML=prelFilhosHtml(k);prelPares()}}   // níveis 1 e 2 geram os filhos só quando abertos
 }
-const prelSub=(rotulo,html,k)=>`<details class="prl-sub" data-k="${prelEsc(k)}" ${prelAberto(k,false)?'open':''} ontoggle="PRL.estado[this.dataset.k]=this.open"><summary>${rotulo}</summary><div class="prl-laudo">${html}</div></details>`;
+const prelSub=(rotulo,html,k,padrao=false)=>`<details class="prl-sub" data-k="${prelEsc(k)}" ${prelAberto(k,padrao)?'open':''} ontoggle="PRL.estado[this.dataset.k]=this.open"><summary>${rotulo}</summary><div class="prl-laudo">${html}</div></details>`;
 function prelCorpoHtml(ac){
   const c=PRL.pares[ac];
   if(!c||c.carregando)return `<p class="mut" role="status">Carregando o laudo…</p>`;
@@ -143,7 +143,7 @@ function prelCorpoHtml(ac){
   const corr=p.mudou===false?`<p class="mut">O chefe não mudou o texto.</p>`+def:cor==null?`<p class="mut">Laudo grande demais para comparar neste aparelho.</p>`:leg+cor;
   const k='c|'+ac+'|';
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
-  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c');
+  return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c',true);   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
 function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e)e.innerHTML=prelCorpoHtml(ac)}
 function prelItem(i){

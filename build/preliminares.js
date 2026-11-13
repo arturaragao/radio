@@ -139,7 +139,7 @@ function prelCorpoHtml(ac){
   if(c.erro)return `<p class="prl-erro" role="alert">${prelEsc(c.erro)} <button class="b s" onclick="PRL.pares['${prelEsc(ac)}']=null;prelPar('${prelEsc(ac)}')">Tentar de novo</button></p>`;
   const p=c.par,preH=p.preliminar?.html||prelTextoHtml(p.preliminar?.texto),defH=p.definitivo?.html||prelTextoHtml(p.definitivo?.texto);
   const def=prelSeguro(defH),cor=p.mudou===false?null:prelCorrigidoHtml(preH,defH);
-  const leg=`<p class="mut prl-leg"><del>Vermelho riscado</del> = o que o chefe tirou; <ins>verde sublinhado</ins> = o que ele pôs.</p>`;
+  const leg='';   // 1.50.5: o Artur pediu para tirar a legenda (cores já são conhecidas)
   const corr=p.mudou===false?`<p class="mut">O chefe não mudou o texto.</p>`+def:cor==null?`<p class="mut">Laudo grande demais para comparar neste aparelho.</p>`:leg+cor;
   const k='c|'+ac+'|';
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
@@ -148,7 +148,7 @@ function prelCorpoHtml(ac){
 function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e)e.innerHTML=prelCorpoHtml(ac)}
 function prelItem(i){
   const ac=String(i.acesso),k='a|'+ac,ab=prelAberto(k,false),lido=!!PRL.lidos[ac];
-  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac">${prelEsc(ac)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem correção</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
+  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac">${prelEsc(ac)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
 }
 const prelVis=()=>prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos});
 function prelN2(c,at,tot){

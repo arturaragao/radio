@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.50.4"
+VERSAO = "1.50.5"
+# 1.50.5: Preliminares sem ícone de página e sem legenda; "sem correção" → "sem mudanças"
 # 1.50.4: Preliminares passa para dentro de Notas (barra lateral, pasta Laudos, abaixo de Notas USG); aba do topo removida
 # 1.50.3: Preliminares — Corrigido já abre; preliminar e definitivo recolhidos; laudo em folha branca Arial, sem espaçamento
 # 1.50.2: Preliminares mostra "aguardando definitivo" (par sem definitivo do chefe; o robô completa depois)

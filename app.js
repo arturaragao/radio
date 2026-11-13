@@ -1,4 +1,4 @@
-// Banco CBR app 1.50.4 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.50.5 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -2701,7 +2701,7 @@ function ntLateralHtml(){
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const norm=t=>String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').trim().toLowerCase();
   const pastaLaudos=ntPastas().find(p=>norm(p.titulo)==='laudos');
-  const prel=`<div class="nt-pg-prel${NT.prel?' on':''}"><span class="nt-pg-prel-ic" aria-hidden="true">📄</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
+  const prel=`<div class="nt-pg-prel${NT.prel?' on':''}"><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
   const itensDe=(xs,comPrel)=>{const h=xs.map(item);if(comPrel){const i=xs.findIndex(x=>norm(x.titulo)==='notas usg');h.splice(i<0?h.length:i+1,0,prel)}return h.join('')};
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${itensDe(res.filter(x=>ntPastaDa(x)===p.id),p===pastaLaudos)||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
   return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">🔎 Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos)||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
@@ -3810,7 +3810,7 @@ function prelCorpoHtml(ac){
   if(c.erro)return `<p class="prl-erro" role="alert">${prelEsc(c.erro)} <button class="b s" onclick="PRL.pares['${prelEsc(ac)}']=null;prelPar('${prelEsc(ac)}')">Tentar de novo</button></p>`;
   const p=c.par,preH=p.preliminar?.html||prelTextoHtml(p.preliminar?.texto),defH=p.definitivo?.html||prelTextoHtml(p.definitivo?.texto);
   const def=prelSeguro(defH),cor=p.mudou===false?null:prelCorrigidoHtml(preH,defH);
-  const leg=`<p class="mut prl-leg"><del>Vermelho riscado</del> = o que o chefe tirou; <ins>verde sublinhado</ins> = o que ele pôs.</p>`;
+  const leg='';   // 1.50.5: o Artur pediu para tirar a legenda (cores já são conhecidas)
   const corr=p.mudou===false?`<p class="mut">O chefe não mudou o texto.</p>`+def:cor==null?`<p class="mut">Laudo grande demais para comparar neste aparelho.</p>`:leg+cor;
   const k='c|'+ac+'|';
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
@@ -3819,7 +3819,7 @@ function prelCorpoHtml(ac){
 function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e)e.innerHTML=prelCorpoHtml(ac)}
 function prelItem(i){
   const ac=String(i.acesso),k='a|'+ac,ab=prelAberto(k,false),lido=!!PRL.lidos[ac];
-  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac">${prelEsc(ac)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem correção</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
+  return `<details class="prl-n3" data-k="${prelEsc(k)}" data-ac="${prelEsc(ac)}" ${ab?'open':''} ontoggle="prelTg(this)"><summary><span class="prl-ac">${prelEsc(ac)}</span><span class="prl-meta">${prelEsc(prelData(i.data))}${i.chefe?' · '+prelEsc(i.chefe):''}</span>${i.status==='aguardando'?'<span class="prl-sem">aguardando definitivo</span>':i.mudou?'':'<span class="prl-sem">sem mudanças</span>'}${lido?'<span class="prl-ok" title="Correção já lida"><span aria-hidden="true">✓</span><span class="sr">lido</span></span>':''}</summary><div class="prl-corpo" id="prl_c_${prelEsc(ac)}">${ab?prelCorpoHtml(ac):''}</div></details>`;
 }
 const prelVis=()=>prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos});
 function prelN2(c,at,tot){

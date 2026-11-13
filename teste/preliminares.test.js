@@ -63,7 +63,7 @@ test('lista: níveis, contagens, ✓ nos lidos e acesso como título; par só en
   P.estado['c1|Ultrassom']=true;P.estado['c2|Ultrassom|Doppler arterial de MMII']=true;
   const h2=c.prelListaHtml();
   assert.match(h2,/<span class="prl-ac">1001<\/span><span class="prl-meta">10\/11\/2026 · Chefe A\.<\/span><span class="prl-ok"/);
-  assert.match(h2,/1002<\/span><span class="prl-meta">12\/11\/2026 · Chefe B\.<\/span><span class="prl-sem">sem correção/);
+  assert.match(h2,/1002<\/span><span class="prl-meta">12\/11\/2026 · Chefe B\.<\/span><span class="prl-sem">sem mudanças/);
   assert.equal((h2.match(/prl-ok/g)||[]).length,1);
   assert.ok(!/Laudo preliminar/.test(h2));           // corpo só depois de abrir o acesso
   P.estado['a|1001']=true;P.pares['1001']={par:{mudou:true,preliminar:{html:'<p>Rim com cisto</p>'},definitivo:{html:'<p>Rim com cisto simples</p>'}}};

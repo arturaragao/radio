@@ -358,7 +358,7 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     await ev("pgMuda(l=>{l.length=0})");
     const nomes=['Alfa','Beta','Gama'],id={};
     for(const n of nomes){id[n]=await ev("ntPaginaCria()");await ev(`pgMuda(l=>{l.find(p=>p.id===${JSON.stringify(id[n])}).titulo=${JSON.stringify(n)}})`)}
-    const secao=async s=>ev(`[...document.querySelectorAll('.nt-pg-lista[data-sec="${s}"] .nt-pg-nome')].map(b=>b.textContent.replace('📄 ',''))`);
+    const secao=async s=>ev(`[...document.querySelectorAll('.nt-pg-lista[data-sec="${s}"] .nt-pg-it .nt-pg-nome')].map(b=>b.textContent.replace('📄 ',''))`);
     assert.deepEqual(await secao('pg'),nomes,'ordem de criação');assert.equal(await ev("!document.querySelector('.nt-pg-lista[data-sec=\"fix\"]')"),true,'sem fixadas, sem seção');
     await click(`.nt-pg-it[data-pg="${id.Beta}"] .nt-pg-pin`);
     assert.deepEqual(await secao('fix'),['Beta'],'Beta foi para Fixadas');assert.deepEqual(await secao('pg'),['Alfa','Gama']);

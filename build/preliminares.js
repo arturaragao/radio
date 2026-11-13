@@ -208,7 +208,7 @@ async function prelCfgTesta(){
     prelCfgMsg(r.ok?'Chave funcionando: enxerga os laudos.':r.status===404?'A chave entra, mas não enxerga preliminares/ (confira se é do repositório laudos-tutu-dados com Contents: Read-only).':r.status===401||r.status===403?'O GitHub recusou esta chave ('+r.status+').':'Não deu para testar agora (GitHub '+r.status+').');
   }catch(e){prelCfgMsg(navigator.onLine?'Não consegui falar com o GitHub agora.':'Sem conexão. Teste de novo quando voltar.')}
 }
-function prelRepinta(){if(typeof tela!=='undefined'&&tela==='preliminares'&&typeof render==='function')render()}
+function prelRepinta(){if(typeof tela!=='undefined'&&tela==='notas'&&NT.prel&&typeof render==='function')render()}
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos}).length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
 function prelFiltroMuda(){
   const g=id=>document.getElementById(id)?.value||'';

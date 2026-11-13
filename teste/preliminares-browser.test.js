@@ -31,13 +31,23 @@ test('Radio 1.50: página Preliminares (Chrome, dados sintéticos)',{timeout:120
   const tema=async(esc,larg)=>{await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:esc}]});await ev(`document.documentElement.dataset.theme='${esc==='dark'?'dark':'light'}'`);
     await call('Emulation.setDeviceMetricsOverride',{width:larg,height:larg<500?800:900,deviceScaleFactor:1,mobile:false});await espera(200)};
   await t.test('sem chave própria usa a do app; índice e lidos carregam, pares não',async()=>{
-    await ev("go('preliminares')");await ate("document.querySelector('.prl-n1')");
+    // 1.50.4: Preliminares é página especial de Notas, dentro da pasta Laudos, logo abaixo de "Notas USG"
+    await ev("go('notas')");await ate("!!document.getElementById('nt_lat')&&!NT.carregando&&!!NT.ed");
+    await ev(`(()=>{const ag=ntAgora();ntPastasMuda(l=>l.push({id:'fLaudosT',titulo:'Laudos',ordem:10,criado:ag,atualizado:ag}));const id=ntPaginaCria();pgMuda(l=>{const p=l.find(x=>x.id===id);p.titulo='Notas USG';p.pasta='fLaudosT';p.ordem=10});ntLateralPinta();return id})()`);
+    await ate("!!document.querySelector('[data-pasta=\"fLaudosT\"] .nt-pg-prel')");
+    assert.deepEqual(await ev("[...document.querySelector('[data-pasta=\"fLaudosT\"] .nt-pg-lista').children].map(x=>x.querySelector('a').textContent)"),['Notas USG','Preliminares']);
+    assert.equal(await ev("document.querySelector('.nt-pg-prel [onclick*=ntPrelClique]')?.textContent||document.querySelector('.nt-pg-prel a').textContent"),'Preliminares');
+    assert.equal(await ev("document.querySelector('.nt-pg-prel').matches('.nt-pg-it')||!!document.querySelector('.nt-pg-prel .nt-pg-alca,.nt-pg-prel .nt-pg-pin,.nt-pg-prel .nt-pg-mover')"),false,'sem alça, fixar nem mover');
+    await ev("document.querySelector('.nt-pg-prel a').click()");await ate("document.querySelector('.prl-n1')");
+    assert.equal(await ev("tela"),'notas');assert.equal(await ev("!!document.getElementById('nt_titulo')"),false);
+    assert.equal(await ev("getComputedStyle(document.querySelector('.nt-pg-opcoes')).display"),'none');
     assert.ok((await ev("window.__req")).includes('preliminares/indice.json'));
     assert.equal((await ev("window.__req")).filter(r=>r.includes('/pares/')).length,0);
     assert.match(await ev("window.__auth"),/^Bearer /);
     assert.equal(await ev("document.querySelector('.prl h1').textContent"),'Preliminares');
     assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n1 > summary')].map(s=>s.textContent.trim())"),['Tomografia2','Ultrassom3','Ressonância1']);
-    assert.ok(await ev("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Preliminares')"));
+    assert.equal(await ev("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Preliminares')"),false,'sem aba própria no topo');
+    assert.equal(await ev("SyncNotas.estado().paginas.some(p=>p.id==='preliminares'||p.titulo==='Preliminares')"),false,'não é página sincronizada');
   });
   await t.test('níveis 1 > 2 > 3 abrem sob demanda; acesso é o título; ✓ só nos lidos; chefe e data ao lado',async()=>{
     await ev("document.querySelector('.prl-n1[data-k=\"c1|Ultrassom\"]>summary').click()");
@@ -120,6 +130,9 @@ test('Radio 1.50: página Preliminares (Chrome, dados sintéticos)',{timeout:120
       assert.equal(await ev("document.documentElement.scrollWidth<=document.documentElement.clientWidth+1"),true,nome);
       await foto(nome+'-tudo.png');
     }
+    await tema('light',375);await ev("NT.latMov=true;render();0");await espera(300);
+    assert.equal(await ev("document.documentElement.scrollWidth<=document.documentElement.clientWidth+1"),true,'lateral 375');
+    await foto('claro-375-lateral.png');await ev("NT.latMov=false;render();0");
     await tema('light',1000);
     assert.ok(await ev("[...document.querySelectorAll('.prl summary')].every(s=>s.getBoundingClientRect().height>=36)"));
     assert.deepEqual(C.erros,[]);

@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.50.3"
+VERSAO = "1.50.4"
+# 1.50.4: Preliminares passa para dentro de Notas (barra lateral, pasta Laudos, abaixo de Notas USG); aba do topo removida
 # 1.50.3: Preliminares — Corrigido já abre; preliminar e definitivo recolhidos; laudo em folha branca Arial, sem espaçamento
 # 1.50.2: Preliminares mostra "aguardando definitivo" (par sem definitivo do chefe; o robô completa depois)
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
@@ -110,19 +111,18 @@ troca("const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=>base.includes(k))
 # 1.42 offline: o que não chegou ao GitHub volta para a fila (antes o flush tirava a chave de "dirty" antes de gravar e, sem internet, ela se perdia até o remoto mudar)
 troca("if(!DB)return;setSync('saving');", "if(!DB)return;setSync('saving');const tentadas=[...dirty],tinhaEst=estDirty;")
 troca("setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)", "tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)")
-troca("fc:vFc,fcstudy:vFcStudy}[tela];", "fc:vFc,fcstudy:vFcStudy,semana:vSemana,tarefas:vTarefas,notas:vNotas,preliminares:vPreliminares}[tela];")
+troca("fc:vFc,fcstudy:vFcStudy}[tela];", "fc:vFc,fcstudy:vFcStudy,semana:vSemana,tarefas:vTarefas,notas:vNotas}[tela];")
 troca("  ${metaProvaCard()}${chipsHoje(agendados)}", "  ${smCardHoje()}${metaProvaCard()}${chipsHoje(agendados)}")
 # aba Questões à direita da Semana: último bloco em andamento + troca de bloco + atalhos (22/10/2026)
 troca("['semana','Semana'],", "['semana','Semana'],['questoes','Questões'],")
 troca("o.splice(Math.max(0,o.indexOf('hoje'))+1,0,'semana');", "o.splice(Math.max(0,o.indexOf('hoje'))+1,0,'semana');if(o.length&&!o.includes('questoes'))o.splice(o.indexOf('semana')+1,0,'questoes');")
 troca("['semana','Semana'],['questoes','Questões'],", "['semana','Calendário'],['tarefas','Tarefas'],['notas','Notas'],['questoes','Questões'],")
-troca("base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map", "for(const [k,antes] of [['tarefas','semana'],['notas','tarefas'],['preliminares','notas']]){if(o.length&&!o.includes(k))o.splice(o.indexOf(antes)+1,0,k)}base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map")
-# 1.50.0: página Preliminares (laudos preliminar x definitivo do repo privado de dados), entre Notas e Questões
-troca("['notas','Notas'],['questoes','Questões'],", "['notas','Notas'],['preliminares','Preliminares'],['questoes','Questões'],")
+troca("base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map", "for(const [k,antes] of [['tarefas','semana'],['notas','tarefas']]){if(o.length&&!o.includes(k))o.splice(o.indexOf(antes)+1,0,k)}base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map")
+# 1.50.0: página Preliminares; desde 1.50.4 é página especial de Notas (pasta Laudos), sem aba própria
 # 1.50.1: "Chave dos laudos" na aba Config > Geral (campo, salvar, testar, remover)
 troca("function cfgGeral(){", "function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){")
 troca("quiz:vQuiz,", "quiz:vQuizQ,questoes:vQuestoes,")
-troca("function go(t,s){tela=t;", "function go(t,s){if(t==='questoes'&&qAbre())return;if(t==='tarefas')smkIni();tela=t;")
+troca("function go(t,s){tela=t;", "function go(t,s){if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='tarefas')smkIni();tela=t;")
 troca("const ativa=tela==='quiz'||tela==='fim'?'':", "const ativa=tela==='quiz'?'questoes':tela==='fim'?'':")
 troca("$('#app').innerHTML=f();", "qPinta(f());")
 # atalhos do zoom configuráveis (Config > Atalhos)

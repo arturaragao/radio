@@ -679,6 +679,7 @@ async function ntSincroniza(){
 }
 async function ntMonta(){
   if(!document.getElementById('nt_raiz')||!SM.d)return;
+  if(NT.prel)return;
   if(!window.TT)return;
   if(!NT.pagina){let id=NTA;try{id||=localStorage.getItem('bcbr_ultima_pagina')}catch(e){}await ntPainelAbre(id||'notas');return}
   const raiz=document.getElementById('nt_raiz');if(!raiz)return;
@@ -702,7 +703,7 @@ function vNotas(){
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor
   setTimeout(ntMonta,0);
   const lat=ntLateralAberta();
-  return `<div class="nt"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-pg-opcoes" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo"><input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><div id="nt_raiz"></div></div></div></div>`;
+  return `<div class="nt${NT.prel?' prel':''}"><div class="nt-topo"><button type="button" class="b s nt-lat-bt" id="nt_lat_bt" onclick="ntLateralAlterna()" title="Passe o mouse para ver a lista de páginas; clique para fixar ou soltar" aria-label="Páginas" aria-expanded="${lat}">☰</button><div class="nt-barra-slot" id="nt_barra"></div><button type="button" class="b s nt-pg-opcoes" aria-label="Opções da página" onclick="ntPaginaMenu(NT.pagina,event.clientX,event.clientY)">⋯</button><button type="button" class="b s nt-aba-bt" id="nt_aba_bt" onclick="ntAbaAbre(NT.prel?NT_PREL:NT.pagina||'notas')" title="Abrir as Notas em outra aba do navegador" aria-label="Abrir as Notas em nova aba">↗</button></div>${SM.erro?'<p class="sm-err">Alterações salvas neste aparelho; sincronização pendente.</p>':''}<div class="nt-corpo${lat?'':' lat-off'}" style="--nt-lat-w:${ntLatW()}px"><aside class="nt-lat" id="nt_lat" aria-label="Páginas">${ntLateralHtml()}</aside><div class="nt-lat-rz" id="nt_lat_rz" role="separator" aria-orientation="vertical" aria-label="Largura da barra de páginas" title="Arraste para mudar a largura (duplo clique volta ao padrão)"></div><div class="nt-lat-fundo" onclick="ntLateralAlterna()"></div><div class="nt-conteudo">${NT.prel?`<div id="nt_raiz" class="nt-prel-raiz">${vPreliminares()}</div>`:`<input id="nt_titulo" class="nt-pagina-titulo" aria-label="Título da página" placeholder="Sem título" maxlength="200" value="${esc(NT.paginaDados?.titulo||'')}" oninput="ntTituloSalva()" onkeydown="if(event.key==='Enter'){event.preventDefault();NT.ed?.commands.focus()}"><div id="nt_raiz"></div>`}</div></div></div>`;
 }
 
 // ===== Páginas (1.41): bloco-link, dados, painel flutuante, barra lateral =====
@@ -788,9 +789,22 @@ function ntPaginaMove(id,ref,depois,pasta){
     sec.forEach((p,n)=>{const o=(n+1)*10;if(p.ordem!==o){p.ordem=o;p.atualizado=agora}});
   });
 }
+// 1.50.4: "Preliminares" é uma página ESPECIAL da barra lateral (pasta Laudos, abaixo de Notas USG): só leitura, dados do repo privado
+// laudos-tutu-dados em tempo de execução (build/preliminares.js). Não existe em SyncNotas: sem editor, sem menu, sem exclusão, sem sincronização.
+const NT_PREL='preliminares';
+function ntPrelAbre(){
+  if(!SM.d)return;ntAntes();NT.visita=(NT.visita||0)+1;
+  NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;NT.pagina=null;NT.paginaDados=null;NT.erro='';NT.carregando=false;NT.sujo=false;NT.latMov=false;NT.prel=true;
+  document.title='Preliminares';
+  try{localStorage.setItem('bcbr_ultima_pagina',NT_PREL)}catch(e){}
+  if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(NT_PREL));
+  if(typeof go==='function'&&tela!=='notas')go('notas');else if(typeof render==='function')render();
+}
+function ntPrelClique(e){if(e.ctrlKey||e.metaKey||e.shiftKey||e.button){ntAntes();return true}ntPrelAbre();return false}
 // Toda página usa o mesmo editor e a área principal.
 async function ntPainelAbre(id){
-  if(!SM.d)return;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
+  if(id===NT_PREL){ntPrelAbre();return}
+  if(!SM.d)return;NT.prel=false;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;
   NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;NT.latMov=false;
   const conhecido=pgAchar(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
@@ -904,8 +918,12 @@ function ntLateralHtml(){
     return `<form class="nt-pt-form" onsubmit="event.preventDefault();ntPastaSalva()"><input class="nt-pt-titulo" data-form-pasta="${esc(id)}" aria-label="Nome da pasta" maxlength="200" required value="${esc(f.rascunho??ntPastas().find(p=>p.id===id)?.titulo??'')}"><button type="submit">Salvar</button><button type="button" onclick="NT.pastaForm=null;ntLateralPinta()">Cancelar</button></form>`;
   };
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
-  const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">🔎 Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
+  const norm=t=>String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').trim().toLowerCase();
+  const pastaLaudos=ntPastas().find(p=>norm(p.titulo)==='laudos');
+  const prel=`<div class="nt-pg-prel${NT.prel?' on':''}"><span class="nt-pg-prel-ic" aria-hidden="true">📄</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
+  const itensDe=(xs,comPrel)=>{const h=xs.map(item);if(comPrel){const i=xs.findIndex(x=>norm(x.titulo)==='notas usg');h.splice(i<0?h.length:i+1,0,prel)}return h.join('')};
+  const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${itensDe(res.filter(x=>ntPastaDa(x)===p.id),p===pastaLaudos)||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
+  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">🔎 Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos)||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;

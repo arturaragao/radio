@@ -1,5 +1,9 @@
 # Banco CBR (app)
 
+## 1.50.4 — 13/11/2026 — Preliminares dentro de Notas (ramo `prelim-em-notas`, local)
+
+A aba "Preliminares" do topo saiu. Agora é uma página especial somente leitura na barra lateral de Notas, na pasta "Laudos" logo abaixo de "Notas USG" (sem a pasta, no fim da lista de páginas): `ntPrelAbre`/`ntPrelClique`/`NT_PREL` em `build/notas.js` (`NT.prel` faz `vNotas` desenhar `vPreliminares()` no lugar do editor), estilo em `build/notas.css`. Não existe em SyncNotas (sem editor, menu, exclusão, fixar, mover nem sincronização); `?pagina=preliminares` e `go('preliminares')` continuam abrindo-a. Testes ajustados: `preliminares-browser`, `prova`, `notas-browser` (seção de páginas ignora o item especial). Versão 1.50.4.
+
 ## 1.50.1 — 12/11/2026 — "Chave dos laudos" na aba Config (ramo `config-chave-laudos`, local)
 
 O campo da chave do repositório `laudos-tutu-dados` (`bcbr_gh_token_dados`) agora também está em Config > Geral (card "Chave dos laudos": explicação, Salvar, Testar contra `preliminares/indice.json`, Remover); antes só aparecia na tela de configuração inicial e na página Preliminares quando faltava chave. Código em `build/preliminares.js` (`prelCfgHtml`, `prelCfgSalva`, `prelCfgTesta`, `prelCfgRemove`), ligado por troca em `montar.py` (`cfgGeral` + card). Teste: subteste em `teste/preliminares-browser.test.js`. Versão 1.50.1.

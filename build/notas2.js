@@ -817,3 +817,49 @@ async function ntNotionImporta(arquivo,alvo=''){
   }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
   finally{NT.importando=false}
 }
+
+// ===== Quick Switcher de páginas (Ctrl+Shift+K): salto rápido estilo Notion =====
+function ntQuickSwitcher(){
+  if(document.querySelector('.nt-qs'))return;
+  const ov=ntModal('nt-frases nt-qs',`<div class="nt-modal-t"><b>Ir para página</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><input type="text" class="nt-fr-q" placeholder="Buscar página ou pasta… (Alt+K)" aria-label="Buscar página ou pasta" autocomplete="off"><div class="nt-fr-l" role="listbox"></div>`);
+  const q=ov.querySelector('.nt-fr-q'),l=ov.querySelector('.nt-fr-l');let sel=0,it=[];
+  const pastas=new Map(ntPastas().map(f=>[f.id,f.titulo]));
+  const todas=()=>{
+    const ps=[...ntPaginas()].sort((a,b)=>(NT.pagina===b.id)-(NT.pagina===a.id)||Number(!!b.fixada)-Number(!!a.fixada)||ntPgOrdem(a,b));
+    return ps.map(p=>({...p,pastaNome:pastas.get(ntPastaDa(p))||''}));
+  };
+  const pinta=()=>{
+    const raw=q.value.trim(),n=ntSemAcento(raw);
+    const lista=todas().filter(p=>!n||ntSemAcento((p.titulo||'Sem título')+' '+p.pastaNome).includes(n));
+    it=lista.map(p=>({tipo:'pg',p}));
+    if(raw&&!lista.some(p=>ntSemAcento(p.titulo)===n))it.push({tipo:'cria',titulo:raw});
+    sel=Math.min(sel,Math.max(0,it.length-1));
+    l.innerHTML=it.length?it.map((x,i)=>{
+      if(x.tipo==='cria')return `<button type="button" role="option" class="nt-fr-it${i===sel?' sel':''}" data-i="${i}"><b>＋ Criar página "${esc(x.titulo)}"</b><small>Nova página nas Notas</small></button>`;
+      const p=x.p,sub=[p.pastaNome?`📁 ${p.pastaNome}`:'',p.fixada?'📌 Fixada':'',NT.pagina===p.id?'● Aberta':''].filter(Boolean).join(' · ');
+      return `<button type="button" role="option" class="nt-fr-it${i===sel?' sel':''}" data-i="${i}"><b>📄 ${esc(p.titulo||'Sem título')}</b>${sub?`<small>${esc(sub)}</small>`:''}</button>`;
+    }).join(''):'<p class="mut">Nenhuma página encontrada.</p>';
+  };
+  const abre=x=>{
+    ntModalFecha(ov);
+    if(x.tipo==='cria'){
+      const id=ntPaginaCria();
+      if(id){pgMuda(ls=>{const p=ls.find(u=>u.id===id);if(p)p.titulo=x.titulo});if(typeof ir==='function'&&tela!=='notas')ir('notas');ntPainelAbre(id)}
+      return;
+    }
+    if(typeof ir==='function'&&tela!=='notas')ir('notas');
+    ntPainelAbre(x.p.id);
+  };
+  q.addEventListener('input',()=>{sel=0;pinta()});
+  q.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(it.length){sel=(sel+(e.key==='ArrowDown'?1:-1)+it.length)%it.length;pinta();l.querySelector('.sel')?.scrollIntoView({block:'nearest'})}}
+    else if(e.key==='Enter'&&it[sel]){e.preventDefault();abre(it[sel])}
+  });
+  l.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b&&it[+b.dataset.i])abre(it[+b.dataset.i])});
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();q.focus();
+}
+document.addEventListener('keydown',e=>{
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&String(e.key).toLowerCase()==='k'){
+    e.preventDefault();ntQuickSwitcher();
+  }
+});

@@ -2684,7 +2684,7 @@ function ntLateralHtml(){
   };
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} 📁 ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${res.filter(x=>ntPastaDa(x)===p.id).map(item).join('')||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
+  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">＋ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">▤ Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">▱ Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">🔎 Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">↧ Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${res.filter(p=>!ntPastaDa(p)).map(item).join('')||'<p class="mut nt-pg-vazio">Nenhuma página fora de pasta.</p>'}</div><div class="nt-pastas">${pastas}</div>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
@@ -2741,7 +2741,7 @@ const NT_ATALHOS=[
     [['Shift+Tab'],'Sai do toggle; em lista, desaninha. Item de lista de nível mais alto dentro de um toggle sai para depois dele'],
     [['⋮⋮'],'Alça à esquerda do bloco: arrastar muda a ordem; clicar/tocar abre Subir, Descer, Entrar, Sair, Apagar'],[['▶'],'Abre/fecha o toggle (o estado fica neste aparelho)'],[['Ctrl+Alt+T'],'Abre/fecha todos os toggles da página'],[['Ctrl+Enter'],'Abre/fecha o toggle onde está o cursor']]],
   ['Selecionar blocos',[[['Arrastar por fora do texto'],'Desenha um retângulo: os blocos que ele cruza ficam selecionados (no toque não há retângulo)'],[['Delete','Backspace'],'Apaga o grupo de uma vez'],[['Ctrl+C','Ctrl+X'],'Copia ou recorta o grupo'],[['Tab','Shift+Tab'],'O grupo entra no toggle de cima ou sai do toggle'],[['⋮⋮'],'Arrastar a alça de um bloco do grupo move o grupo todo'],[['Esc','clique'],'Limpa a seleção']]],
-  ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
+  ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Alt+K'],'Ir para página (Quick Switcher estilo Notion)'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
   ['Lembretes, frases e histórico',[[['@'],'Lembrete: Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm. Vira um chip e uma tarefa do plano; clique no chip para mudar a data; apagar o chip não apaga a tarefa'],[['/ Frase'],'Insere uma frase-padrão salva (filtre digitando, Enter insere)'],[['✚ Frase'],'Salva o texto selecionado como frase-padrão'],[['📋'],'Renomear e apagar frases'],[['🕘 Histórico'],'Versões anteriores (precisa de internet): ver, restaurar a página ou um bloco como edição nova']]],
   ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Clicar na imagem'],'Largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],
   ['Páginas',[[['☰'],'Passar o mouse mostra a lista de páginas por cima do texto (some ao sair); clicar fixa, clicar de novo solta. Arrastar a margem direita da lista muda a largura (duplo clique volta ao padrão)'],[['+ Nova página'],'Cria e abre uma página'],[['/ Página'],'Cria uma página e coloca um link para ela no ponto do cursor'],
@@ -3601,6 +3601,52 @@ async function ntNotionImporta(arquivo,alvo=''){
   }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
   finally{NT.importando=false}
 }
+
+// ===== Quick Switcher de páginas (Ctrl+Shift+K): salto rápido estilo Notion =====
+function ntQuickSwitcher(){
+  if(document.querySelector('.nt-qs'))return;
+  const ov=ntModal('nt-frases nt-qs',`<div class="nt-modal-t"><b>Ir para página</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div><input type="text" class="nt-fr-q" placeholder="Buscar página ou pasta… (Alt+K)" aria-label="Buscar página ou pasta" autocomplete="off"><div class="nt-fr-l" role="listbox"></div>`);
+  const q=ov.querySelector('.nt-fr-q'),l=ov.querySelector('.nt-fr-l');let sel=0,it=[];
+  const pastas=new Map(ntPastas().map(f=>[f.id,f.titulo]));
+  const todas=()=>{
+    const ps=[...ntPaginas()].sort((a,b)=>(NT.pagina===b.id)-(NT.pagina===a.id)||Number(!!b.fixada)-Number(!!a.fixada)||ntPgOrdem(a,b));
+    return ps.map(p=>({...p,pastaNome:pastas.get(ntPastaDa(p))||''}));
+  };
+  const pinta=()=>{
+    const raw=q.value.trim(),n=ntSemAcento(raw);
+    const lista=todas().filter(p=>!n||ntSemAcento((p.titulo||'Sem título')+' '+p.pastaNome).includes(n));
+    it=lista.map(p=>({tipo:'pg',p}));
+    if(raw&&!lista.some(p=>ntSemAcento(p.titulo)===n))it.push({tipo:'cria',titulo:raw});
+    sel=Math.min(sel,Math.max(0,it.length-1));
+    l.innerHTML=it.length?it.map((x,i)=>{
+      if(x.tipo==='cria')return `<button type="button" role="option" class="nt-fr-it${i===sel?' sel':''}" data-i="${i}"><b>＋ Criar página "${esc(x.titulo)}"</b><small>Nova página nas Notas</small></button>`;
+      const p=x.p,sub=[p.pastaNome?`📁 ${p.pastaNome}`:'',p.fixada?'📌 Fixada':'',NT.pagina===p.id?'● Aberta':''].filter(Boolean).join(' · ');
+      return `<button type="button" role="option" class="nt-fr-it${i===sel?' sel':''}" data-i="${i}"><b>📄 ${esc(p.titulo||'Sem título')}</b>${sub?`<small>${esc(sub)}</small>`:''}</button>`;
+    }).join(''):'<p class="mut">Nenhuma página encontrada.</p>';
+  };
+  const abre=x=>{
+    ntModalFecha(ov);
+    if(x.tipo==='cria'){
+      const id=ntPaginaCria();
+      if(id){pgMuda(ls=>{const p=ls.find(u=>u.id===id);if(p)p.titulo=x.titulo});if(typeof ir==='function'&&tela!=='notas')ir('notas');ntPainelAbre(id)}
+      return;
+    }
+    if(typeof ir==='function'&&tela!=='notas')ir('notas');
+    ntPainelAbre(x.p.id);
+  };
+  q.addEventListener('input',()=>{sel=0;pinta()});
+  q.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(it.length){sel=(sel+(e.key==='ArrowDown'?1:-1)+it.length)%it.length;pinta();l.querySelector('.sel')?.scrollIntoView({block:'nearest'})}}
+    else if(e.key==='Enter'&&it[sel]){e.preventDefault();abre(it[sel])}
+  });
+  l.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b&&it[+b.dataset.i])abre(it[+b.dataset.i])});
+  ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();q.focus();
+}
+document.addEventListener('keydown',e=>{
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&String(e.key).toLowerCase()==='k'){
+    e.preventDefault();ntQuickSwitcher();
+  }
+});
 
 
 // Página "Preliminares" (1.50.0): laudos preliminares x definitivos lidos em tempo de execução do repo PRIVADO arturaragao/laudos-tutu-dados

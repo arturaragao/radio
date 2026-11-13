@@ -26,7 +26,7 @@ test('Notion 1.43 no Chrome: conversor e importação com imagem persistida',{ti
     assert.deepEqual(flat.filter(n=>n.type==='taskItem').map(n=>n.attrs.checked),[true,false]);
     for(const mark of ['bold','italic','underline','strike','link'])assert.ok(flat.some(n=>n.marks?.some(m=>m.type===mark)),mark);
     assert.ok(flat.some(n=>n.marks?.some(m=>m.attrs?.codigo)));assert.ok(flat.some(n=>n.marks?.some(m=>m.attrs?.color==='var(--ntc-vermelho)'&&m.attrs.backgroundColor==='var(--ntb-azul)')));
-    assert.equal(flat.find(n=>n.type==='paginaLink').attrs.pagina,'pfilha');assert.ok(flat.some(n=>n.text==='1 | 2'));assert.equal(r.simplificados,7);
+    assert.equal(flat.find(n=>n.type==='paginaLink').attrs.pagina,'pfilha');assert.ok(flat.some(n=>n.type==='table'&&n.content.length===2));assert.equal(r.simplificados,6);
     const serial=JSON.stringify(r.doc);assert.doesNotMatch(serial,/javascript:|onclick|onerror|window.ntAtaque|externa.png|data:image/);assert.equal(await ev('window.ntAtaque'),undefined);
     assert.equal(await ev(`ntNotionConverte('<h1>Sem title</h1><p>Texto</p>','Sem title 0123456789abcdef0123456789abcdef.html').titulo`),'Sem title');
   });

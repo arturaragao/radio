@@ -618,7 +618,15 @@ function ntNotionConverte(html,caminho,paginas=new Map()){
         const src=e.getAttribute('src')||'',ref=ntNotionRef(caminho,src),no=ntPar('[imagem não importada: '+(ref?.split('/').pop()||'externa')+']');
         out.push(no);if(ref)imagens.push({no,caminho:ref});else simplificados++;continue;
       }
-      if(tag==='TABLE'){simplificados++;for(const tr of e.querySelectorAll('tr'))out.push(ntPar([...tr.children].map(c=>c.textContent.trim()).join(' | ')));continue}
+      if(tag==='TABLE'){   // vira nó de tabela (th = cabeçalho); linhas completadas com células vazias até a largura da maior
+        const linhas=[...e.querySelectorAll('tr')].filter(tr=>tr.closest('table')===e).map(tr=>[...tr.children].filter(c=>/^T[DH]$/.test(c.tagName)));
+        const larg=Math.max(0,...linhas.map(l=>l.reduce((n,c)=>n+(Math.max(1,parseInt(c.getAttribute('colspan'))||1)),0)));
+        if(!larg){continue}
+        const cel=(c,hd)=>({type:hd?'tableHeader':'tableCell',attrs:{colspan:1,rowspan:1,colwidth:null},content:[{type:'paragraph',content:inline(c,m).map((n,i,a)=>n.text&&(i===0||i===a.length-1)?{...n,text:i===0?n.text.replace(/^\s+/,''):n.text.replace(/\s+$/,'')}:n).filter(n=>n.text!=='')}]});
+        out.push({type:'table',content:linhas.filter(l=>l.length).map(l=>{
+          const cs=l.flatMap(c=>{const n=Math.max(1,parseInt(c.getAttribute('colspan'))||1);return [cel(c,c.tagName==='TH'),...Array.from({length:n-1},()=>cel({childNodes:[]},c.tagName==='TH'))]});
+          while(cs.length<larg)cs.push(cel({childNodes:[]},false));
+          return {type:'tableRow',content:cs}})});continue}
       if(e.classList.contains('column-list')||e.classList.contains('equation')||e.classList.contains('collection-content')||e.classList.contains('source')||['IFRAME','OBJECT','EMBED'].includes(tag)){
         simplificados++;const texto=e.classList.contains('column-list')?[...e.children].map(c=>c.textContent.trim()).join('\n'):e.textContent.trim();out.push(ntPar(texto||e.getAttribute('title')||'[conteúdo incorporado simplificado]'));continue;
       }

@@ -218,10 +218,37 @@ function ntAninha(ed,b,sai){
   }
   ntMovePara(ed,b,det+detNode.nodeSize);return true;
 }
+// Seleção numa tabela (e fora de lista dentro da célula): Tab/Shift+Tab são da tabela (próxima/anterior célula).
+function ntNaTabela(state){
+  const $=state.selection.$from;
+  for(let d=$.depth;d>=0;d--){const t=$.node(d).type.name;if(t==='listItem'||t==='taskItem')return false;if(t==='table')return true}
+  return false;
+}
 function ntTab(ed,sai){
   const grupo=ntBselPos(ed.state);if(grupo.length){ntBselTab(ed.view,grupo,sai);return true}   // blocos selecionados por retângulo: o grupo todo
+  if(ntNaTabela(ed.state))return false;
   const sel=ed.state.selection,b=sel.node?ntBlocoPos(ed.state.doc,sel.from):ntBlocoEm(ed.state.doc,sel.from);   // na linha do toggle, o bloco é o toggle inteiro
   if(b)ntAninha(ed,b,sai);return true;   // sempre consome Tab: não sai do editor
+}
+
+// ===== Tabela: minibarra acima da tabela quando o cursor está nela =====
+const NT_TAB_ACOES=[['linha+','+ Linha','Adicionar linha abaixo',e=>e.addRowAfter()],['linha-','− Linha','Remover linha',e=>e.deleteRow()],
+  ['col+','+ Coluna','Adicionar coluna à direita',e=>e.addColumnAfter()],['col-','− Coluna','Remover coluna',e=>e.deleteColumn()],['apagar','🗑 Tabela','Apagar tabela',e=>e.deleteTable()]];
+function ntTabelaBarra(c){
+  const b=document.createElement('div');b.className='nt-tabbar';b.contentEditable='false';b.hidden=true;b.setAttribute('role','toolbar');b.setAttribute('aria-label','Tabela');
+  b.innerHTML=NT_TAB_ACOES.map(([k,t,d])=>`<button type="button" data-a="${k}" title="${d}" aria-label="${d}">${t}</button>`).join('');
+  c.el.appendChild(b);c.tabBarra=b;
+  b.addEventListener('mousedown',e=>e.preventDefault());
+  b.addEventListener('click',e=>{const k=e.target.closest('[data-a]')?.dataset.a,a=NT_TAB_ACOES.find(x=>x[0]===k);if(!a||!c.ed)return;a[3](c.ed.chain().focus()).run();setTimeout(pinta,0)});
+  function pinta(){
+    if(!c.ed||!c.el.contains(b)){return}
+    const st=c.ed.state,$=st.selection.$from;let d=$.depth;while(d>0&&$.node(d).type.name!=='table')d--;
+    if(!d||!c.ed.isFocused){b.hidden=true;return}
+    const dom=c.ed.view.nodeDOM($.before(d));if(!(dom instanceof Element)){b.hidden=true;return}
+    const r=dom.getBoundingClientRect(),rc=c.el.getBoundingClientRect();
+    b.hidden=false;b.style.top=Math.max(0,r.top-rc.top-b.offsetHeight-4)+'px';b.style.left=Math.max(0,Math.min(r.left-rc.left,rc.width-b.offsetWidth))+'px';
+  }
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(pinta,ev==='blur'?150:0));
 }
 
 // ===== Envio de imagem: reduz (1600 px, JPEG 0,82), grava em imagens/nota-<id>.jpg no repositório privado =====
@@ -332,7 +359,7 @@ function ntToggle(){
   });
 }
 // Identificação: todo bloco de TOPO e todo toggle (em qualquer nível) tem `id`; repetido (cópia/divisão) ganha id novo.
-const NT_COM_ID=['paragraph','heading','details','bulletList','orderedList','taskList','blockquote','callout','image','horizontalRule','paginaLink'];
+const NT_COM_ID=['paragraph','heading','details','bulletList','orderedList','taskList','blockquote','callout','table','image','horizontalRule','paginaLink'];
 function ntIds(){
   const {Plugin,PluginKey}=TT.pm.state;
   return TT.Extension.create({name:'idBloco',
@@ -416,6 +443,7 @@ const NT_SLASH=[
   ['Citação','Trecho em destaque lateral','citacao quote',ed=>ed.toggleBlockquote()],
   ['Destaque','Caixa com ícone e fundo','destaque callout aviso',ed=>ed.wrapIn('callout')],
   ['Divisória','Linha horizontal','divisoria linha ---',ed=>ed.setHorizontalRule()],
+  ['Tabela','Tabela 3×3 com linha de cabeçalho','tabela table grade colunas linhas',ed=>ed.insertTable({rows:3,cols:3,withHeaderRow:true})],
   ['Imagem','Enviar uma imagem','imagem foto',null],
   ['Página','Nova página, aberta num painel','pagina page subpagina',null],
   ['Frase','Inserir uma frase-padrão salva','frase laudo modelo padrao',null],
@@ -456,7 +484,7 @@ function ntSugestao(c,{nome,char,itens,comando,allow,allowSpaces=false,semVazio=
 }
 const ntSlash=c=>ntSugestao(c,{nome:'slashNotas',char:'/',
   allow:({state,range})=>state.doc.resolve(range.from).parent.type.name!=='detailsSummary',
-  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&c.pagina!=='notas'&&['Página','Importar do Notion'].includes(it[0]))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
+  itens:query=>{const q=ntSemAcento(query);return NT_SLASH.filter(it=>!(c.pagina&&c.pagina!=='notas'&&['Página','Importar do Notion'].includes(it[0]))&&!(it[0]==='Tabela'&&c.ed?.isActive('table'))&&(!q||ntSemAcento(it[0]+' '+it[2]).includes(q)))},   // criar/importar páginas pela principal
   comando:(editor,range,it)=>{
     const ch=editor.chain().focus().deleteRange(range);
     if(it[3]){it[3](ch).run();return}
@@ -601,7 +629,7 @@ function ntExtensoes(c){
     E.Link.configure({openOnClick:false,autolink:true}),
     E.BulletList,E.OrderedList,E.ListItem,E.TaskList,E.TaskItem.configure({nested:true}),
     E.Blockquote.extend({addInputRules(){return []}}),   // "> " é toggle; citação só pelo menu "/"
-    E.HorizontalRule,ntToggle(),E.DetailsSummary,E.DetailsContent,ntDestaque(),ntImagem(),ntPaginaLink(),
+    E.HorizontalRule,E.Table.configure({resizable:true,renderWrapper:true,cellMinWidth:60}),E.TableRow,E.TableHeader,E.TableCell,ntToggle(),E.DetailsSummary,E.DetailsContent,ntDestaque(),ntImagem(),ntPaginaLink(),
     E.TextStyle.extend({addAttributes(){return {...this.parent?.(),codigo:{default:null,parseHTML:el=>el.hasAttribute('data-codigo')?true:null,renderHTML:a=>a.codigo?{'data-codigo':'true',class:'nt-code'}:{}}}}}),E.Color,E.BackgroundColor,E.UndoRedo,E.Dropcursor.configure({color:'#5687be',width:2}),E.Gapcursor,E.TrailingNode,
     E.Placeholder.configure({placeholder:({node})=>node.type.name==='detailsSummary'?'Toggle':node.type.name==='heading'?'Título':"Digite '/' para ver os comandos"}),
     ntIds(),ntRegraToggle(),ntAtalhos(c),ntSlash(c),ntLembrete(),ntLembretePlugin(c),ntBuscaExt(),ntBselExt(c),
@@ -638,7 +666,7 @@ function ntEditor(c,blocos,aoMudar){
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
   for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
-  ntBolha(c);ntAlca(c);
+  ntBolha(c);ntAlca(c);ntTabelaBarra(c);
 }
 function ntCria(){
   const lista=NT.paginaDados?.doc?.blocos,v=ntValidos(lista);

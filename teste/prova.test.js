@@ -24,13 +24,13 @@ for(const prova of ['2026-11-01','12/12/2025','',null]){
   });
 }
 
-test('configurações mostram data e RI somente leitura e todos os artefatos estão em 1.50.5',()=>{
+test('configurações mostram data e RI somente leitura e todos os artefatos estão em 1.51.0',()=>{
   assert.match(app,/<input id="c_p" type="text" value="12\/12\/2026" readonly>/);
   assert.match(app,/<input id="c_d" type="number" value="\$\{RI_DIARIA\}" readonly/);
   assert.doesNotMatch(app,/cfg\.prova\s*\+|new Date\(cfg\.prova/);
-  assert.equal(fs.readFileSync(require.resolve('../versao.txt'),'utf8'),'1.50.5');
-  assert.match(fs.readFileSync(require.resolve('../sw.js'),'utf8'),/const VERSAO = "bcbr-1.50.5";/);
-  assert.match(fs.readFileSync(require.resolve('../index.html'),'utf8'),/BCBR_VERSAO="1.50.5"/);
+  assert.equal(fs.readFileSync(require.resolve('../versao.txt'),'utf8'),'1.51.0');
+  assert.match(fs.readFileSync(require.resolve('../sw.js'),'utf8'),/const VERSAO = "bcbr-1.51.0";/);
+  assert.match(fs.readFileSync(require.resolve('../index.html'),'utf8'),/BCBR_VERSAO="1.51.0"/);
 });
 
 test('meta padrão 50 preserva meta personalizada já salva',()=>{
@@ -46,7 +46,7 @@ test('migra ordem salva de abas antigas para Calendário → Tarefas → Notas e
   for(const salva of [[],['hoje','banco'],['banco','semana','questoes','hoje'],['banco','notas','tarefas','semana','hoje','questoes']]){
     const c=vm.createContext({TABS:tabs,cfg:{tabs:salva}});vm.runInContext(f,c);
     const ordem=Array.from(c.tabsOrdenadas(),t=>t[0]);
-    assert.equal(ordem.includes('preliminares'),false);   // 1.50.5: Preliminares saiu das abas (vive em Notas > Laudos)
+    assert.equal(ordem.includes('preliminares'),false);   // 1.51.0: Preliminares saiu das abas (vive em Notas > Laudos)
     if(salva.includes('notas'))assert.deepEqual(ordem,salva);
     else {assert.equal(ordem.indexOf('tarefas'),ordem.indexOf('semana')+1);assert.equal(ordem.indexOf('notas'),ordem.indexOf('tarefas')+1)}
     assert.deepEqual(ordem.filter(k=>salva.includes(k)),salva);

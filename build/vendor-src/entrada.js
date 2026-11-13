@@ -14,6 +14,7 @@ import { BulletList, OrderedList, ListItem, TaskList, TaskItem } from '@tiptap/e
 import Blockquote from '@tiptap/extension-blockquote';
 import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import { Details, DetailsSummary, DetailsContent } from '@tiptap/extension-details';
+import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import { TextStyle, Color, BackgroundColor } from '@tiptap/extension-text-style';
 import { UndoRedo, Dropcursor, Gapcursor, Placeholder, TrailingNode } from '@tiptap/extensions';
@@ -25,7 +26,7 @@ import * as model from '@tiptap/pm/model';
 window.TT = {
   Editor, Extension, Node, mergeAttributes, InputRule, Suggestion,
   ext: { Document, Paragraph, Text, Heading, Bold, Italic, Underline, Strike, Link, BulletList, OrderedList, ListItem, TaskList, TaskItem,
-    Blockquote, HorizontalRule, Details, DetailsSummary, DetailsContent, Image, TextStyle, Color, BackgroundColor,
+    Blockquote, HorizontalRule, Details, DetailsSummary, DetailsContent, Table, TableRow, TableHeader, TableCell, Image, TextStyle, Color, BackgroundColor,
     UndoRedo, Dropcursor, Gapcursor, Placeholder, TrailingNode },
   pm: { state, view, model },
 };

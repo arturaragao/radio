@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.50.5"
+VERSAO = "1.51.0"
+# 1.51.0: tabelas nas Notas (Tiptap extension-table; "/Tabela", minibarra de linhas e colunas, importação do Notion como tabela)
 # 1.50.5: Preliminares sem ícone de página e sem legenda; "sem correção" → "sem mudanças"
 # 1.50.4: Preliminares passa para dentro de Notas (barra lateral, pasta Laudos, abaixo de Notas USG); aba do topo removida
 # 1.50.3: Preliminares — Corrigido já abre; preliminar e definitivo recolhidos; laudo em folha branca Arial, sem espaçamento

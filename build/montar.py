@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.50.1"
+VERSAO = "1.50.2"
+# 1.50.2: Preliminares mostra "aguardando definitivo" (par sem definitivo do chefe; o robô completa depois)
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
 js = js.split("<script>", 1)[1].rsplit("</script>", 1)[0]
 head = open(f"{R}/fonte/artefato-head.html", encoding="utf8").read()

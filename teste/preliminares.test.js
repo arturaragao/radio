@@ -1,9 +1,9 @@
 // Página Preliminares (1.50.0): lógica pura com dados SINTÉTICOS (nunca laudos reais).
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-function ctx(){
-  const c=vm.createContext({console,localStorage:{getItem:()=>null},navigator:{onLine:true},document:{}});
-  vm.runInContext('var SM={d:{prelConf:{}}};'+fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8')+'\n;this.P={SM,prelAgrupaDias,prelRotuloDia,prelPeriodo,prelSemRodape,prelTextoPuro,prelCopiaLimpa,prelConferido,prelPendente,prelFalta,prelFaltaTxt,prelFaltaTopo,prelFiltra,prelAgrupa,prelTokens,prelSeguro,prelDiffPalavras,prelCorrigidoHtml,prelData,prelTextoHtml,PRL,prelListaHtml,prelCorpoHtml,prelItem};',c);
+function ctx(extra={}){
+  const c=vm.createContext({console,localStorage:{getItem:()=>null},navigator:{onLine:true},document:{},...extra});
+  vm.runInContext('var SM={d:{prelConf:{}}};'+fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8')+'\n;this.P={SM,prelAgrupaDias,prelRotuloDia,prelPeriodo,prelSemRodape,prelTextoPuro,prelCopiaLimpa,prelConferido,prelPendente,prelFalta,prelFaltaTxt,prelFaltaTopo,prelFiltra,prelAgrupa,prelTokens,prelSeguro,prelDiffPalavras,prelCorrigidoHtml,prelData,prelTextoHtml,PRL,prelListaHtml,prelCorpoHtml,prelItem,prelIndexa,prelBuscaLaudos,prelLimpaMemoria,prelIrLaudo,prelLaudosInicia,prelPar,prelErroGeral};',c);
   return c.P;
 }
 const J=x=>JSON.parse(JSON.stringify(x));   // resultados vêm de outro contexto vm
@@ -141,4 +141,105 @@ test('mesmo laudo em vários acessos: um item só, acessos juntos, lido por qual
   PRL.lidos={2001:'x'};
   const h=prelItem(G);assert.match(h,/>2001 \+ 2002</);assert.match(h,/prl-ok/);   // principal 2002 baixa o par; lido pelo 2001
   assert.doesNotMatch(prelItem(N[0]),/ \+ |prl-ok/);
+});
+
+test('modo "Por exame": Categoria > Exame > Acesso sem nível de dia, data em cada acesso, mais recente primeiro, pendentes e filtros valem',()=>{
+  const c=ctx(),P=c.PRL;P.itens=IT;P.modo='exame';
+  const h=c.prelListaHtml();
+  assert.ok(!/prl-n0/.test(h));assert.match(h,/data-k="c1\|\*\|Tomografia"/);assert.match(h,/data-k="c1\|\*\|Ultrassom"/);
+  assert.match(h,/<span>Ultrassom<\/span><span class="prl-pend">2 faltam conferir<\/span><span class="prl-n">2<\/span>/);
+  assert.ok(!/1001/.test(h));                                    // fechado: só os cabeçalhos
+  P.estado['c1|*|Ultrassom']=true;P.estado['c2|*|Ultrassom|Doppler arterial de MMII']=true;
+  const h2=c.prelListaHtml();
+  assert.ok(h2.indexOf('>1002<')<h2.indexOf('>1001<'),'12/11 antes de 10/11');
+  assert.match(h2,/<span class="prl-meta">12\/11\/2026 · Chefe B\.<\/span>/);assert.match(h2,/<span class="prl-meta">10\/11\/2026 · Chefe A\.<\/span>/);
+  c.SM.d.prelConf={1002:'x'};P.filtro={texto:'',de:'',ate:'',so:'naoconf'};
+  const h3=c.prelListaHtml();assert.ok(!/>1002</.test(h3));assert.match(h3,/<span>Ultrassom<\/span><span class="prl-pend">1 falta conferir<\/span><span class="prl-n">1<\/span>/);
+  P.filtro={texto:'',de:'2026-11-11',ate:'',so:''};   // período
+  assert.ok(!/Angio-TC/.test(c.prelListaHtml())&&/TC de abdome/.test(c.prelListaHtml()||'x'+'TC de abdome'));
+  P.modo='dia';assert.match(c.prelListaHtml(),/prl-n0/);
+});
+test('busca nos laudos (memória): sem acento/caixa, sem rodapé do PACS, preliminar x definitivo, todas as palavras, mais recente primeiro, limite, refino incremental',()=>{
+  const c=ctx(),P=c.PRL,ROD='<p>Este laudo foi assinado eletronicamente.12/11/2026 / Informamos que o exame, composto por laudo e imagens, deve ser apresentado ao médico solicitante.</p>';
+  P.itens=IT.map(i=>({...i}));
+  c.prelIndexa('1001',{preliminar:{html:'<p>Fígado com <b>esteatose</b> leve e nódulo na tireóide.</p>'},definitivo:{html:'<p>Fígado com esteatose moderada.</p><p>Tireoide sem nódulos.</p>'+ROD}});
+  c.prelIndexa('1003',{preliminar:{texto:'Rins normais.\nEsteatose hepática grau 1.'},definitivo:{texto:'Rins normais.\nEsteatose hepática grau 1.'}});
+  c.prelIndexa('1002',{preliminar:{html:'<p>Sem achados.</p>'},definitivo:{html:'<p>Sem achados.</p>'+ROD}});
+  assert.equal(P.nIdx,3);
+  let b=J(c.prelBuscaLaudos('ESTEATOSE'));
+  assert.deepEqual(b.lista.map(x=>[x.ac,x.onde]),[['1003','ambos'],['1001','ambos']]);   // 11/11 antes de 10/11
+  assert.deepEqual(J(c.prelBuscaLaudos('nodulo tireoide leve')).lista.map(x=>[x.ac,x.onde]),[['1001','preliminar']]);   // só o preliminar tem "leve"
+  assert.deepEqual(J(c.prelBuscaLaudos('nodulos tireoide')).lista.map(x=>[x.ac,x.onde]),[['1001','definitivo']]);
+  assert.equal(J(c.prelBuscaLaudos('assinado')).total,0);assert.equal(J(c.prelBuscaLaudos('informamos')).total,0);   // rodapé do PACS fora
+  assert.equal(J(c.prelBuscaLaudos('')).total,0);
+  assert.match(J(c.prelBuscaLaudos('moderada')).lista[0].x.t,/^Fígado com esteatose moderada\. Tireoide sem nódulos\.$/);   // texto puro, mantém a grafia original
+  // refino incremental: digitar "esteat" -> "esteatose h" só olha os que já casavam; resultado igual ao da busca completa
+  c.prelBuscaLaudos('esteat');const inc=J(c.prelBuscaLaudos('esteatose hepatica'));assert.deepEqual(inc.lista.map(x=>x.ac),['1003']);
+  P.bc={q:'',v:-1,it:null,r:[]};assert.deepEqual(J(c.prelBuscaLaudos('esteatose hepatica')).lista.map(x=>x.ac),['1003']);
+  // indexar mais um laudo invalida o cache
+  c.prelBuscaLaudos('sem');c.prelIndexa('1004',{preliminar:{texto:'sem alteracoes'},definitivo:{texto:'sem alteracoes'}});assert.deepEqual(J(c.prelBuscaLaudos('sem')).lista.map(x=>x.ac).sort(),['1001','1002','1004']);
+  // limite de resultados e total
+  P.itens=Array.from({length:50},(_,k)=>({acesso:'9'+k,data:'2026-11-'+String(1+k%28).padStart(2,'0'),categoria:'X',exame:'Y'}));P.itens.forEach(i=>c.prelIndexa(i.acesso,{preliminar:{texto:'cisto'},definitivo:{texto:'cisto'}}));
+  const l=J(c.prelBuscaLaudos('cisto',20));assert.equal(l.lista.length,20);assert.equal(l.total,50);
+  assert.ok(l.lista.every((x,k,a)=>!k||a[k-1].i.data>=x.i.data));
+  c.prelLimpaMemoria();assert.equal(P.nIdx,0);assert.equal(J(c.prelBuscaLaudos('cisto')).total,0);   // trocar/remover a chave apaga o índice
+});
+test('privacidade: o índice dos laudos não toca localStorage/IndexedDB (só o modo da lista é gravado)',()=>{
+  const src=fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8');
+  const i0=src.indexOf('function prelIndexa'),i1=src.indexOf('// ---- leitura no GitHub'),trecho=src.slice(i0,i1);
+  assert.ok(!/localStorage|indexedDB|caches\.|sessionStorage/.test(trecho));
+  assert.deepEqual([...src.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m=>m[1]).sort(),["'bcbr_prl_modo'","PRL_LS","PRL_LS"].sort());
+});
+
+// ---- 1.54.0 (revisão): regressões do Ctrl+P / lote em segundo plano ----
+const resp=(status,corpo,etag='W/"1"')=>({status,ok:status>=200&&status<300,headers:{get:()=>etag},text:async()=>corpo});
+const ambiente=(fetch,pintadas=[])=>ctx({localStorage:{getItem:()=>'chave'},fetch,document:{getElementById:id=>{pintadas.push(id);return null}},toast:()=>{},ntPrelAbre:()=>{},setTimeout:()=>0});
+test('Ctrl+P no definitivo/ambos abre o Corrigido; laudo grande demais (sem Corrigido) abre também o definitivo; preliminar abre só o preliminar',()=>{
+  const c=ambiente(async()=>resp(404,'{}')),P=c.PRL;
+  const grande=t=>({mudou:true,preliminar:{texto:Array(4000).fill('a').join(' ')},definitivo:{texto:Array(4000).fill(t).join(' ')}});
+  P.itens=[{acesso:'1',data:'2026-11-10',categoria:'Ultrassom',exame:'X'}];
+  P.pares['1']={par:{mudou:true,preliminar:{texto:'Rim com cisto'},definitivo:{texto:'Rim com cisto simples'}}};
+  P.estado['c|1|c']=false;c.prelIrLaudo('1',['cisto'],'definitivo');
+  assert.equal(P.estado['c|1|c'],true);assert.equal(P.estado['c|1|d'],undefined);
+  P.estado={};c.prelIrLaudo('1',['cisto'],'ambos');assert.equal(P.estado['c|1|c'],true);
+  P.estado={};c.prelIrLaudo('1',['cisto'],'preliminar');assert.equal(P.estado['c|1|p'],true);assert.equal(P.estado['c|1|c'],undefined);
+  P.pares['1']={par:grande('b')};P.estado={};c.prelIrLaudo('1',['b'],'definitivo');
+  assert.equal(P.estado['c|1|c'],true);assert.equal(P.estado['c|1|d'],true);
+});
+test('lote: par corrompido ou 404 é pulado (não para a fila nem volta à fila); sem rede ou 401/403 para o lote',async()=>{
+  const chamadas=[],ok=t=>resp(200,JSON.stringify({preliminar:{texto:t},definitivo:{texto:t}}));
+  const c=ambiente(async u=>{const a=u.match(/pares\/(\w+)\.json/)[1];chamadas.push(a);return a==='b'?resp(200,'{quebrado'):a==='n'?resp(200,'null'):a==='x'?resp(404,'{}'):ok('laudo '+a)}),P=c.PRL;
+  P.itens=['b','n','x','c','d','e','f','g'].map((a,k)=>({acesso:a,data:'2026-11-'+String(10+k)}));
+  await c.prelLaudosInicia();
+  assert.equal(P.lote.abort,false);assert.equal(P.nIdx,5);assert.equal(Object.keys(P.idx).sort().join(),'c,d,e,f,g');
+  assert.ok(['b','n','x'].every(a=>P.pares[a].erro&&P.pares[a].fatal));
+  const n=chamadas.length;await c.prelLaudosInicia();assert.equal(chamadas.length,n,'erro não transitório não volta à fila');
+  // rede: TypeError do fetch para o lote; 401 também
+  for(const [falha,esperado] of [[()=>{throw new TypeError('Failed to fetch')},true],[()=>resp(401,'{}'),true],[()=>resp(500,'{}'),false]]){
+    let k=0;const d=ambiente(async()=>{k++;return falha()});d.PRL.itens=Array.from({length:12},(_,i)=>({acesso:'p'+i,data:'2026-11-01'}));
+    await d.prelLaudosInicia();assert.equal(k<12,esperado,String(falha));
+  }
+  assert.equal(c.prelErroGeral(new SyntaxError('x')),false);assert.equal(c.prelErroGeral(Object.assign(new TypeError('x'),{parse:true})),false);
+});
+test('prelLimpaMemoria: lote antigo para e não grava depois da limpeza; novo lote já pode começar',async()=>{
+  let solta;const trava=new Promise(r=>solta=r),ok=resp(200,JSON.stringify({preliminar:{texto:'antigo'},definitivo:{texto:'antigo'}}));
+  const c=ambiente(async()=>{await trava;return ok}),P=c.PRL;
+  P.itens=Array.from({length:6},(_,i)=>({acesso:'q'+i,data:'2026-11-01'}));
+  const velho=c.prelLaudosInicia();assert.equal(P.lote.rodando,true);
+  c.prelLimpaMemoria();
+  c.PRL.itens=P.itens;                                              // (a lista fica; só pares/índice somem)
+  const novo=c.prelLaudosInicia();assert.equal(P.lote.rodando,true,'novo lote começa na hora');
+  solta();await velho;await novo;
+  // só o lote novo grava (6 pares); o antigo (4 em voo) descartou o que baixou
+  assert.equal(P.nIdx,6);assert.equal(Object.keys(P.idx).length,6);
+  const d=ambiente(async()=>{await trava;return ok}),Q=d.PRL;Q.itens=P.itens;
+  const v2=d.prelLaudosInicia();d.prelLimpaMemoria();await v2;
+  assert.equal(Q.nIdx,0);assert.deepEqual(Object.keys(Q.idx),[]);assert.deepEqual(Object.keys(Q.pares),[]);
+});
+test('reconferência por ETag (304) não redesenha o corpo; mudança sim',async()=>{
+  const pint=[];let corpo='um',st=200;
+  const c=ambiente(async()=>st===304?resp(304,''):resp(200,JSON.stringify({preliminar:{texto:corpo},definitivo:{texto:corpo}}),'W/"'+corpo+'"'),pint);
+  await c.prelPar('z');const n=pint.length;
+  st=304;await c.prelPar('z',true);assert.equal(pint.length,n);
+  st=200;corpo='dois';await c.prelPar('z',true);assert.ok(pint.length>n);assert.match(c.PRL.idx.z.def.t,/dois/);
 });

@@ -2,7 +2,9 @@
 // (contrato: Ditado-Laudos-ui/docs/robo-pacs-novo/FORMATO-PARES.md). Nada desses dados fica no repo do app nem no cache do SW.
 // Índice primeiro (preliminares/indice.json + lidos.json); cada par (preliminares/pares/<acesso>.json) só ao abrir o toggle do acesso.
 const PRL_REPO='arturaragao/laudos-tutu-dados',PRL_LS='bcbr_gh_token_dados',PRL_ORDEM=['Tomografia','Ultrassom','Ressonância','Radiografia','Mamografia','Outros'];
-const PRL={itens:null,lidos:{},espaco:null,pares:{},estado:{},erro:'',carregando:false,etag:'',filtro:{texto:'',de:'',ate:'',so:''},semChave:false};
+const PRL={itens:null,lidos:{},espaco:null,pares:{},estado:{},erro:'',carregando:false,etag:'',filtro:{texto:'',de:'',ate:'',so:''},semChave:false,
+  modo:(()=>{try{return localStorage.getItem('bcbr_prl_modo')==='exame'?'exame':'dia'}catch(e){return 'dia'}})(),   // 1.54.0: só a preferência da lista vai ao localStorage, nunca texto de laudo
+  idx:{},nIdx:0,idxv:0,lote:{rodando:false,abort:false},bc:{q:'',v:-1,it:null,r:[]},dest:null};
 const prelEsc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const prelNorm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const prelData=d=>/^\d{4}-\d{2}-\d{2}/.test(d||'')?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):(d||'');
@@ -144,6 +146,78 @@ function prelCopiaCorrigido(e){
   const c=prelCopiaLimpa(d.innerHTML);
   e.clipboardData.setData('text/html',c.html);e.clipboardData.setData('text/plain',c.texto);e.preventDefault();
 }
+// 1.54.0: índice de busca dos laudos SÓ EM MEMÓRIA (PRL.idx; nada em localStorage, IndexedDB, cache do SW nem repo): texto puro, sem rodapé do PACS, e a versão sem acento/caixa.
+// Texto do preliminar e do definitivo/corrigido. Ctrl+P (build/busca.js) baixa os pares em segundo plano (prelLaudosInicia) e pesquisa aqui.
+function prelIndexa(ac,p){
+  const f=h=>{const t=prelTextoPuro(h).replace(/\s+/g,' ').normalize('NFC');return {t,n:prelNorm(t)}};
+  const x={pre:f(p.preliminar?.html||prelTextoHtml(p.preliminar?.texto)),def:f(prelSemRodape(p.definitivo?.html||prelTextoHtml(p.definitivo?.texto)))};   // (se lançar, nada foi gravado)
+  if(!PRL.idx[ac])PRL.nIdx++;
+  PRL.idx[ac]=x;
+  PRL.idxv++;
+}
+// Laudos que têm TODAS as palavras no preliminar ou no definitivo, mais recentes primeiro. Digitar mais letras só refina a lista anterior (filtro incremental).
+// -> {total, lista:[{ac,i,onde:'preliminar'|'definitivo'|'ambos',x:{t,n}}]} com até `max` itens
+function prelBuscaLaudos(q,max=20){
+  const tk=prelNorm(q).trim().split(/\s+/).filter(Boolean),b=PRL.bc;
+  if(!tk.length||!PRL.itens)return {total:0,lista:[],tk};
+  const chave=tk.join(' '),base=b.v===PRL.idxv&&b.it===PRL.itens&&b.q&&chave.startsWith(b.q)?b.r:PRL.itens.filter(i=>PRL.idx[String(i.acesso)]);
+  const tem=(x,t)=>t.every(w=>x.n.includes(w));
+  const r=base.filter(i=>{const x=PRL.idx[String(i.acesso)];return tem(x.def,tk)||tem(x.pre,tk)}).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso)));
+  PRL.bc={q:chave,v:PRL.idxv,it:PRL.itens,r};
+  return {total:r.length,tk,lista:r.slice(0,max).map(i=>{
+    const ac=String(i.acesso),x=PRL.idx[ac],d=tem(x.def,tk),p=tem(x.pre,tk);
+    return {ac,i,onde:d&&p?'ambos':d?'definitivo':'preliminar',x:d?x.def:x.pre};
+  })};
+}
+// baixa em segundo plano (4 por vez) os pares ainda não baixados e indexa; os já baixados com status "aguardando" são reconferidos por ETag. Sem chave: nada.
+async function prelLaudosInicia(){
+  const L=PRL.lote;if(L.rodando||PRL.semChave||!prelChave())return;
+  if(!PRL.itens){await prelCarrega();if(!PRL.itens)return}   // (prelCarrega chama prelLaudosInicia ao terminar; o início de lá vale)
+  if(L.rodando)return;
+  const fila=PRL.itens.filter(i=>{const c=PRL.pares[String(i.acesso)];return !c||(!c.carregando&&!c.fatal&&(!c.par||c.par.status==='aguardando'||i.status==='aguardando'))})
+    .sort((a,b)=>(b.data||'').localeCompare(a.data||'')).map(i=>String(i.acesso));
+  if(!fila.length)return;
+  L.rodando=true;L.abort=false;if(typeof bgViva==='function')bgViva();
+  const w=async()=>{while(fila.length&&!L.abort){const e=await prelPar(fila.shift(),true);if(prelErroGeral(e))L.abort=true}};   // sem rede real ou sem permissão: para, sem erro na tela; par corrompido/404 só é pulado
+  await Promise.all([w(),w(),w(),w()]);
+  L.rodando=false;if(typeof bgViva==='function')bgViva();
+}
+// falha que vale para o lote inteiro: sem rede (offline ou TypeError do fetch) ou chave recusada. 404 e par corrompido (parse/índice) são só daquele par.
+const prelErroGeral=e=>!!e&&!e.parse&&(e.status===401||e.status===403||(!e.status&&e.name!=='SyntaxError'&&(!navigator.onLine||e.name==='TypeError')));
+// Ctrl+P -> escolher um laudo: abre Preliminares com o acesso aberto (e o toggle do trecho encontrado), rola até ele e destaca a palavra
+function prelIrLaudo(ac,tk,onde){
+  const i=(PRL.itens||[]).find(x=>String(x.acesso)===ac);if(!i){toast('Esse laudo não está mais na lista.');return}
+  const dia=prelDiaDe(i),d=PRL.modo==='exame'?'*':dia,cat=i.categoria||'Outros',ex=i.exame||'Sem nome';
+  PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest={ac,tk};
+  for(const k of [...(d==='*'?[]:['d|'+dia]),'c1|'+d+'|'+cat,'c2|'+d+'|'+cat+'|'+ex,'a|'+ac])PRL.estado[k]=true;
+  if(onde==='preliminar')PRL.estado['c|'+ac+'|p']=true;
+  else{   // definitivo/ambos: o Corrigido tem que estar aberto; laudo grande demais para o diff não tem Corrigido, então abre o definitivo
+    PRL.estado['c|'+ac+'|c']=true;
+    const p=PRL.pares[ac]&&PRL.pares[ac].par;
+    if(p&&p.mudou!==false&&prelCorrigidoHtml(p.preliminar?.html||prelTextoHtml(p.preliminar?.texto),prelSemRodape(p.definitivo?.html||prelTextoHtml(p.definitivo?.texto)))==null)PRL.estado['c|'+ac+'|d']=true;
+  }
+  ntPrelAbre();
+  const t0=Date.now(),v=()=>{
+    const e=[...document.querySelectorAll('.prl-n3')].find(x=>x.dataset.ac===ac);
+    if(e){e.scrollIntoView({block:'center'});e.classList.add('nt-flash');setTimeout(()=>e.classList.remove('nt-flash'),1500);prelDestaca(e,tk)}
+    else if(Date.now()-t0<3000)setTimeout(v,60);
+  };setTimeout(v,60);
+}
+// destaca (<mark>) as palavras buscadas nos textos simples já desenhados; palavra partida entre tags não é marcada
+function prelDestaca(raiz,tk){
+  if(!raiz||!tk||!tk.length)return;
+  const w=document.createTreeWalker(raiz,4),nos=[];while(w.nextNode())nos.push(w.currentNode);
+  for(const n of nos){
+    if(n.parentNode.nodeName==='MARK')continue;
+    const s=n.nodeValue,sn=prelNorm(s);if(sn.length!==s.length)continue;
+    const sp=[];for(const t of tk){let i=sn.indexOf(t);while(i>=0){sp.push([i,i+t.length]);i=sn.indexOf(t,i+t.length)}}
+    if(!sp.length)continue;sp.sort((a,b)=>a[0]-b[0]);
+    const f=document.createDocumentFragment();let p=0;
+    for(const [a,b] of sp){if(b<=p)continue;const a2=Math.max(a,p);f.append(s.slice(p,a2));const m=document.createElement('mark');m.textContent=s.slice(a2,b);f.append(m);p=b}
+    f.append(s.slice(p));n.replaceWith(f);
+  }
+}
+const prelLimpaMemoria=()=>{PRL.lote.abort=true;PRL.lote={rodando:false,abort:false};PRL.gen=(PRL.gen||0)+1;PRL.pares={};PRL.idx={};PRL.nIdx=0;PRL.idxv++;PRL.dest=null};   // lote antigo para e não grava mais (prelPar confere PRL.gen); um novo pode começar já
 // ---- leitura no GitHub (repo privado de dados; chave própria, senão a do app) ----
 const prelChave=()=>{try{return localStorage.getItem(PRL_LS)||localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}};
 async function prelGet(caminho,etag){
@@ -167,13 +241,26 @@ async function prelCarrega(forca){
     PRL.lidos=(ld.json&&ld.json.lidos)||{};
   }catch(e){PRL.erro=prelMsgErro(e);PRL.semChave=!!(e&&(e.status===401||e.status===403||e.status===404))&&!PRL.itens}
   PRL.carregando=false;prelRepinta();
+  if(PRL.itens&&!PRL.erro)prelLaudosInicia();
 }
-async function prelPar(acesso){
-  const c=PRL.pares[acesso];if(c&&(c.par||c.carregando))return;
-  PRL.pares[acesso]={carregando:true};prelCorpoPinta(acesso);
-  try{const r=await prelGet('preliminares/pares/'+encodeURIComponent(acesso)+'.json');PRL.pares[acesso]={par:r.json}}
-  catch(e){PRL.pares[acesso]={erro:prelMsgErro(e)}}
-  prelCorpoPinta(acesso);
+// `forca`: reconfere (por ETag) um par já baixado; devolve o erro (ou nada) para o lote decidir se para
+async function prelPar(acesso,forca){
+  const c=PRL.pares[acesso];if(c&&c.par&&!forca){prelCorpoPinta(acesso);return}   // (baixado em segundo plano: só desenha)
+  if(c&&c.carregando)return;
+  const ant=c&&c.par?c:null,g=PRL.gen;let erro,mudou=false;
+  if(!ant){PRL.pares[acesso]={carregando:true};prelCorpoPinta(acesso)}
+  try{
+    const r=await prelGet('preliminares/pares/'+encodeURIComponent(acesso)+'.json',ant&&ant.etag);
+    if(g!==PRL.gen)return;   // a memória foi limpa (chave trocada/removida) enquanto baixava: descarta
+    if(!r.naoMudou){try{prelIndexa(acesso,r.json)}catch(e){throw Object.assign(e,{parse:true})}PRL.pares[acesso]={par:r.json,etag:r.etag};mudou=true}
+  }catch(e){
+    if(g!==PRL.gen)return;
+    erro=e;if(!ant)PRL.pares[acesso]={erro:prelMsgErro(e),fatal:e.parse||e.name==='SyntaxError'||e.status===404};   // fatal: não volta para a fila do lote nesta sessão
+    mudou=!ant;
+  }
+  if(mudou)prelCorpoPinta(acesso);
+  if(typeof bgViva==='function')bgViva();
+  return erro;
 }
 // ---- tela ----
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
@@ -201,7 +288,7 @@ function prelCorpoHtml(ac){
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
   return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':''),corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
-function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e)e.innerHTML=prelCorpoHtml(ac)}
+function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
 function prelItem(i){
   const ac=String(i.acesso),acs=prelAcessos(i),k='a|'+ac,ab=prelAberto(k,false),lido=prelLido(i,PRL.lidos),conf=prelConferido(i,prelConf()),rot=acs.join(' + ');
   // acesso: clique copia o preliminar (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
@@ -258,7 +345,7 @@ function prelN1(g,dia,at,tot){
 }
 // filhos de um toggle de dia ('d|dia'), categoria ('c1|dia|cat') ou exame ('c2|dia|cat|exame') aberto depois da pintura inicial
 function prelFilhosHtml(k){
-  const its=prelVis(),[n,dia,cat,...r]=k.split('|'),g=prelAgrupa(its.filter(i=>prelDiaDe(i)===dia));
+  const its=prelVis(),[n,dia,cat,...r]=k.split('|'),g=prelAgrupa(its.filter(i=>dia==='*'||prelDiaDe(i)===dia));   // dia '*' = modo "Por exame" (sem nível de dia)
   if(n==='d')return prelN1(g,dia,prelFiltroAtivo(),its.length);
   const c=g.find(x=>x.categoria===cat);if(!c)return '';
   if(n==='c1')return prelN2(c,dia,prelFiltroAtivo(),its.length);
@@ -268,6 +355,7 @@ function prelListaHtml(){
   if(!PRL.itens)return '';
   const its=prelVis(),at=prelFiltroAtivo();
   if(!its.length)return `<p class="mut" role="status">${PRL.itens.length?'Nada encontrado com esse filtro.':'Ainda não há laudos preliminares gravados.'}</p>`;
+  if(PRL.modo==='exame')return prelN1(prelAgrupa(its),'*',at,its.length);   // 1.54.0: Categoria > Exame > Acesso (a data aparece em cada acesso)
   return prelAgrupaDias(its).map(d=>{
     const k0='d|'+d.dia,def=at&&PRL.estado[k0]===undefined,ab0=prelAberto(k0,def);
     return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${def?'data-def="1"':''} ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
@@ -297,10 +385,10 @@ const prelCfgMsg=t=>{const m=document.getElementById('prl_cm');if(m)m.textConten
 function prelCfgSalva(){
   const v=(document.getElementById('prl_ck')?.value||'').trim();if(!v){prelCfgMsg('Cole a chave primeiro.');return}
   try{localStorage.setItem(PRL_LS,v)}catch(e){prelCfgMsg('Não consegui guardar neste aparelho.');return}
-  PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';
+  PRL.itens=null;prelLimpaMemoria();PRL.semChave=false;PRL.erro='';
   render();prelCfgMsg('Chave salva. Toque em Testar para conferir.');
 }
-function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
+function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}PRL.itens=null;prelLimpaMemoria();PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
 async function prelCfgTesta(){
   const digitada=(document.getElementById('prl_ck')?.value||'').trim();
   if(!digitada&&!prelChave()){prelCfgMsg('Sem chave para testar.');return}
@@ -315,13 +403,14 @@ const prelFaltaTopo=()=>{if(!PRL.itens)return '';const v=prelVis();return v.leng
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelVis().length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
 function prelFiltroMuda(){
   const g=id=>document.getElementById(id)?.value||'';
-  PRL.filtro={texto:g('prl_q'),de:g('prl_de'),ate:g('prl_ate'),so:g('prl_so')};
+  PRL.filtro={texto:g('prl_q'),de:g('prl_de'),ate:g('prl_ate'),so:g('prl_so')};PRL.dest=null;
   const l=document.getElementById('prl_lista');if(l){l.innerHTML=prelListaHtml();prelPares()}
   const n=document.getElementById('prl_cont');if(n)n.textContent=prelContagem();
   const q=document.getElementById('prl_pend');if(q)q.textContent=prelFaltaTopo();
 }
 function prelPeriodoSet(n){PRL.filtro={...PRL.filtro,...prelPeriodo(n)};prelRepinta()}
-function prelLimpa(){PRL.filtro={texto:'',de:'',ate:'',so:''};prelRepinta()}
+function prelLimpa(){PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest=null;prelRepinta()}
+function prelModoSet(m){PRL.modo=m==='exame'?'exame':'dia';try{localStorage.setItem('bcbr_prl_modo',PRL.modo)}catch(e){}prelRepinta()}
 function vPreliminares(){
   prelSoltaAltura();
   setTimeout(prelPares,0);
@@ -338,6 +427,7 @@ function vPreliminares(){
     <button class="b s" onclick="prelLimpa()">Limpar</button>
    </div>
    <div class="prl-per" role="group" aria-label="Período rápido">${[[1,'Hoje'],[3,'Últimos 3 dias'],[7,'Últimos 7 dias'],[30,'Últimos 30 dias']].map(([n,r])=>{const p=prelPeriodo(n);return `<button class="b s" aria-pressed="${f.de===p.de&&f.ate===p.ate}" onclick="prelPeriodoSet(${n})">${r}</button>`}).join('')}</div>
+   <div class="prl-modo" role="group" aria-label="Modo da lista">${[['dia','Por dia'],['exame','Por exame']].map(([m,r])=>`<button class="b s" aria-pressed="${PRL.modo===m}" onclick="prelModoSet('${m}')">${r}</button>`).join('')}</div>
    <p class="mut prl-cont" aria-live="polite"><span id="prl_cont">${prelContagem()}</span><b class="prl-pendtot" id="prl_pend">${prelFaltaTopo()}</b></p>
    <div id="prl_lista">${prelListaHtml()}</div></div>`;
 }

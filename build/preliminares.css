@@ -42,8 +42,9 @@
 .prl-cfg{max-width:560px}.prl-cfg .row{gap:8px;flex-wrap:wrap}
 .prl-pend{margin-left:auto;white-space:nowrap;font-size:.78rem;font-weight:600;color:var(--warn,var(--mut))}.prl-pend+.prl-n{margin-left:0}
 .prl-pendtot{margin-left:2px;color:var(--tx)}
-.prl-per{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}.prl-per .b[aria-pressed=true]{background:var(--pri);color:var(--on-pri);border-color:var(--pri)}
+.prl-per,.prl-modo{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}.prl-per .b[aria-pressed=true],.prl-modo .b[aria-pressed=true]{background:var(--pri);color:var(--on-pri);border-color:var(--pri)}
 .prl-conf{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;margin-block:-8px;cursor:pointer}
 .prl-ok~.prl-conf{margin-left:0}
 .prl-conf input{width:20px;height:20px;margin:0;cursor:pointer;accent-color:var(--ok)}
 .prl-ac{cursor:copy;text-decoration:underline dotted;text-underline-offset:3px}
+.prl-laudo mark{background:color-mix(in srgb,var(--pri) 40%,transparent);color:inherit;border-radius:2px}

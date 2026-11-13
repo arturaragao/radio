@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.53.0"
+VERSAO = "1.54.0"
+# 1.54.0: Ctrl+P acha texto dentro dos laudos dos Preliminares (índice só em memória); Preliminares: lista Por dia / Por exame
 # 1.53.0: abre em Notas; Preliminares: conferido (plano), por dia, período rápido, rodapé do PACS fora, copiar preliminar/corrigido, rolagem estável
 # 1.52.0: fileira do dia em uma linha; Foco sem Meta; resumos ligados ao Foco, aos flashcards e às Notas (resumos/indice.json)
 # 1.51.0: tabelas nas Notas (Tiptap extension-table; "/Tabela", minibarra de linhas e colunas, importação do Notion como tabela)

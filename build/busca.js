@@ -1,8 +1,8 @@
 // Busca global (1.42): Ctrl+P (e Ctrl+K fora do texto das Notas) em qualquer aba. Procura em blocos das Notas, páginas, tarefas, eventos do calendário,
-// questões e, se o app tiver, Resumos (função global resumosBusca() -> [{id,titulo,texto,abre}]). Busca própria: sem acento, minúsculas, por palavras.
+// questões, laudos dos Preliminares (1.54.0, só em memória: ver prelBuscaLaudos) e, se o app tiver, Resumos (função global resumosBusca() -> [{id,titulo,texto,abre}]). Busca própria: sem acento, minúsculas, por palavras.
 // Ranking = relevância x frecência. A frecência vem de contadores LOCAIS (localStorage bcbr_busca_freq): só quantas vezes e quando, nunca o conteúdo.
-const BG_FREQ='bcbr_busca_freq',BG_POR_TIPO=8;
-const BG_TIPOS=[['nota','Notas'],['pagina','Páginas'],['tarefa','Tarefas'],['evento','Calendário'],['questao','Questões'],['resumo','Resumos']];
+const BG_FREQ='bcbr_busca_freq',BG_POR_TIPO=8,BG_LAUDOS=20;
+const BG_TIPOS=[['nota','Notas'],['pagina','Páginas'],['tarefa','Tarefas'],['evento','Calendário'],['questao','Questões'],['resumo','Resumos'],['laudo','Laudos']];
 function bgFreqLer(){try{const o=JSON.parse(localStorage.getItem(BG_FREQ)||'{}');return o&&typeof o==='object'&&!Array.isArray(o)?o:{}}catch(e){return {}}}
 function bgFreqConta(chave){
   const f=bgFreqLer(),x=f[chave]||{n:0,t:0};f[chave]={n:x.n+1,t:Date.now()};
@@ -36,6 +36,12 @@ function bgTextoNo(n){
   const f=n.content||[];return f.map(bgTextoNo).join(f.some(x=>x.text!==undefined)?'':' ');
 }
 const bgEsc=s=>esc(String(s));
+let bgViva=null;   // função da janela aberta, chamada pelo download dos laudos a cada par (status "carregando laudos N/M" e resultados novos)
+// Laudos dos Preliminares: acesso · exame · data; o trecho vem do definitivo (ou do preliminar se a palavra só está nele). Não entram na frecência (guardaria o número do acesso).
+function bgLaudos(q){
+  const b=prelBuscaLaudos(q,BG_LAUDOS),rot={definitivo:'Definitivo',preliminar:'Preliminar',ambos:'Preliminar e definitivo'};
+  return b.lista.map(r=>({s:0,d:{tipo:'laudo',id:r.ac,chave:'laudo:'+r.ac,titulo:r.ac+' · '+(r.i.exame||'Sem nome')+' · '+prelData(r.i.data),sub:rot[r.onde],corpo:r.x.t,tn:'',cn:r.x.n,abre:()=>prelIrLaudo(r.ac,b.tk,r.onde)}}));
+}
 const bgArea=q=>typeof AREA_BY!=='undefined'?AREA_BY[q._a]?.nome:'';
 function bgDocs(){
   const docs=[],add=(tipo,id,titulo,corpo,abre,sub)=>{titulo=String(titulo||'').trim();corpo=String(corpo||'');docs.push({tipo,id,chave:tipo+':'+id,titulo,sub:sub||'',corpo,tn:ntNorma(titulo),cn:ntNorma(corpo),abre})};
@@ -98,11 +104,11 @@ function bgSnippet(d,tokens){
 }
 function bgAbre(){
   const aberta=document.querySelector('.bg-m');if(aberta){ntModalFecha(aberta.closest('.nt-modal'));return}
-  const ov=ntModal('bg-modal',`<input type="text" class="bg-in" placeholder="Buscar em notas, páginas, tarefas, calendário e questões" aria-label="Busca global" autocomplete="off" spellcheck="false"><div class="bg-l" role="listbox"></div>`);
+  const ov=ntModal('bg-modal',`<input type="text" class="bg-in" placeholder="Buscar em notas, páginas, tarefas, calendário e questões" aria-label="Busca global" autocomplete="off" spellcheck="false"><div class="bg-st mut" aria-live="polite"></div><div class="bg-l" role="listbox"></div>`);
   ov.firstElementChild.classList.add('bg-m');
-  const q=ov.querySelector('.bg-in'),l=ov.querySelector('.bg-l'),docs=bgDocs(),freq=bgFreqLer();let res=[],sel=0;
+  const q=ov.querySelector('.bg-in'),l=ov.querySelector('.bg-l'),st=ov.querySelector('.bg-st'),docs=bgDocs(),freq=bgFreqLer();let res=[],sel=0,visto=-1,tm=0;
   const pinta=()=>{
-    const t0=performance.now();res=bgBusca(q.value,docs,freq);sel=Math.min(sel,Math.max(0,res.length-1));
+    const t0=performance.now();res=bgBusca(q.value,docs,freq);visto=PRL.idxv;if(bgTokens(q.value).length)res=res.concat(bgLaudos(q.value));sel=Math.min(sel,Math.max(0,res.length-1));
     const tokens=bgTokens(q.value);let h='',ult='';
     if(!tokens.length&&res.length)h='<div class="bg-h">Recentes</div>';
     res.forEach((r,i)=>{
@@ -112,7 +118,14 @@ function bgAbre(){
     if(!res.length)h=`<p class="bg-v">${tokens.length?'Nada encontrado.':'Digite para buscar. O que você abrir aparece aqui como recente.'}</p>`;
     l.innerHTML=h;l.querySelector('.sel')?.scrollIntoView({block:'nearest'});ov.dataset.ms=String(Math.round(performance.now()-t0));
   };
-  const vai=r=>{if(!r)return;ntModalFecha(ov);bgFreqConta(r.d.chave);r.d.abre()};
+  const vai=r=>{if(!r)return;ntModalFecha(ov);if(r.d.tipo!=='laudo')bgFreqConta(r.d.chave);r.d.abre()};
+  // laudos baixando em segundo plano: status discreto e, no máximo a cada 0,6 s, refaz a lista com o que já foi indexado
+  bgViva=()=>{
+    if(!ov.isConnected){bgViva=null;return}
+    st.textContent=PRL.lote.rodando&&PRL.itens?`carregando laudos ${PRL.nIdx}/${PRL.itens.length}`:'';
+    if(PRL.idxv!==visto&&!tm&&bgTokens(q.value).length)tm=setTimeout(()=>{tm=0;if(ov.isConnected)pinta()},600);
+  };
+  prelLaudosInicia().catch(()=>{});bgViva();
   q.addEventListener('input',()=>{sel=0;pinta()});
   q.addEventListener('keydown',e=>{
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(res.length){sel=(sel+(e.key==='ArrowDown'?1:-1)+res.length)%res.length;pinta()}}

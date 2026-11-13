@@ -15,7 +15,7 @@ const PARES={'9000101':{preliminar:{html:'<p><b>Doppler de carótidas</b></p><p>
   definitivo:{html:'<p><b>Doppler de carótidas</b></p><p>Placa ateromatosa <u>mista</u> no bulbo à direita, com estenose de <i>40%</i>.</p><ul><li>Vertebrais pérvias com fluxo anterógrado</li></ul><p>Este laudo foi assinado eletronicamente.12/11/2026 09:33:25 / Informamos que o exame, composto por laudo e imagens, deve ser apresentado ao médico solicitante... Hospital Santa Isabel não realiza contato com pacientes para agendamento de consultas baseado no laudo do exame realizado.</p>'},mudou:true},
   '9000102':{preliminar:{html:'<p>Exame sem alterações.</p>'},definitivo:{html:'<p>Exame sem alterações.</p>'},mudou:false},
   '9000103':{preliminar:{texto:'Artérias pérvias.'},definitivo:{texto:'Artérias pérvias, sem estenoses.'},mudou:true}};
-test('Radio 1.53: página Preliminares (Chrome, dados sintéticos)',{timeout:120000},async t=>{
+test('Radio 1.54: página Preliminares (Chrome, dados sintéticos)',{timeout:120000},async t=>{
   const C=await iniciar({porta:8794,env:{BCBR_QS:'10'}});t.after(()=>C.fim());
   const {ev,ate,call}=C;await C.abre();
   const INST=`(()=>{window.__req=[];const f=window.fetch;window.fetch=(u,o)=>{u=String(u);
@@ -43,7 +43,8 @@ test('Radio 1.53: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     assert.equal(await ev("tela"),'notas');assert.equal(await ev("!!document.getElementById('nt_titulo')"),false);
     assert.equal(await ev("getComputedStyle(document.querySelector('.nt-pg-opcoes')).display"),'none');
     assert.ok((await ev("window.__req")).includes('preliminares/indice.json'));
-    assert.equal((await ev("window.__req")).filter(r=>r.includes('/pares/')).length,0);
+    await ate("!PRL.lote.rodando&&PRL.nIdx===3");   // 1.54: ao abrir Preliminares os pares são baixados em segundo plano (os 3 sem arquivo dão 404 e ficam de fora)
+    assert.deepEqual((await ev("window.__req")).filter(r=>r.includes('/pares/')).sort(),['9000101','9000102','9000103','9000201','9000202','9000301'].map(a=>'preliminares/pares/'+a+'.json'));
     assert.match(await ev("window.__auth"),/^Bearer /);
     assert.equal(await ev("document.querySelector('.prl h1').textContent"),'Preliminares');
     assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n0')].map(d=>d.dataset.k)"),['d|2026-11-12','d|2026-11-11','d|2026-11-10','d|2026-11-09','d|2026-10-20']);   // dia no topo, mais recente primeiro
@@ -68,12 +69,11 @@ test('Radio 1.53: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     assert.equal(await ev("document.querySelector('.prl-n3 > summary .prl-conf input').type"),'checkbox');
     assert.equal(await ev("document.querySelectorAll('.prl-ok').length"),1);
     assert.equal(await ev("document.querySelector('.prl-ok').closest('.prl-n3').querySelector('.prl-ac').textContent"),'9000101');
-    assert.equal((await ev("window.__req")).filter(r=>r.includes('/pares/')).length,0);
   });
   await t.test('abrir o acesso baixa só aquele par e mostra os três toggles; corrigido marca tirado/posto e mantém formatação',async()=>{
     await ev("document.querySelector('.prl-n3>summary').click()");
     await ate("document.querySelectorAll('.prl-sub').length===3");
-    assert.deepEqual((await ev("window.__req")).filter(r=>r.includes('/pares/')),['preliminares/pares/9000101.json']);
+    assert.equal((await ev("window.__req")).filter(r=>r==='preliminares/pares/9000101.json').length,1,'o par já veio em segundo plano: abrir o toggle não baixa de novo');
     assert.deepEqual(await ev("[...document.querySelectorAll('.prl-sub>summary')].map(s=>s.textContent)"),['Laudo preliminar','Laudo definitivo','Corrigido']);
     await ev("document.querySelectorAll('.prl-sub>summary').forEach(s=>s.click())");await espera(150);
     const cor=await ev("document.querySelectorAll('.prl-sub')[2].querySelector('.prl-laudo').innerHTML");
@@ -253,6 +253,74 @@ test('Radio 1.53: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     await ev("document.dispatchEvent(new WheelEvent('wheel',{deltaY:-10}));0");   // o usuário rola: espaçador solto
     assert.equal(await ev("document.querySelector('.prl').style.minHeight"),'');
     await call('Emulation.setDeviceMetricsOverride',{width:1000,height:900,deviceScaleFactor:1,mobile:false});
+  });
+  const digita=v=>ev(`(()=>{const q=document.querySelector('.bg-in');q.value=${JSON.stringify(v)};q.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  await t.test('Ctrl+P acha palavras DENTRO dos laudos (sem acento), mostra acesso · exame · data e de qual texto vem, e abre o acesso com a palavra destacada',async()=>{
+    await ev("prelLimpaMemoria();PRL.estado={};PRL.filtro={texto:'',de:'',ate:'',so:''};go('notas');0");
+    await ev("bgAbre();0");await ate("document.querySelector('.bg-in')");
+    await ate("!PRL.lote.rodando&&PRL.nIdx===3");
+    await digita('anterogrado');
+    assert.equal(await ev("document.querySelector('.bg-st').textContent"),'','sem "carregando" depois de terminar');
+    assert.deepEqual(await ev("[...document.querySelectorAll('.bg-h')].map(h=>h.textContent)"),['Laudos']);
+    assert.deepEqual(await ev("[...document.querySelectorAll('.bg-it b')].map(b=>b.textContent)"),['9000101 · Doppler de carótidas e vertebrais · 12/11/2026']);
+    assert.match(await ev("document.querySelector('.bg-it small').innerHTML"),/^Definitivo · .*<mark>anterógrado<\/mark>/);
+    assert.ok(!/assinado|Informamos/.test(await ev("document.querySelector('.bg-l').textContent")));
+    await digita('calcificada');
+    assert.match(await ev("document.querySelector('.bg-it small').innerHTML"),/^Preliminar · .*<mark>calcificada<\/mark>/);   // só o preliminar tinha a palavra: foi trocada pelo chefe
+    await digita('estenose');
+    assert.deepEqual(await ev("[...document.querySelectorAll('.bg-it')].map(b=>b.querySelector('b').textContent.split(' · ')[0]+':'+b.querySelector('small').textContent.split(' · ')[0])"),['9000101:Preliminar e definitivo','9000103:Definitivo']);   // mais recente primeiro
+    await digita('pervias sem');assert.equal(await ev("document.querySelector('.bg-it b').textContent.split(' · ')[0]"),'9000103');   // sem acento; todas as palavras
+    await digita('assinado');assert.equal(await ev("document.querySelector('.bg-v')?.textContent"),'Nada encontrado.');   // rodapé do PACS não é indexado
+    // nada de texto de laudo em armazenamento do navegador
+    assert.equal(await ev("Object.keys(localStorage).some(k=>/anterógrado|calcificada|ateromatosa|pérvias/.test(k+localStorage.getItem(k)))"),false);
+    // escolher: abre Preliminares com o acesso aberto, rolado até ele, palavra destacada
+    await digita('anterogrado');await ev("document.querySelector('.bg-it').click()");
+    await ate("document.querySelector('.prl-n3[data-ac=\"9000101\"] mark')");
+    assert.equal(await ev("document.querySelector('.bg-in')"),null,'janela fechou');
+    assert.equal(await ev("document.querySelector('.prl-n3[data-ac=\"9000101\"]').open"),true);
+    assert.equal(await ev("document.querySelector('.prl-n3[data-ac=\"9000101\"] mark').textContent"),'anterógrado');
+    assert.equal(await ev("(()=>{const r=document.querySelector('.prl-n3[data-ac=\"9000101\"]').getBoundingClientRect();return r.top>=0&&r.top<innerHeight})()"),true,'rolou até o acesso');
+    // trecho só do preliminar: abre o toggle "Laudo preliminar" com a palavra marcada
+    await ev("go('notas');bgAbre();0");await ate("document.querySelector('.bg-in')");await digita('calcificada');
+    await ev("document.querySelector('.bg-it').click()");
+    await ate("document.querySelector('.prl-sub[data-k=\"c|9000101|p\"][open] mark')");
+    assert.equal(await ev("document.querySelector('.prl-sub[data-k=\"c|9000101|p\"] mark').textContent"),'calcificada');
+    await ev("prelLimpa();0");assert.equal(await ev("PRL.dest"),null);
+  });
+  await t.test('Ctrl+P sem chave: nenhum pedido ao GitHub e nenhum resultado de laudo, sem erro',async()=>{
+    await ev("localStorage.removeItem('bcbr_gh_token_dados');localStorage.removeItem('bcbr_gh_token');prelLimpaMemoria();PRL.estado={};PRL.itens=null;PRL.semChave=false;PRL.erro='';window.__req.length=0;go('notas');0");
+    await ev("bgAbre();0");await ate("document.querySelector('.bg-in')");
+    await digita('anterogrado');await espera(300);
+    assert.equal(await ev("document.querySelector('.bg-l').textContent"),'Nada encontrado.');
+    assert.equal(await ev("document.querySelector('.bg-st').textContent"),'');
+    assert.deepEqual(await ev("window.__req"),[]);
+    await ev("ntModalFecha(document.querySelector('.nt-modal'));localStorage.setItem('bcbr_gh_token_dados','ghp_chave_de_teste');prelCarrega(true);0");await ate("PRL.itens&&!PRL.lote.rodando&&PRL.nIdx===3");
+  });
+  await t.test('modo da lista "Por exame": Categoria > Exame > Acesso com a data em cada acesso, contadores e filtros iguais, preferência lembrada',async()=>{
+    await ev("SM.d.prelConf={};PRL.estado={};PRL.filtro={texto:'',de:'',ate:'',so:''};go('preliminares');0");await ate("document.querySelector('.prl-n0')");
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-modo button')].map(b=>b.textContent+':'+b.getAttribute('aria-pressed'))"),['Por dia:true','Por exame:false']);
+    await ev("document.querySelectorAll('.prl-modo button')[1].click()");await ate("!document.querySelector('.prl-n0')");
+    assert.equal(await ev("localStorage.getItem('bcbr_prl_modo')"),'exame');
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n1 > summary > span:first-child')].map(s=>s.textContent)"),['Tomografia','Ultrassom','Ressonância']);
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n1 > summary .prl-pend')].map(s=>s.textContent)"),['2 faltam conferir','3 faltam conferir','1 falta conferir']);
+    assert.match(await ev("document.getElementById('prl_pend').textContent"),/6 faltam conferir/);
+    await ev("document.querySelector('.prl-n1[data-k=\"c1|*|Ultrassom\"]>summary').click()");await ate("document.querySelector('.prl-n2')");
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n2 > summary > span:first-child')].map(s=>s.textContent)"),['Doppler arterial de MMII','Doppler de carótidas e vertebrais']);
+    await ev("document.querySelector('.prl-n2[data-k*=\"carótidas\"]>summary').click()");await ate("document.querySelectorAll('.prl-n3').length===2");
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n3 .prl-meta')].map(s=>s.textContent)"),['12/11/2026 · Chefe A.','11/11/2026 · Chefe B.']);   // dia em cada acesso, mais recente primeiro
+    // filtros e conferidos valem neste modo
+    await ev("SM.d.prelConf={'9000101':'2026-11-13T09:00:00'};PRL.filtro={texto:'',de:'',ate:'',so:'naoconf'};render();0");await ate("document.querySelector('.prl-n1')");
+    assert.deepEqual(await ev("[...document.querySelectorAll('.prl-n1 > summary .prl-pend')].map(s=>s.textContent)"),['2 faltam conferir','2 faltam conferir','1 falta conferir']);
+    assert.match(await ev("document.getElementById('prl_cont').textContent"),/^5 laudos de 6$/);
+    await ev("(()=>{const q=document.getElementById('prl_q');q.value='tórax';q.dispatchEvent(new Event('input',{bubbles:true}))})()");
+    await ate("document.querySelectorAll('.prl-n1').length===1&&document.querySelector('.prl-n1 > summary > span').textContent==='Tomografia'");
+    assert.match(await ev("document.getElementById('prl_pend').textContent"),/1 falta conferir/);
+    // Ctrl+P abre o acesso também neste modo
+    await ev("SM.d.prelConf={};prelLimpa();PRL.estado={};bgAbre();0");await ate("document.querySelector('.bg-in')");
+    await digita('anterogrado');await ev("document.querySelector('.bg-it').click()");
+    await ate("document.querySelector('.prl-n1[data-k=\"c1|*|Ultrassom\"] .prl-n3[data-ac=\"9000101\"] mark')");
+    await ev("prelModoSet('dia');prelLimpa();PRL.estado={};0");await ate("document.querySelector('.prl-n0')");
+    assert.equal(await ev("localStorage.getItem('bcbr_prl_modo')"),'dia');
   });
   await t.test('capturas e acessibilidade: claro/escuro, 375 px e PC; sem rolagem horizontal; alvos de toque',async()=>{
     await ev("PRL.estado={'d|2026-11-12':true,'c1|2026-11-12|Ultrassom':true,'c2|2026-11-12|Ultrassom|Doppler de carótidas e vertebrais':true,'a|9000101':true,'c|9000101|c':true,'c|9000101|d':true};PRL.pares={};render();0");

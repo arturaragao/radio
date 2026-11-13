@@ -180,6 +180,33 @@ function prelSalvaChave(){
   try{localStorage.setItem(PRL_LS,v)}catch(e){}
   PRL.itens=null;PRL.semChave=false;prelCarrega(true);
 }
+// ---- aba Config > Geral: "Chave dos laudos" (1.50.1) — a mesma chave da tela de configuração inicial, sem precisar apagar nada ----
+function prelCfgHtml(){
+  const tem=!!(()=>{try{return localStorage.getItem(PRL_LS)}catch(e){return ''}})();
+  return `<div class="card prl-chave prl-cfg"><h2>Chave dos laudos</h2>
+   <p class="mut">A mesma chave do Laudos (GitHub fine-grained, só o repositório <b>laudos-tutu-dados</b>, Contents: Read-only). Serve só para a página Preliminares e fica neste aparelho.</p>
+   <p class="mut" id="prl_cs">${tem?'Há uma chave salva neste aparelho.':'Nenhuma chave salva.'}</p>
+   <label>Chave <input id="prl_ck" type="password" autocomplete="off" placeholder="${tem?'cole outra para trocar':'cole a chave aqui'}"></label>
+   <div class="row"><button class="b" onclick="prelCfgSalva()">Salvar</button><button class="b s" onclick="prelCfgTesta()">Testar</button>${tem?'<button class="b s" onclick="prelCfgRemove()">Remover</button>':''}</div>
+   <p class="mut" id="prl_cm" role="status" aria-live="polite"></p></div>`;
+}
+const prelCfgMsg=t=>{const m=document.getElementById('prl_cm');if(m)m.textContent=t};
+function prelCfgSalva(){
+  const v=(document.getElementById('prl_ck')?.value||'').trim();if(!v){prelCfgMsg('Cole a chave primeiro.');return}
+  try{localStorage.setItem(PRL_LS,v)}catch(e){prelCfgMsg('Não consegui guardar neste aparelho.');return}
+  PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';
+  render();prelCfgMsg('Chave salva. Toque em Testar para conferir.');
+}
+function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
+async function prelCfgTesta(){
+  const digitada=(document.getElementById('prl_ck')?.value||'').trim();
+  if(!digitada&&!prelChave()){prelCfgMsg('Sem chave para testar.');return}
+  prelCfgMsg('Testando…');
+  try{
+    const r=await fetch('https://api.github.com/repos/'+PRL_REPO+'/contents/preliminares/indice.json',{cache:'no-store',headers:{Authorization:'Bearer '+(digitada||prelChave()),Accept:'application/vnd.github.raw','X-GitHub-Api-Version':'2022-11-28'}});
+    prelCfgMsg(r.ok?'Chave funcionando: enxerga os laudos.':r.status===404?'A chave entra, mas não enxerga preliminares/ (confira se é do repositório laudos-tutu-dados com Contents: Read-only).':r.status===401||r.status===403?'O GitHub recusou esta chave ('+r.status+').':'Não deu para testar agora (GitHub '+r.status+').');
+  }catch(e){prelCfgMsg(navigator.onLine?'Não consegui falar com o GitHub agora.':'Sem conexão. Teste de novo quando voltar.')}
+}
 function prelRepinta(){if(typeof tela!=='undefined'&&tela==='preliminares'&&typeof render==='function')render()}
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos}).length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
 function prelFiltroMuda(){

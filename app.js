@@ -1,4 +1,4 @@
-// Banco CBR app 1.50.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.50.1 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -3833,6 +3833,33 @@ function prelSalvaChave(){
   try{localStorage.setItem(PRL_LS,v)}catch(e){}
   PRL.itens=null;PRL.semChave=false;prelCarrega(true);
 }
+// ---- aba Config > Geral: "Chave dos laudos" (1.50.1) — a mesma chave da tela de configuração inicial, sem precisar apagar nada ----
+function prelCfgHtml(){
+  const tem=!!(()=>{try{return localStorage.getItem(PRL_LS)}catch(e){return ''}})();
+  return `<div class="card prl-chave prl-cfg"><h2>Chave dos laudos</h2>
+   <p class="mut">A mesma chave do Laudos (GitHub fine-grained, só o repositório <b>laudos-tutu-dados</b>, Contents: Read-only). Serve só para a página Preliminares e fica neste aparelho.</p>
+   <p class="mut" id="prl_cs">${tem?'Há uma chave salva neste aparelho.':'Nenhuma chave salva.'}</p>
+   <label>Chave <input id="prl_ck" type="password" autocomplete="off" placeholder="${tem?'cole outra para trocar':'cole a chave aqui'}"></label>
+   <div class="row"><button class="b" onclick="prelCfgSalva()">Salvar</button><button class="b s" onclick="prelCfgTesta()">Testar</button>${tem?'<button class="b s" onclick="prelCfgRemove()">Remover</button>':''}</div>
+   <p class="mut" id="prl_cm" role="status" aria-live="polite"></p></div>`;
+}
+const prelCfgMsg=t=>{const m=document.getElementById('prl_cm');if(m)m.textContent=t};
+function prelCfgSalva(){
+  const v=(document.getElementById('prl_ck')?.value||'').trim();if(!v){prelCfgMsg('Cole a chave primeiro.');return}
+  try{localStorage.setItem(PRL_LS,v)}catch(e){prelCfgMsg('Não consegui guardar neste aparelho.');return}
+  PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';
+  render();prelCfgMsg('Chave salva. Toque em Testar para conferir.');
+}
+function prelCfgRemove(){try{localStorage.removeItem(PRL_LS)}catch(e){}PRL.itens=null;PRL.pares={};PRL.semChave=false;PRL.erro='';render();prelCfgMsg('Chave removida deste aparelho.')}
+async function prelCfgTesta(){
+  const digitada=(document.getElementById('prl_ck')?.value||'').trim();
+  if(!digitada&&!prelChave()){prelCfgMsg('Sem chave para testar.');return}
+  prelCfgMsg('Testando…');
+  try{
+    const r=await fetch('https://api.github.com/repos/'+PRL_REPO+'/contents/preliminares/indice.json',{cache:'no-store',headers:{Authorization:'Bearer '+(digitada||prelChave()),Accept:'application/vnd.github.raw','X-GitHub-Api-Version':'2022-11-28'}});
+    prelCfgMsg(r.ok?'Chave funcionando: enxerga os laudos.':r.status===404?'A chave entra, mas não enxerga preliminares/ (confira se é do repositório laudos-tutu-dados com Contents: Read-only).':r.status===401||r.status===403?'O GitHub recusou esta chave ('+r.status+').':'Não deu para testar agora (GitHub '+r.status+').');
+  }catch(e){prelCfgMsg(navigator.onLine?'Não consegui falar com o GitHub agora.':'Sem conexão. Teste de novo quando voltar.')}
+}
 function prelRepinta(){if(typeof tela!=='undefined'&&tela==='preliminares'&&typeof render==='function')render()}
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelFiltra(PRL.itens,{...PRL.filtro,lidos:PRL.lidos}).length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
 function prelFiltroMuda(){
@@ -5846,7 +5873,7 @@ function vConfig(){
   const tabs=[['geral','Geral'],['agenda','Agenda'],['atalhos','Atalhos'],['sync','Backup e recuperação'],['metodo','Metodologia']];
   return `<div class="subtabs">${tabs.map(([k,n])=>`<button class="${cfgTab===k?'on':''}" onclick="cfgTab='${k}';capKey=null;render()">${n}</button>`).join('')}</div>`+({geral:cfgGeral,agenda:vAgenda,atalhos:cfgAtalhos,sync:cfgSync,metodo:cfgMetodo}[cfgTab])();
 }
-function cfgGeral(){
+function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){
   const S=statsPor(q=>q._a);
   return `<div class="card"><h2>Aparência</h2><p class="row"><label>Tamanho do texto <input id="c_fs" type="range" min="80" max="125" step="1" value="${cfg.fs||93}" oninput="cfg.fs=+this.value;aplicaTema();$('#fsv').textContent=this.value+'%'" onchange="persist('_est')" style="width:200px"><b id="fsv">${cfg.fs||93}%</b></label> <button class="b s" onclick="cfg.fs=93;aplicaTema();persist('_est');render()">Padrão</button></p><div class="row">${[['auto','Automático'],['claro','Claro'],['escuro','Escuro']].map(([k,n])=>`<button class="b ${cfg.tema===k?'':'s'}" onclick="cfg.tema='${k}';saveL('cbr_tema',cfg.tema);aplicaTema();persist('_est');render()">${n}</button>`).join('')}</div></div>
   <div class="card"><h2>Estudo</h2>

@@ -1,5 +1,9 @@
 # Banco CBR (app)
 
+## 1.50.1 — 12/11/2026 — "Chave dos laudos" na aba Config (ramo `config-chave-laudos`, local)
+
+O campo da chave do repositório `laudos-tutu-dados` (`bcbr_gh_token_dados`) agora também está em Config > Geral (card "Chave dos laudos": explicação, Salvar, Testar contra `preliminares/indice.json`, Remover); antes só aparecia na tela de configuração inicial e na página Preliminares quando faltava chave. Código em `build/preliminares.js` (`prelCfgHtml`, `prelCfgSalva`, `prelCfgTesta`, `prelCfgRemove`), ligado por troca em `montar.py` (`cfgGeral` + card). Teste: subteste em `teste/preliminares-browser.test.js`. Versão 1.50.1.
+
 ## 1.50.0 — 12/11/2026 — página Preliminares (ramo `preliminares`, local, não publicada)
 
 Nova aba "Preliminares" (entre Notas e Questões): laudos preliminar x definitivo dos pares gravados pelo robô no repo PRIVADO `arturaragao/laudos-tutu-dados` (contrato: `Ditado-Laudos-ui/docs/robo-pacs-novo/FORMATO-PARES.md`; `preliminares/indice.json`, `preliminares/pares/<acesso>.json`, `preliminares/lidos.json`, só leitura). Código em `build/preliminares.js` (+ `.css`), ligado em `montar.py`; nada dos dados fica no repo do app, no cache do SW ou no IndexedDB (só memória da página).

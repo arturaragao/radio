@@ -37,3 +37,4 @@
 .prl-leg{font-size:.8rem;margin:0 0 6px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media(max-width:520px){.prl-topo h1{font-size:1.6rem}.prl-topo{margin-top:12px}.prl-n3{margin-left:2px}.prl-filtros label:not(.prl-busca){flex:1 1 40%}.prl-filtros input,.prl-filtros select{width:100%}}
+.prl-cfg{max-width:560px}.prl-cfg .row{gap:8px;flex-wrap:wrap}

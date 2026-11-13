@@ -2,7 +2,7 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.50.0"
+VERSAO = "1.50.1"
 js = open(f"{R}/fonte/artefato-app.js", encoding="utf8").read()
 js = js.split("<script>", 1)[1].rsplit("</script>", 1)[0]
 head = open(f"{R}/fonte/artefato-head.html", encoding="utf8").read()
@@ -117,6 +117,8 @@ troca("['semana','Semana'],['questoes','Questões'],", "['semana','Calendário']
 troca("base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map", "for(const [k,antes] of [['tarefas','semana'],['notas','tarefas'],['preliminares','notas']]){if(o.length&&!o.includes(k))o.splice(o.indexOf(antes)+1,0,k)}base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map")
 # 1.50.0: página Preliminares (laudos preliminar x definitivo do repo privado de dados), entre Notas e Questões
 troca("['notas','Notas'],['questoes','Questões'],", "['notas','Notas'],['preliminares','Preliminares'],['questoes','Questões'],")
+# 1.50.1: "Chave dos laudos" na aba Config > Geral (campo, salvar, testar, remover)
+troca("function cfgGeral(){", "function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){")
 troca("quiz:vQuiz,", "quiz:vQuizQ,questoes:vQuestoes,")
 troca("function go(t,s){tela=t;", "function go(t,s){if(t==='questoes'&&qAbre())return;if(t==='tarefas')smkIni();tela=t;")
 troca("const ativa=tela==='quiz'||tela==='fim'?'':", "const ativa=tela==='quiz'?'questoes':tela==='fim'?'':")

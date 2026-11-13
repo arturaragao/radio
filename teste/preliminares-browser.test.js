@@ -95,6 +95,23 @@ test('Radio 1.50: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     assert.equal(await ev("window.__auth"),'Bearer ghp_chave_de_teste');
     assert.equal(await ev("localStorage.getItem('bcbr_gh_token_dados')"),'ghp_chave_de_teste');
   });
+  await t.test('aba Config > Geral tem a "Chave dos laudos": salvar, testar e remover',async()=>{
+    await ev("window.__semAcesso=true;cfgTab='geral';go('config');0");
+    await ate("document.getElementById('prl_ck')");
+    assert.match(await ev("document.querySelector('.prl-cfg').textContent"),/laudos-tutu-dados/);
+    await ev("document.getElementById('prl_ck').value='ghp_errada';prelCfgTesta();0");
+    await ate("/recusou|não enxerga/.test(document.getElementById('prl_cm').textContent)");
+    await ev("document.getElementById('prl_ck').value='ghp_chave_de_teste';prelCfgSalva();0");
+    assert.equal(await ev("localStorage.getItem('bcbr_gh_token_dados')"),'ghp_chave_de_teste');
+    assert.match(await ev("document.getElementById('prl_cs').textContent"),/Há uma chave salva/);
+    await ev("prelCfgTesta();0");
+    await ate("/funcionando/.test(document.getElementById('prl_cm').textContent)");
+    await ev("prelCfgRemove();0");
+    assert.equal(await ev("localStorage.getItem('bcbr_gh_token_dados')"),null);
+    assert.match(await ev("document.getElementById('prl_cs').textContent"),/Nenhuma chave/);
+    await ev("document.getElementById('prl_ck').value='ghp_chave_de_teste';prelCfgSalva();window.__semAcesso=false;go('preliminares');0");
+    await ate("document.querySelector('.prl-n1')");
+  });
   await t.test('capturas e acessibilidade: claro/escuro, 375 px e PC; sem rolagem horizontal; alvos de toque',async()=>{
     await ev("PRL.estado={'c1|Ultrassom':true,'c2|Ultrassom|Doppler de carótidas e vertebrais':true,'a|9000101':true,'c|9000101|c':true,'c|9000101|d':true};PRL.pares={};render();0");
     await ate("document.querySelector('.prl-sub[open] del')");

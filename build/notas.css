@@ -61,7 +61,7 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-menu-bloco button:hover{background:var(--card2)}
 /* barra fixa de formatação (topo da página e painel das páginas) */
 .nt-barra{min-width:0}
-.nt-barra-l{display:flex;align-items:center;gap:2px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.nt-barra-l{display:flex;align-items:center;justify-content:center;gap:2px;overflow-x:auto;scrollbar-width:none;padding:2px}
 .nt-barra-l::-webkit-scrollbar{display:none}
 .nt-barra button{flex:none;min-width:34px;min-height:34px;border:0;background:none;color:var(--tx);font:inherit;font-size:.95rem;cursor:pointer;padding:0 8px;border-radius:6px;touch-action:manipulation}
 .nt-barra button:hover,.nt-barra button.on{background:var(--card2)}

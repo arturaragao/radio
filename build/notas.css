@@ -224,6 +224,8 @@ body.nt-aba-pg>main{display:none}
 .nt-busca-c button:hover{background:var(--card2)}
 .nt-busca-hit{background:color-mix(in srgb,var(--pri) 38%,transparent);border-radius:2px}
 .nt-busca-hit.atual{background:var(--pri);color:var(--on-pri)}
+/* 1.57: recuo de bloco (Tab): decoração nt-rec + --rec = nível (1 nível = 28px) */
+.nt-pm .nt-rec{margin-left:calc(var(--rec,0)*28px)!important}
 .nt-bsel{background:color-mix(in srgb,var(--pri) 24%,transparent);outline:2px solid color-mix(in srgb,var(--pri) 70%,transparent);outline-offset:1px;border-radius:4px}
 .nt-rubber{position:fixed;z-index:960;pointer-events:none;border:1px solid var(--pri);background:color-mix(in srgb,var(--pri) 18%,transparent);border-radius:3px}
 .nt-lemb{display:inline-block;padding:0 7px;border-radius:99px;background:color-mix(in srgb,var(--pri) 22%,var(--card2));border:1px solid color-mix(in srgb,var(--pri) 50%,var(--bd));color:var(--tx);font-size:.88em;cursor:pointer;white-space:nowrap}

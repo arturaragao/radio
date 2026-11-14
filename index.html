@@ -817,6 +817,8 @@ body.nt-aba-pg>main{display:none}
 .nt-busca-c button:hover{background:var(--card2)}
 .nt-busca-hit{background:color-mix(in srgb,var(--pri) 38%,transparent);border-radius:2px}
 .nt-busca-hit.atual{background:var(--pri);color:var(--on-pri)}
+/* 1.57: recuo de bloco (Tab): decoração nt-rec + --rec = nível (1 nível = 28px) */
+.nt-pm .nt-rec{margin-left:calc(var(--rec,0)*28px)!important}
 .nt-bsel{background:color-mix(in srgb,var(--pri) 24%,transparent);outline:2px solid color-mix(in srgb,var(--pri) 70%,transparent);outline-offset:1px;border-radius:4px}
 .nt-rubber{position:fixed;z-index:960;pointer-events:none;border:1px solid var(--pri);background:color-mix(in srgb,var(--pri) 18%,transparent);border-radius:3px}
 .nt-lemb{display:inline-block;padding:0 7px;border-radius:99px;background:color-mix(in srgb,var(--pri) 22%,var(--card2));border:1px solid color-mix(in srgb,var(--pri) 50%,var(--bd));color:var(--tx);font-size:.88em;cursor:pointer;white-space:nowrap}
@@ -1191,7 +1193,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.56.0</small></div>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.57.0</small></div>
 <div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
 <main id="app"></main>
@@ -1199,5 +1201,5 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.56.0"</script><script src="shim.js?v=1.56.0"></script>
+<script>window.BCBR_VERSAO="1.57.0"</script><script src="shim.js?v=1.57.0"></script>
 </body></html>

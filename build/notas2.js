@@ -94,20 +94,21 @@ document.addEventListener('keydown',e=>{
 const NT_BSEL_PK=()=>NT.bselPK||(NT.bselPK=new TT.pm.state.PluginKey('ntBsel'));
 const ntBselPos=s=>NT_BSEL_PK().getState(s).pos;
 const ntBselMeta=(tr,pos)=>tr.setMeta(NT_BSEL_PK(),{pos});
+let NT_BSEL_OBS=null;   // 1.57: quem quiser acompanhar as posições durante uma sequência de transações (Tab bloco a bloco)
 const ntBselIntervalos=(doc,pos)=>pos.slice().sort((a,b)=>a-b).map(p=>{const node=doc.nodeAt(p);return {from:p,to:p+node.nodeSize,node}});
 function ntBselExt(c){
   return TT.Extension.create({name:'selBlocos',addProseMirrorPlugins(){
     const {Plugin}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view,K=NT_BSEL_PK();
     const limpa=v=>{if(K.getState(v.state).pos.length)v.dispatch(ntBselMeta(v.state.tr,[]))};
     return [new Plugin({key:K,
-      state:{init:()=>({pos:[]}),apply(tr,v){const m=tr.getMeta(K);if(m)return {pos:m.pos};if(!tr.docChanged||!v.pos.length)return v;return tr.getMeta('appendedTransaction')?{pos:v.pos.map(p=>tr.mapping.map(p))}:{pos:[]}}},   // (ids e nó final entram como transações anexadas: só acompanham)
+      state:{init:()=>({pos:[]}),apply(tr,v){if(NT_BSEL_OBS)NT_BSEL_OBS(tr);const m=tr.getMeta(K);if(m)return {pos:m.pos};if(!tr.docChanged||!v.pos.length)return v;return tr.getMeta('appendedTransaction')?{pos:v.pos.map(p=>tr.mapping.map(p))}:{pos:[]}}},   // (ids e nó final entram como transações anexadas: só acompanham)
       props:{
         decorations(s){const p=K.getState(s).pos;return p.length?DecorationSet.create(s.doc,p.map(x=>Decoration.node(x,x+s.doc.nodeAt(x).nodeSize,{class:'nt-bsel'}))):null},
         handleKeyDown(v,e){
           const p=K.getState(v.state).pos;if(!p.length)return false;
           if(e.key==='Escape'){limpa(v);return true}
           if(e.key==='Delete'||e.key==='Backspace'){ntBselApaga(v,p);return true}
-          if(e.key==='Tab'){ntBselTab(v,p,e.shiftKey);return true}
+          if(e.key==='Tab'){ntBselTab(c.ed,p,e.shiftKey);return true}
           if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&e.key.length===1)limpa(v);   // digitar volta ao texto normal
           return false;
         },
@@ -134,32 +135,63 @@ function ntBselExt(c){
       }})];
   }});
 }
+// 1.57: os nós do grupo prontos para copiar/mover: item de lista (que só existe dentro de uma lista) vai embrulhado na lista do pai; itens seguidos da mesma lista, na mesma.
+function ntBselNos(doc,rs){
+  const out=[];let ult=null;
+  for(const r of rs){
+    if(!ntEhItem(r.node)){out.push(r.node);ult=null;continue}
+    const $=doc.resolve(r.from),lista=$.parent,ini=$.before();
+    if(ult&&ult.ini===ini){ult.itens.push(r.node);continue}
+    ult={ini,lista,itens:[r.node]};out.push(ult);
+  }
+  return out.map(x=>x.itens?x.lista.type.create('id' in x.lista.attrs?{...x.lista.attrs,id:null}:x.lista.attrs,x.itens):x);
+}
 function ntBselCopia(v,pos,e){
-  const {Slice,Fragment}=TT.pm.model,nodes=ntBselIntervalos(v.state.doc,pos).map(r=>r.node);
+  const {Slice,Fragment}=TT.pm.model,nodes=ntBselNos(v.state.doc,ntBselIntervalos(v.state.doc,pos));
   const {dom,text}=v.serializeForClipboard(new Slice(Fragment.from(nodes),0,0));
   e.clipboardData.setData('text/html',dom.innerHTML);e.clipboardData.setData('text/plain',text);e.preventDefault();
 }
-// Apaga o grupo numa transação só; se o pai ficaria sem filhos, sobra um parágrafo vazio.
+// Tira o nó de `p`; se o pai ficaria vazio: lista some junto (e a vez do pai dela), toggle/destaque/topo ficam com um parágrafo vazio.
+function ntBselRemove(tr,p){
+  const doc=tr.doc,n=doc.nodeAt(p),$=doc.resolve(p),pai=$.parent;
+  if(pai.childCount>1||pai.type.name==='listItem'||pai.type.name==='taskItem')return void tr.delete(p,p+n.nodeSize);
+  if(NT_LISTAS.includes(pai.type.name))return ntBselRemove(tr,$.before());
+  tr.replaceWith(p,p+n.nodeSize,doc.type.schema.nodes.paragraph.create());
+}
+// Apaga o grupo (qualquer nível, de trás para frente para as posições não se mexerem) numa transação só.
 function ntBselApaga(v,pos){
-  const {state}=v,rs=ntBselIntervalos(state.doc,pos),tr=state.tr,pai=state.doc.resolve(rs[0].from).parent;
-  if(rs.length===pai.childCount)tr.replaceWith(rs[0].from,rs[rs.length-1].to,state.schema.nodes.paragraph.create());
-  else for(const r of rs.slice().reverse())tr.delete(r.from,r.to);
+  const {state}=v,rs=ntBselIntervalos(state.doc,pos),tr=state.tr;
+  for(const r of rs.slice().reverse())ntBselRemove(tr,r.from);
   try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(Math.min(rs[0].from,tr.doc.content.size)),-1))}catch(e){}
   v.dispatch(ntBselMeta(tr,[]).scrollIntoView());
 }
 const ntBselPosicoes=(ini,nodes)=>{let p=ini;return nodes.map(n=>{const x=p;p+=n.nodeSize;return x})};
-// Tab: o grupo entra no toggle logo acima (vira os últimos filhos dele). Shift+Tab: sai do toggle em que está (vira irmão logo depois dele).
-function ntBselTab(v,pos,sai){
-  const {state}=v,doc=state.doc,rs=ntBselIntervalos(doc,pos),$=doc.resolve(rs[0].from),pai=$.parent,idx=$.index(),tr=state.tr;
-  const ini=rs[0].from,fim=rs[rs.length-1].to,nodes=rs.map(r=>r.node);let novo,abre=null;
+// Tab: o grupo entra no toggle logo acima (vira os últimos filhos dele); sem toggle em cima ganha recuo (1.57, `indent`: no máximo 1 nível abaixo do bloco anterior).
+// Shift+Tab: tira o recuo; sem recuo, sai do toggle em que está (vira irmão logo depois dele). Grupo que não é um trecho seguido de blocos do mesmo pai
+// (níveis misturados, itens de lista) vai bloco a bloco, com a mesma regra do cursor (`ntAninha`).
+function ntBselTab(ed,pos,sai){
+  const v=ed.view,{state}=v,doc=state.doc,rs=ntBselIntervalos(doc,pos),$=doc.resolve(rs[0].from),pai=$.parent,idx=$.index();
+  const partes=[];   // trechos seguidos de irmãos
+  for(const r of rs){const pp=doc.resolve(r.from).parent,u=partes[partes.length-1];if(u&&u.pai===pp&&u.rs[u.rs.length-1].to===r.from)u.rs.push(r);else partes.push({pai:pp,rs:[r]})}
+  if(rs.some(r=>ntEhItem(r.node)))return ntBselPorBloco(ed,rs,sai);
+  if(partes.length>1){   // níveis misturados: o recuo vale em cada trecho, e a seleção continua
+    const ok=sai?rs.some(r=>(r.node.attrs.indent||0)>0):partes.every(u=>{const i=doc.resolve(u.rs[0].from).index(),a=i?u.pai.child(i-1):null;return a&&a.type.name!=='details'&&!NT_LISTAS.includes(a.type.name)});
+    if(!ok)return ntBselPorBloco(ed,rs,sai);
+    for(const u of partes.slice().reverse())ntBselRecuo(v,u.rs,sai?-1:1,pos);
+    return;
+  }
+  const tr=state.tr,ini=rs[0].from,fim=rs[rs.length-1].to,nodes=rs.map(r=>r.node);let novo,abre=null;
   if(!sai){
-    const ant=idx>0?pai.child(idx-1):null;if(!ant||ant.type.name!=='details')return;
+    const ant=idx>0?pai.child(idx-1):null;if(!ant)return;
+    if(NT_LISTAS.includes(ant.type.name))return ntBselPorBloco(ed,rs,sai);
+    if(ant.type.name!=='details')return void ntBselRecuo(v,rs,1,pos);
     const antPos=ini-ant.nodeSize,cont=ant.lastChild,fimC=antPos+ant.nodeSize-2,vazio=cont.childCount===1&&cont.firstChild.type.name==='paragraph'&&!cont.firstChild.content.size;
     tr.delete(ini,fim);   // (depois do ponto de entrada: não o desloca)
     novo=vazio?fimC-cont.firstChild.nodeSize:fimC;
     if(vazio)tr.replaceWith(novo,fimC,nodes);else tr.insert(novo,nodes);
     ntAbertoSalva(ant.attrs.id,true);abre=antPos;
   }else{
+    if(rs.some(r=>(r.node.attrs.indent||0)>0))return void ntBselRecuo(v,rs,-1,pos);
     if(pai.type.name!=='detailsContent')return;
     const d1=$.depth-1,detPos=$.before(d1),destino=detPos+$.node(d1).nodeSize,todos=rs.length===pai.childCount;
     tr.insert(destino,nodes);
@@ -169,6 +201,27 @@ function ntBselTab(v,pos,sai){
   try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(novo+1)))}catch(e){}
   v.dispatch(ntBselMeta(tr,ntBselPosicoes(novo,nodes)).scrollIntoView());
   if(abre!=null){const dom=v.nodeDOM(abre);if(dom instanceof Element)ntPoeAberto(dom,true)}
+}
+// 1.57: soma `d` (+1/-1) ao recuo dos blocos seguidos `rs` (de um mesmo pai) e dos blocos mais recuados que vêm logo depois deles (os "filhos"); depois
+// nenhum bloco fica mais de 1 nível abaixo do anterior (o 1º do pai fica sem recuo). `manter`: posições da seleção que continuam. false = nada mudou.
+function ntBselRecuo(v,rs,d,manter){
+  const {state}=v,doc=state.doc,$=doc.resolve(rs[0].from),pai=$.parent,i0=$.index(),ini=$.start();
+  if(!NT_PAIS.has(pai.type.name))return false;
+  const niv=[];pai.forEach(n=>niv.push(n.attrs.indent||0));
+  if(d>0&&(!i0||niv[i0]>niv[i0-1]))return false;
+  let i1=i0+rs.length-1;const base=niv[i1];while(i1+1<niv.length&&niv[i1+1]>base)i1++;
+  const novo=niv.map((x,i)=>i>=i0&&i<=i1?Math.max(0,x+d):x);
+  novo[0]=0;for(let i=1;i<novo.length;i++)novo[i]=Math.min(novo[i],novo[i-1]+1);
+  const tr=state.tr;let mudou=false;
+  pai.forEach((n,off,i)=>{if(novo[i]!==niv[i]){tr.setNodeMarkup(ini+off,undefined,{...n.attrs,indent:novo[i]||null});mudou=true}});
+  if(!mudou)return false;
+  if(manter)tr.setMeta(NT_BSEL_PK(),{pos:manter});
+  v.dispatch(tr.scrollIntoView());return true;
+}
+function ntBselPorBloco(ed,rs,sai){
+  let ps=rs.map(r=>r.from);NT_BSEL_OBS=tr=>{ps=ps.map(p=>tr.mapping.map(p))};
+  try{for(let i=0;i<ps.length;i++){const doc=ed.state.doc;if(!doc.nodeAt(ps[i]))continue;const b=ntBlocoPos(doc,ps[i]);if(b&&b.pos===ps[i])ntAninha(ed,b,sai)}}
+  finally{NT_BSEL_OBS=null}
 }
 // Soltar o grupo arrastado pela alça: vai para a fronteira entre blocos do nível onde caiu (topo ou conteúdo de toggle).
 function ntBselSolta(v,e,pos){
@@ -182,13 +235,15 @@ function ntBselSolta(v,e,pos){
   });
   const ini=rs[0].from,fim=rs[rs.length-1].to;if(dest>=ini&&dest<=fim)return;   // soltou em cima de si mesmo
   for(const x of rs)if(dest>x.from&&dest<x.to)return;
-  const tr=state.tr,nodes=rs.map(x=>x.node);
-  for(const x of rs.slice().reverse())tr.delete(x.from,x.to);
+  const nodes=ntBselNos(doc,rs),$d=doc.resolve(dest),{Fragment}=TT.pm.model;
+  if(!$d.parent.canReplace($d.index(),$d.index(),Fragment.from(nodes)))return;
+  const tr=state.tr;
+  for(const x of rs.slice().reverse())ntBselRemove(tr,x.from);
   const at=tr.mapping.map(dest);tr.insert(at,nodes);
   try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(at+1)))}catch(x){}
   v.dispatch(ntBselMeta(tr,ntBselPosicoes(at,nodes)).scrollIntoView());
 }
-// Retângulo de arrasto. mousedown em margem/fundo (fora de qualquer bloco de texto) começa; os blocos do nível onde começou que ele cruza ficam selecionados.
+// Retângulo de arrasto. mousedown em margem/fundo (fora de qualquer bloco de texto) começa; as células que ele cruza (ntRubberPos, qualquer nível) ficam selecionadas.
 let ntUltPonteiro='mouse',NTR=null;
 document.addEventListener('pointerdown',e=>{ntUltPonteiro=e.pointerType},true);
 const NT_TEXTO_SEL='p,h1,h2,h3,li,summary,blockquote,hr,img,a,button,input,select,textarea,label,[data-type="detailsSummary"],.nt-plink,.nt-callout-c,.nt-lemb,.nt-alca,.nt-menu-bloco,.nt-barra,.nt-slash,.nt-pop,.nt-busca,.nt-bolha,.nt-modal,.nt-topo,.nt-lat,.nt-pan-topo,.nt-pan-titulo,.nt-atalhos,.nt-seta';
@@ -202,12 +257,9 @@ document.addEventListener('mousedown',e=>{
   if(e.button!==0||ntUltPonteiro!=='mouse'||NTR)return;
   const t=e.target,c=ntBselCtx(t);if(!c||t.closest(NT_TEXTO_SEL))return;
   const pm=c.el.querySelector('.ProseMirror');if(!pm||t.closest('.nt-ed')&&!pm.contains(t)&&t!==pm&&t.closest('.nt-ed')!==c.el)return;
-  const v=c.ed.view,det=t.closest('[data-type="detailsContent"]');   // nível: conteúdo do toggle onde começou, ou o topo
-  let cont;
-  if(det&&pm.contains(det)){const ini=v.posAtDOM(det,0);cont={ini,node:v.state.doc.resolve(ini).parent}}else cont={ini:0,node:v.state.doc};
   e.preventDefault();
   const sc=()=>c===NP?c.el.closest('.nt-pan-corpo'):null,off=()=>({x:sc()?sc().scrollLeft:scrollX,y:sc()?sc().scrollTop:scrollY});
-  NTR={c,cont,x0:e.clientX+off().x,y0:e.clientY+off().y,x:e.clientX,y:e.clientY,ativo:false,box:null,raf:0,pos:null,off,sc};
+  NTR={c,x0:e.clientX+off().x,y0:e.clientY+off().y,x:e.clientX,y:e.clientY,ativo:false,box:null,raf:0,pos:null,off,sc};
 },true);
 document.addEventListener('mousemove',e=>{
   const r=NTR;if(!r)return;r.x=e.clientX;r.y=e.clientY;
@@ -215,18 +267,27 @@ document.addEventListener('mousemove',e=>{
     r.ativo=true;r.box=document.createElement('div');r.box.className='nt-rubber';document.body.appendChild(r.box);try{getSelection().removeAllRanges()}catch(x){}}
   e.preventDefault();ntRubberQuadro();
 },true);
-// Blocos do nível `ini` que o retângulo cruza. Se cruza um toggle aberto SÓ pelo conteúdo (não pela linha do título) e nenhum outro bloco do nível,
-// desce: seleciona os filhos que cruza, no nível deles (como no Notion). Cruzando a linha do título, ou mais de um bloco do nível, vale o bloco inteiro.
+// Células que o retângulo cruza, em qualquer nível, na ordem do documento (1.57): parágrafo, título, imagem, tabela etc. valem por si; toggle e item
+// de lista só entram inteiros (com o que têm dentro) quando o retângulo passa pela linha própria (título / texto do item); senão, cada filho que o
+// retângulo cruza entra por si, no nível dele. Toggle fechado não tem filhos visíveis. Nunca entram pai e filho juntos.
 function ntRubberPos(v,node,ini,q){
-  const cruza=dom=>{if(!(dom instanceof Element))return false;const b=dom.getBoundingClientRect();return b.width+b.height>0&&b.bottom>=q.T&&b.top<=q.B&&b.right>=q.L&&b.left<=q.R},pos=[];
-  node.forEach((n,off)=>{const p=ini+off;if(cruza(v.nodeDOM(p)))pos.push(p)});   // getBoundingClientRect só dos filhos do nível
-  if(pos.length===1){
-    const p=pos[0],n=v.state.doc.nodeAt(p);
-    if(n.type.name==='details'&&n.childCount===2&&!cruza(v.nodeDOM(p+1))){
-      const filhos=ntRubberPos(v,n.lastChild,p+1+n.firstChild.nodeSize+1,q);if(filhos.length)return filhos;
+  const out=[],cruza=dom=>{if(!(dom instanceof Element))return false;const b=dom.getBoundingClientRect();return b.width+b.height>0&&b.bottom>=q.T&&b.top<=q.B&&b.right>=q.L&&b.left<=q.R};
+  const anda=(no,i0,desde)=>no.forEach((n,off,idx)=>{
+    if(idx<desde)return;const p=i0+off,nome=n.type.name;
+    if(NT_LISTAS.includes(nome))return anda(n,p+1,0);
+    if(nome==='details'){
+      if(n.childCount!==2)return;
+      if(cruza(v.nodeDOM(p+1)))return void out.push(p);
+      const dom=v.nodeDOM(p);if(dom instanceof Element&&dom.classList.contains('is-open'))anda(n.lastChild,p+1+n.firstChild.nodeSize+1,0);
+      return;
     }
-  }
-  return pos;
+    if(ntEhItem(n)){
+      if(cruza(v.nodeDOM(p+1)))return void out.push(p);
+      return anda(n,p+1,1);
+    }
+    if(cruza(v.nodeDOM(p)))out.push(p);
+  });
+  anda(node,ini,0);return out;
 }
 function ntRubberQuadro(){
   const r=NTR;if(!r||r.raf)return;
@@ -236,7 +297,7 @@ function ntRubberQuadro(){
     if(r.y<50)(s||window).scrollBy(0,-14);else if(r.y>innerHeight-50)(s||window).scrollBy(0,14);   // rolagem automática perto das bordas
     const o2=r.off(),x0=r.x0-o2.x,y0=r.y0-o2.y,L=Math.min(x0,r.x),T=Math.min(y0,r.y),R=Math.max(x0,r.x),B=Math.max(y0,r.y);
     Object.assign(r.box.style,{left:L+'px',top:T+'px',width:(R-L)+'px',height:(B-T)+'px'});
-    const v=r.c.ed.view,pos=ntRubberPos(v,r.cont.node,r.cont.ini,{L,T,R,B});
+    const v=r.c.ed.view,pos=ntRubberPos(v,v.state.doc,0,{L,T,R,B});
     if(JSON.stringify(pos)!==JSON.stringify(r.pos)){r.pos=pos;v.dispatch(ntBselMeta(v.state.tr,pos))}
     if(r.y<50||r.y>innerHeight-50)ntRubberQuadro();
   });
@@ -248,7 +309,7 @@ document.addEventListener('mouseup',()=>{
 // Alça ⋮⋮ de um bloco do grupo arrasta o grupo inteiro (chamado pelo dragstart da alça).
 function ntBselArrasta(c,e,bloco){
   const p=ntBselPos(c.ed.state);if(!p.length||!bloco||!p.includes(bloco.pos))return false;
-  const {Slice,Fragment}=TT.pm.model,v=c.ed.view,nodes=ntBselIntervalos(v.state.doc,p).map(r=>r.node);
+  const {Slice,Fragment}=TT.pm.model,v=c.ed.view,nodes=ntBselNos(v.state.doc,ntBselIntervalos(v.state.doc,p));
   c.grupoArrasto=p.slice();v.dragging={slice:new Slice(Fragment.from(nodes),0,0),move:true};
   const dom=v.nodeDOM(p[0]);if(dom instanceof Element)e.dataTransfer.setDragImage(dom,0,0);
   e.dataTransfer.effectAllowed='copyMove';e.dataTransfer.setData('text/plain','');return true;
@@ -663,7 +724,7 @@ function ntNotionChave(n){
 function ntNotionSemIds(n){
   if(Array.isArray(n))return n.map(ntNotionSemIds);
   if(!n||typeof n!=='object')return n;
-  const o={};for(const [k,v] of Object.entries(n))if(k!=='id')o[k]=ntNotionSemIds(v);return ntCanon(o);
+  const o={};for(const [k,v] of Object.entries(n))if(k!=='id'&&k!=='indent')o[k]=ntNotionSemIds(v);return ntCanon(o);   // (1.57: o recuo é das Notas, não vem do Notion)
 }
 function ntNotionDiff(antes,depois){
   const a=antes.map(b=>ntNotionChave(b.conteudo)),b=depois.map(ntNotionChave),n=a.length,m=b.length;
@@ -687,6 +748,7 @@ function ntNotionDiff(antes,depois){
 function ntNotionMantemIds(antes,depois){
   const n=JSON.parse(JSON.stringify(depois));
   if(antes?.attrs?.id)n.attrs={...n.attrs,id:antes.attrs.id};
+  if(antes?.attrs?.indent&&!n.attrs?.indent)n.attrs={...n.attrs,indent:antes.attrs.indent};   // 1.57: atualizar do Notion não perde o recuo feito aqui
   const usados=new Set(),filhos=antes?.content||[];
   if(n.content)n.content=n.content.map((f,i)=>{
     let j=filhos.findIndex((a,j)=>!usados.has(j)&&ntNotionChave(a)===ntNotionChave(f));

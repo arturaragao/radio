@@ -83,13 +83,13 @@ test('Radio 1.53: Notas (toggle por ">", Tab em imagem e linha comum, fechar tog
     await cursorEm('filho');await especial('Tab',8);
     d=await json();assert.deepEqual(tipos(d).slice(0,4),['bulletList','paragraph','bulletList','paragraph']);
     assert.equal(txt(d.content[1]),'filho');assert.equal(d.content[2].content.length,2);assert.equal(d.content[0].content.length,1);
-    // anterior parágrafo comum: ele vira o título de um toggle e a linha, o conteúdo
+    // anterior parágrafo comum (1.57: não vira mais toggle; a linha ganha recuo, como filha do parágrafo, no mesmo nível do documento)
     await reset(par('pai comum','id-pai'),par('filha'),par('fim'));
     await cursorEm('filha');await especial('Tab');
-    d=await json();assert.equal(d.content[0].type,'details');assert.equal(d.content[0].attrs.id,'id-pai','mantém o id do bloco');
-    assert.equal(txt(d.content[0].content[0]),'pai comum');assert.equal(txt(d.content[0].content[1]),'filha');assert.equal(txt(d.content[1]),'fim');
+    d=await json();assert.deepEqual(tipos(d).slice(0,3),['paragraph','paragraph','paragraph']);assert.equal(d.content[0].attrs.id,'id-pai','mantém o id do bloco');
+    assert.equal(d.content[1].attrs.indent,1);assert.equal(txt(d.content[1]),'filha');assert.equal(txt(d.content[2]),'fim');assert.ok(!d.content[2].attrs.indent);
     assert.equal(await ev('NT.ed.state.selection.$from.parent.textContent'),'filha','cursor na linha movida');
-    await especial('Tab',8);d=await json();assert.equal(txt(d.content[1]),'filha');
+    await especial('Tab',8);d=await json();assert.ok(!d.content[1].attrs.indent);assert.equal(txt(d.content[1]),'filha');
     // Tab de lista continua aninhando (1.41)
     await reset(lista(item('a'),item('b')));
     await cursorEm('b');await especial('Tab');d=await json();assert.equal(d.content[0].content.length,1);assert.equal(d.content[0].content[0].content[1].type,'bulletList');

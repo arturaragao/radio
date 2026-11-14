@@ -32,8 +32,8 @@ test('Radio 1.56: Notas (seleção por retângulo nos filhos do toggle; espaço 
     assert.deepEqual(await sel(),['Tabc']);
     await base();await arrastaDe('c','antes');
     assert.deepEqual(await sel(),['antes','Tabc']);
-    await base();await arrastaDe('b','fora');   // cruza filhos e um bloco de fora: nível de cima, toggle inteiro
-    assert.deepEqual(await sel(),['Tabc','fora']);
+    await base();await arrastaDe('b','fora');   // 1.57: cruza filhos (b, c) e um bloco de fora, sem a linha do título: células soltas, níveis misturados
+    assert.deepEqual(await sel(),['b','c','fora']);
   });
   await t.test('3: espaço numa linha dentro do toggle só insere espaço (início, meio, fim, linha vazia)',async()=>{
     for(const off of [0,1,3]){

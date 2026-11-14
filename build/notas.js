@@ -201,16 +201,6 @@ function ntItemSaiToggle(ed,b){
 }
 // 1.53: seleção no bloco recém-posto em `pos`: texto no mesmo ponto de antes; imagem/divisória selecionada.
 function ntSelBloco(tr,pos,node,off){const S=TT.pm.state;try{tr.setSelection(node.isTextblock?S.TextSelection.create(tr.doc,pos+1+Math.min(Math.max(off,0),node.content.size)):S.NodeSelection.create(tr.doc,pos))}catch(e){}}
-// 1.53: Tab numa linha logo depois de um parágrafo comum: o parágrafo anterior vira o título de um toggle (mesmo id, mesmo texto) e a linha, o conteúdo dele.
-function ntParaVirouToggle(ed,b,ant){
-  const {state,view}=ed,N=state.schema.nodes,ini=b.pos-ant.nodeSize,off=state.selection.from-b.pos,tam=b.node.nodeSize;
-  const det=N.details.create({id:ant.attrs.id},[N.detailsSummary.create(null,ant.content),N.detailsContent.create(null,b.node)]);
-  ntAbertoSalva(ant.attrs.id,true);
-  const tr=state.tr.replaceWith(ini,b.pos+tam,det);
-  ntSelBloco(tr,ini+2+ant.content.size+2,b.node,off);
-  view.dispatch(tr.scrollIntoView());const dom=view.nodeDOM(ini);if(dom instanceof Element)ntPoeAberto(dom,true);
-  return true;
-}
 // 1.53: Shift+Tab num bloco que é filho (2º em diante) de um item de lista: sai para logo depois da lista; os itens que vinham depois dele formam outra lista.
 function ntSaiDoItem(ed,b){
   const {state,view}=ed,doc=state.doc,$=doc.resolve(b.pos),item=$.parent,lista=$.node($.depth-1),iItem=$.index($.depth-1),listaPos=$.before($.depth-1);
@@ -235,8 +225,7 @@ function ntAninha(ed,b,sai){
   if(!sai){
     if(b.idx===0)return false;const ant=b.pai.child(b.idx-1);
     if(NT_LISTAS.includes(ant.type.name))return ntMovePara(ed,b,b.pos-2),true;   // 1.53: vira filho do último item da lista anterior
-    if(ant.type.name==='paragraph')return ntParaVirouToggle(ed,b,ant);   // 1.53: o parágrafo anterior vira o título de um toggle
-    if(ant.type.name!=='details')return false;
+    if(ant.type.name!=='details')return ntBselRecuo(ed.view,[{from:b.pos,node:b.node}],1,null);   // 1.57: qualquer outro bloco ganha recuo (vira filho do anterior, como no Notion)
     const ini=b.pos-ant.nodeSize,fimConteudo=ini+ant.nodeSize-2,conteudo=ant.lastChild;
     const soVazio=conteudo.childCount===1&&conteudo.firstChild.type.name==='paragraph'&&!conteudo.firstChild.content.size;
     if(soVazio){   // o parágrafo vazio que o toggle novo traz é substituído
@@ -248,6 +237,7 @@ function ntAninha(ed,b,sai){
     ntAbertoSalva(ant.attrs.id,true);const dom=ed.view.nodeDOM(ini);if(dom)ntPoeAberto(dom,true);
     return true;
   }
+  if((b.node.attrs?.indent||0)>0)return ntBselRecuo(ed.view,[{from:b.pos,node:b.node}],-1,null);   // 1.57: tira um nível de recuo
   if(ntEhItem(b.pai))return ntSaiDoItem(ed,b);   // 1.53: filho de um item de lista sai para depois da lista
   if(b.pai.type.name!=='detailsContent')return false;
   const $p=doc.resolve(b.pos),det=$p.before($p.depth-1),detNode=doc.nodeAt(det);
@@ -266,7 +256,7 @@ function ntNaTabela(state){
   return false;
 }
 function ntTab(ed,sai){
-  const grupo=ntBselPos(ed.state);if(grupo.length){ntBselTab(ed.view,grupo,sai);return true}   // blocos selecionados por retângulo: o grupo todo
+  const grupo=ntBselPos(ed.state);if(grupo.length){ntBselTab(ed,grupo,sai);return true}   // blocos selecionados por retângulo: o grupo todo
   if(ntNaTabela(ed.state))return false;
   const sel=ed.state.selection,b=sel.node?ntBlocoPos(ed.state.doc,sel.from):ntBlocoEm(ed.state.doc,sel.from);   // na linha do toggle, o bloco é o toggle inteiro
   if(b)ntAninha(ed,b,sai);return true;   // sempre consome Tab: não sai do editor
@@ -344,7 +334,7 @@ async function ntImgDados(img){
 function ntCopiaRica(c,e,corta){
   const ed=c.ed;if(!ed||!navigator.clipboard?.write||!window.ClipboardItem)return false;
   const v=ed.view,st=v.state,grupo=ntBselPos(st),{Slice,Fragment}=TT.pm.model,faixas=[];let slice;
-  if(grupo.length){const rs=ntBselIntervalos(st.doc,grupo);slice=new Slice(Fragment.from(rs.map(r=>r.node)),0,0);rs.forEach(r=>faixas.push([r.from,r.to]))}
+  if(grupo.length){const rs=ntBselIntervalos(st.doc,grupo);slice=new Slice(Fragment.from(ntBselNos(st.doc,rs)),0,0);rs.forEach(r=>faixas.push([r.from,r.to]))}
   else{if(st.selection.empty)return false;slice=st.selection.content();st.selection.ranges.forEach(r=>faixas.push([r.$from.pos,r.$to.pos]))}
   const pos=[];faixas.forEach(([de,ate])=>st.doc.nodesBetween(de,ate,(n,p)=>{if(n.type.name==='image'&&!pos.includes(p))pos.push(p)}));
   if(!pos.length)return false;
@@ -438,6 +428,37 @@ function ntIds(){
         if(id)vistos.add(id);
       });
       return mudou?tr.setMeta('addToHistory',false):null}})]},
+  });
+}
+
+// 1.57: recuo de bloco (Tab/Shift+Tab). `indent` (1, 2…; ausente = 0) em qualquer bloco de topo/toggle/destaque/citação: o bloco recuado é "filho" do anterior
+// menos recuado (como no Notion), sem mudar o schema nem o formato salvo ({id,atualizado,conteudo}; conteudo.attrs.indent). Máx. 1 nível abaixo do anterior;
+// o plugin normaliza (1º do pai sem recuo; colar/mover/apagar nunca deixam salto). A aparência é uma decoração (classe nt-rec + --rec), válida p/ nodeviews.
+function ntRecuoExt(){
+  return TT.Extension.create({name:'recuoBloco',
+    addGlobalAttributes(){return [{types:NT_COM_ID,attributes:{indent:{default:null,keepOnSplit:true,parseHTML:el=>{const n=parseInt(el.getAttribute('data-indent'),10);return n>0?Math.min(n,8):null},renderHTML:a=>a.indent?{'data-indent':a.indent}:{}}}}]},
+    addProseMirrorPlugins(){
+      const {Plugin,PluginKey}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view;
+      return [new Plugin({key:new PluginKey('recuoDeco'),props:{decorations(s){
+        const d=[];s.doc.descendants((n,pos,pai)=>{
+          if(n.isText)return false;
+          if(n.attrs?.indent>0&&pai&&NT_PAIS.has(pai.type.name))d.push(Decoration.node(pos,pos+n.nodeSize,{class:'nt-rec',style:'--rec:'+n.attrs.indent}));
+        });
+        return d.length?DecorationSet.create(s.doc,d):null}}}),
+      new Plugin({key:new PluginKey('recuoNorm'),appendTransaction(trs,antes,depois){
+        if(!trs.some(t=>t.docChanged))return null;
+        const tr=depois.tr;let mudou=false;
+        const norm=(pai,ini)=>{
+          let ant=-1;
+          pai.forEach((n,off,i)=>{
+            const x=n.attrs?.indent||0,ok=Math.min(x,i?ant+1:0);ant=ok;
+            if(ok!==x){tr.setNodeMarkup(ini+off,undefined,{...n.attrs,indent:ok||null});mudou=true}
+          });
+        };
+        norm(depois.doc,0);
+        depois.doc.descendants((pai,pp)=>{if(NT_PAIS.has(pai.type.name))norm(pai,pp+1)});
+        return mudou?tr.setMeta('addToHistory',false):null}})];
+    },
   });
 }
 
@@ -734,7 +755,7 @@ function ntExtensoes(c){
     E.HorizontalRule,E.Table.configure({resizable:true,renderWrapper:true,cellMinWidth:60}),E.TableRow,E.TableHeader,E.TableCell,ntToggle(),E.DetailsSummary,E.DetailsContent,ntDestaque(),ntImagem(),ntPaginaLink(),
     E.TextStyle.extend({addAttributes(){return {...this.parent?.(),codigo:{default:null,parseHTML:el=>el.hasAttribute('data-codigo')?true:null,renderHTML:a=>a.codigo?{'data-codigo':'true',class:'nt-code'}:{}}}}}),E.Color,E.BackgroundColor,E.UndoRedo,E.Dropcursor.configure({color:'#5687be',width:2}),E.Gapcursor,E.TrailingNode,
     E.Placeholder.configure({placeholder:({node})=>node.type.name==='detailsSummary'?'Toggle':node.type.name==='heading'?'Título':"Digite '/' para ver os comandos"}),
-    ntIds(),ntRegraToggle(),ntAtalhos(c),ntSlash(c),ntLembrete(),ntLembretePlugin(c),ntBuscaExt(),ntBselExt(c),
+    ntIds(),ntRecuoExt(),ntRegraToggle(),ntAtalhos(c),ntSlash(c),ntLembrete(),ntLembretePlugin(c),ntBuscaExt(),ntBselExt(c),
     TT.Extension.create({name:'envioImagem',addProseMirrorPlugins(){return [ntPluginEnvio()]}})];
 }
 // Separa os blocos que o editor aceita dos inválidos (plano corrompido): um bloco ruim não derruba a aba nem apaga as outras notas.
@@ -1123,10 +1144,10 @@ const NT_ATALHOS=[
   ['Criar blocos',[[['/'],'Menu de blocos: Título 1/2/3, Texto, Toggle, Lista, Lista numerada, Checklist, Citação, Destaque, Divisória, Imagem, Página (↑ ↓ escolhem, Enter aplica, Esc fecha)'],
     [['> '],'Toggle'],[['# ','## ','### '],'Título 1, 2, 3'],[['- ','* ','+ '],'Lista com marcadores'],[['1. '],'Lista numerada'],[['[] '],'Checklist'],[['---'],'Divisória'],
     [['Ctrl+Alt+1/2/3'],'Título 1, 2, 3'],[['Ctrl+Alt+0'],'Texto comum'],[['Ctrl+Shift+8'],'Lista com marcadores'],[['Ctrl+Shift+7'],'Lista numerada'],[['Ctrl+Shift+9'],'Checklist'],[['Ctrl+Shift+B'],'Citação'],[['Alt+A'],'Novo toggle no topo (também o botão +)']]],
-  ['Mover e aninhar',[[['Tab'],'Entra no toggle anterior; em lista, aninha o item. O 1º item de uma lista logo depois de um toggle entra no toggle'],
-    [['Shift+Tab'],'Sai do toggle; em lista, desaninha. Item de lista de nível mais alto dentro de um toggle sai para depois dele'],
+  ['Mover e aninhar',[[['Tab'],'Entra no toggle anterior; depois de outro bloco (texto, título, imagem…) recua um nível, como filho dele (no máximo 1 nível abaixo do anterior); em lista, aninha o item. O 1º item de uma lista logo depois de um toggle entra no toggle'],
+    [['Shift+Tab'],'Tira um nível de recuo; sem recuo, sai do toggle; em lista, desaninha. Item de lista de nível mais alto dentro de um toggle sai para depois dele'],
     [['⋮⋮'],'Alça à esquerda do bloco: arrastar muda a ordem; clicar/tocar abre Subir, Descer, Entrar, Sair, Apagar'],[['▶'],'Abre/fecha o toggle (o estado fica neste aparelho)'],[['Ctrl+Alt+T'],'Abre/fecha todos os toggles da página'],[['Ctrl+Enter'],'Abre/fecha o toggle onde está o cursor']]],
-  ['Selecionar blocos',[[['Arrastar por fora do texto'],'Desenha um retângulo: os blocos que ele cruza ficam selecionados (no toque não há retângulo)'],[['Delete','Backspace'],'Apaga o grupo de uma vez'],[['Ctrl+C','Ctrl+X'],'Copia ou recorta o grupo'],[['Tab','Shift+Tab'],'O grupo entra no toggle de cima ou sai do toggle'],[['⋮⋮'],'Arrastar a alça de um bloco do grupo move o grupo todo'],[['Esc','clique'],'Limpa a seleção']]],
+  ['Selecionar blocos',[[['Arrastar por fora do texto'],'Desenha um retângulo: cada célula (frase, imagem, item de lista) que ele cruza fica selecionada, em qualquer nível; o toggle inteiro só quando passa pela linha do título (no toque não há retângulo)'],[['Delete','Backspace'],'Apaga o grupo de uma vez'],[['Ctrl+C','Ctrl+X'],'Copia ou recorta o grupo'],[['Tab','Shift+Tab'],'O grupo entra no toggle de cima, recua ou sai do toggle (como com o cursor, bloco a bloco quando os níveis são misturados)'],[['⋮⋮'],'Arrastar a alça de um bloco do grupo move o grupo todo'],[['Esc','clique'],'Limpa a seleção']]],
   ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Alt+K'],'Ir para página (Quick Switcher estilo Notion)'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
   ['Lembretes, frases e histórico',[[['@'],'Lembrete: Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm. Vira um chip e uma tarefa do plano; clique no chip para mudar a data; apagar o chip não apaga a tarefa'],[['/ Frase'],'Insere uma frase-padrão salva (filtre digitando, Enter insere)'],[['✚ Frase'],'Salva o texto selecionado como frase-padrão'],[['📋'],'Renomear e apagar frases'],[['🕘 Histórico'],'Versões anteriores (precisa de internet): ver, restaurar a página ou um bloco como edição nova']]],
   ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Duplo clique na imagem'],'Abre a imagem grande (zoom, arrastar, Esc fecha). Mouse no canto de cima à direita: largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],

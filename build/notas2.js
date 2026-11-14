@@ -215,6 +215,19 @@ document.addEventListener('mousemove',e=>{
     r.ativo=true;r.box=document.createElement('div');r.box.className='nt-rubber';document.body.appendChild(r.box);try{getSelection().removeAllRanges()}catch(x){}}
   e.preventDefault();ntRubberQuadro();
 },true);
+// Blocos do nível `ini` que o retângulo cruza. Se cruza um toggle aberto SÓ pelo conteúdo (não pela linha do título) e nenhum outro bloco do nível,
+// desce: seleciona os filhos que cruza, no nível deles (como no Notion). Cruzando a linha do título, ou mais de um bloco do nível, vale o bloco inteiro.
+function ntRubberPos(v,node,ini,q){
+  const cruza=dom=>{if(!(dom instanceof Element))return false;const b=dom.getBoundingClientRect();return b.width+b.height>0&&b.bottom>=q.T&&b.top<=q.B&&b.right>=q.L&&b.left<=q.R},pos=[];
+  node.forEach((n,off)=>{const p=ini+off;if(cruza(v.nodeDOM(p)))pos.push(p)});   // getBoundingClientRect só dos filhos do nível
+  if(pos.length===1){
+    const p=pos[0],n=v.state.doc.nodeAt(p);
+    if(n.type.name==='details'&&n.childCount===2&&!cruza(v.nodeDOM(p+1))){
+      const filhos=ntRubberPos(v,n.lastChild,p+1+n.firstChild.nodeSize+1,q);if(filhos.length)return filhos;
+    }
+  }
+  return pos;
+}
 function ntRubberQuadro(){
   const r=NTR;if(!r||r.raf)return;
   r.raf=requestAnimationFrame(()=>{
@@ -223,11 +236,7 @@ function ntRubberQuadro(){
     if(r.y<50)(s||window).scrollBy(0,-14);else if(r.y>innerHeight-50)(s||window).scrollBy(0,14);   // rolagem automática perto das bordas
     const o2=r.off(),x0=r.x0-o2.x,y0=r.y0-o2.y,L=Math.min(x0,r.x),T=Math.min(y0,r.y),R=Math.max(x0,r.x),B=Math.max(y0,r.y);
     Object.assign(r.box.style,{left:L+'px',top:T+'px',width:(R-L)+'px',height:(B-T)+'px'});
-    const v=r.c.ed.view,pos=[];
-    r.cont.node.forEach((n,off)=>{   // getBoundingClientRect só dos filhos do nível
-      const p=r.cont.ini+off,dom=v.nodeDOM(p);if(!(dom instanceof Element))return;
-      const b=dom.getBoundingClientRect();if(b.bottom>=T&&b.top<=B&&b.right>=L&&b.left<=R)pos.push(p);
-    });
+    const v=r.c.ed.view,pos=ntRubberPos(v,r.cont.node,r.cont.ini,{L,T,R,B});
     if(JSON.stringify(pos)!==JSON.stringify(r.pos)){r.pos=pos;v.dispatch(ntBselMeta(v.state.tr,pos))}
     if(r.y<50||r.y>innerHeight-50)ntRubberQuadro();
   });

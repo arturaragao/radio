@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.55.0"
+VERSAO = "1.56.0"
+# 1.56.0: Notas — arrasto estilo Notion nos filhos do toggle; copiar blocos com imagens; clique na imagem só seleciona, duplo clique amplia
 # 1.55.0: laudos guardados no aparelho (opt-in); copiar acesso; copiar laudo; Notas: barra lateral só com texto
 # 1.54.0: Ctrl+P acha texto dentro dos laudos dos Preliminares (índice só em memória); Preliminares: lista Por dia / Por exame
 # 1.53.0: abre em Notas; Preliminares: conferido (plano), por dia, período rápido, rodapé do PACS fora, copiar preliminar/corrigido, rolagem estável

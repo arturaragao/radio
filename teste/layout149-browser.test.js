@@ -28,7 +28,7 @@ test('Radio 1.49: layout e imagens nas notas',{timeout:90000},async t=>{
     await ev("(()=>{let p=-1;NT.ed.state.doc.descendants((n,pos)=>{if(n.type.name==='image')p=pos});NT.ed.commands.setNodeSelection(p)})()");
     await ate("NT.ed.state.selection.node?.type.name==='image'&&document.querySelector('.nt-img')?.complete");
     await C.ctrl('c');await ate("window.__itens.length===1");
-    const r=await ev('window.__itens[0]');assert.deepEqual(r.tipos,['image/png']);assert.match(r.blob,/^image\/png:\d+$/);
+    const r=await ev('window.__itens[0]');assert.ok(r.tipos.includes('image/png'),'1.56: além do PNG, vão text/html e text/plain');assert.match(r.blob,/^image\/png:\d+$/);
   });
   await t.test('5: /Imagem abre o seletor de arquivo (image/*) e insere pela rotina do colar',async()=>{
     await ev("window.__cliques=0;HTMLInputElement.prototype.click=function(){if(this.type==='file')window.__cliques++};window.__ins=[];ntInsereImagem=(f,p,c)=>{window.__ins.push(f.name)};0");

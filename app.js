@@ -1,4 +1,4 @@
-// Banco CBR app 1.55.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.56.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -2125,11 +2125,33 @@ async function ntImgPng(img){
   c.getContext('2d').drawImage(img,0,0);
   return new Promise((ok,no)=>c.toBlob(r=>r?ok(r):no(new Error('png')),'image/png'));
 }
-function ntCopiaImagem(c){
-  const s=c.ed?.state.selection;if(s?.node?.type.name!=='image'||!navigator.clipboard?.write||!window.ClipboardItem)return false;   // sem suporte: o editor copia o nó
-  const img=c.ed.view.nodeDOM(s.from);if(!(img instanceof HTMLImageElement))return false;
-  const pronta=img.complete&&img.naturalWidth?Promise.resolve():new Promise((ok,no)=>{img.addEventListener('load',ok,{once:true});img.addEventListener('error',no,{once:true})});
-  navigator.clipboard.write([new ClipboardItem({'image/png':pronta.then(()=>ntImgPng(img))})]).then(()=>toast('Imagem copiada.'),()=>toast('Não consegui copiar a imagem.'));
+// 1.56: copiar blocos/células com imagens (Ctrl+C/Ctrl+X, grupo do retângulo ou seleção normal): text/html com <img> em data URL na ordem dos blocos (e data-nt-src com o
+// ./img/ original, para colar de volta nas Notas como bloco de imagem), text/plain só com o texto; uma imagem sozinha também vai como image/png. Sem imagem: copia normal.
+const ntImgPronta=img=>img.complete&&img.naturalWidth?Promise.resolve():new Promise((ok,no)=>{img.addEventListener('load',ok,{once:true});img.addEventListener('error',no,{once:true})});
+async function ntImgDados(img){
+  await ntImgPronta(img);
+  const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(img,0,0);
+  return c.toDataURL('image/jpeg',0.9);
+}
+function ntCopiaRica(c,e,corta){
+  const ed=c.ed;if(!ed||!navigator.clipboard?.write||!window.ClipboardItem)return false;
+  const v=ed.view,st=v.state,grupo=ntBselPos(st),{Slice,Fragment}=TT.pm.model,faixas=[];let slice;
+  if(grupo.length){const rs=ntBselIntervalos(st.doc,grupo);slice=new Slice(Fragment.from(rs.map(r=>r.node)),0,0);rs.forEach(r=>faixas.push([r.from,r.to]))}
+  else{if(st.selection.empty)return false;slice=st.selection.content();st.selection.ranges.forEach(r=>faixas.push([r.$from.pos,r.$to.pos]))}
+  const pos=[];faixas.forEach(([de,ate])=>st.doc.nodesBetween(de,ate,(n,p)=>{if(n.type.name==='image'&&!pos.includes(p))pos.push(p)}));
+  if(!pos.length)return false;
+  pos.sort((a,b)=>a-b);
+  const els=pos.map(p=>v.nodeDOM(p)),{dom,text}=v.serializeForClipboard(slice),solo=pos.length===1&&slice.content.childCount===1&&slice.content.firstChild.type.name==='image';
+  const html=(async()=>{
+    await Promise.all([...dom.querySelectorAll('img')].map(async(im,i)=>{const el=els[i];if(!(el instanceof HTMLImageElement))return;
+      try{const src=im.getAttribute('src');im.setAttribute('src',await ntImgDados(el));im.setAttribute('data-nt-src',src)}catch(x){}}));
+    return new Blob([dom.innerHTML],{type:'text/html'});
+  })();
+  const itens={'text/html':html,'text/plain':new Blob([text],{type:'text/plain'})};
+  if(solo&&els[0] instanceof HTMLImageElement)itens['image/png']=ntImgPronta(els[0]).then(()=>ntImgPng(els[0]));
+  e?.preventDefault();
+  navigator.clipboard.write([new ClipboardItem(itens)]).then(()=>toast(solo?'Imagem copiada.':'Copiado com as imagens.'),()=>toast('Não consegui copiar as imagens.'));
+  if(corta){if(grupo.length)ntBselApaga(v,grupo);else v.dispatch(st.tr.deleteSelection().scrollIntoView())}
   return true;
 }
 async function ntInsereImagem(arquivo,pos,c=NT){
@@ -2157,8 +2179,8 @@ function ntEscolheImagem(c=NT){
 // Imagem: nó próprio (largura em %, arquivo vem do repositório privado via ./img/…, com o plano B do shim se o service worker falhar).
 function ntImagem(){
   return TT.ext.Image.extend({
-    parseHTML(){return [{tag:'img[src^="./img/"]'}]},   // imagens de fora (Word, páginas) não entram
-    addAttributes(){return {...this.parent?.(),largura:{default:null,parseHTML:el=>el.getAttribute('data-largura')||null,renderHTML:a=>a.largura?{'data-largura':a.largura}:{}}}},
+    parseHTML(){return [{tag:'img[src^="./img/"]'},{tag:'img[data-nt-src^="./img/"]'}]},   // imagens de fora (Word, páginas) não entram; a cópia 1.56 traz data URL + data-nt-src
+    addAttributes(){return {...this.parent?.(),src:{default:null,parseHTML:el=>el.getAttribute('data-nt-src')||el.getAttribute('src')},largura:{default:null,parseHTML:el=>el.getAttribute('data-largura')||null,renderHTML:a=>a.largura?{'data-largura':a.largura}:{}}}},
     addNodeView(){return ({node})=>{
       const img=document.createElement('img');img.className='nt-img';img.alt='Imagem da nota';img.draggable=false;
       const pinta=n=>{const nome=ntNomeImg(n.attrs.src);img.src=(nome&&window.BCBR?.imgPronta?.(nome))||n.attrs.src||'';img.style.width=n.attrs.largura?n.attrs.largura+'%':''};
@@ -2400,28 +2422,46 @@ function ntBarraPinta(c){
     bt.classList.toggle('on',on);if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist')bt.setAttribute('aria-pressed',String(on));
   }
 }
-// Barra da imagem (largura 25/50/75/100 % e apagar): só aparece com uma imagem selecionada.
+// Barra da imagem (largura 25/50/75/100 % e apagar). 1.56: clique simples só seleciona a imagem; a barra aparece, discreta, ao passar o mouse no canto
+// de cima à direita dela (no toque, com a imagem selecionada). Duplo clique abre a imagem grande.
+function ntBolhaAlvo(c,img){let p=null;c.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.type.name==='image'&&c.ed.view.nodeDOM(pos)===img)p=pos});return p}
+function ntBolhaAtual(c){   // posição da imagem alvo da barra, ou null
+  const e=c.ed;if(!e)return null;
+  if(c.bolhaImg){if(!c.bolhaImg.isConnected){c.bolhaImg=c.bolhaAlvo=null}else if(c.bolhaAlvo==null||e.view.nodeDOM(c.bolhaAlvo)!==c.bolhaImg)c.bolhaAlvo=ntBolhaAlvo(c,c.bolhaImg)}
+  let p=c.bolhaImg?c.bolhaAlvo:null;const s=e.state.selection;
+  if(p==null&&matchMedia('(pointer:coarse)').matches&&s.node?.type.name==='image'&&(e.isFocused||c.bolha?.contains(document.activeElement)))p=s.from;
+  return p!=null&&e.state.doc.nodeAt(p)?.type.name==='image'?p:null;
+}
 function ntBolha(c){
   const b=document.createElement('div');b.className='nt-bolha';b.hidden=true;b.setAttribute('role','toolbar');b.setAttribute('aria-label','Imagem');
   b.addEventListener('mousedown',e=>e.preventDefault());
   b.innerHTML=`<div class="nt-bolha-img"><button type="button" data-l="25">25%</button><button type="button" data-l="50">50%</button><button type="button" data-l="75">75%</button><button type="button" data-l="100">100%</button><button type="button" data-l="apagar" title="Apagar imagem">🗑</button></div>`;
   b.addEventListener('click',e=>{
     const bt=e.target.closest('button[data-l]');if(!bt||!c.ed)return;
-    const s=c.ed.state.selection,n=s.node;if(n?.type.name!=='image')return;
-    if(bt.dataset.l==='apagar')c.ed.chain().focus().deleteSelection().run();
-    else c.ed.chain().focus().command(({tr})=>{tr.setNodeMarkup(s.from,undefined,{...n.attrs,largura:+bt.dataset.l===100?null:+bt.dataset.l});return true}).run();
+    const pos=ntBolhaAtual(c);if(pos==null)return;const n=c.ed.state.doc.nodeAt(pos);
+    if(bt.dataset.l==='apagar'){c.bolhaImg=c.bolhaAlvo=null;c.ed.chain().focus().command(({tr})=>{tr.delete(pos,pos+n.nodeSize);return true}).run();ntBolhaPos(c)}
+    else c.ed.chain().focus().command(({tr})=>{tr.setNodeMarkup(pos,undefined,{...n.attrs,largura:+bt.dataset.l===100?null:+bt.dataset.l});return true}).run();
   });
+  c.el.addEventListener('mousemove',e=>{
+    if(!c.ed)return;const img=e.target.closest?.('img.nt-img');
+    if(img){
+      const r=img.getBoundingClientRect();
+      if(e.clientX>r.right-64&&e.clientY<r.top+64){if(c.bolhaImg!==img){c.bolhaImg=img;c.bolhaAlvo=ntBolhaAlvo(c,img);ntBolhaPos(c)}return}
+      if(c.bolhaImg===img)return;   // já aberta: fica enquanto o mouse está na imagem
+    }else if(b.contains(e.target))return;
+    if(c.bolhaImg){c.bolhaImg=c.bolhaAlvo=null;ntBolhaPos(c)}
+  });
+  c.el.addEventListener('mouseleave',e=>{if(c.bolhaImg&&!b.contains(e.relatedTarget)){c.bolhaImg=c.bolhaAlvo=null;ntBolhaPos(c)}});
   c.bolha=b;c.el.appendChild(b);
 }
 function ntBolhaPos(c){
   const b=c.bolha,e=c.ed;if(!b||!e)return;
-  const s=e.state.selection;
-  if(s.node?.type.name!=='image'||(!e.isFocused&&!b.contains(document.activeElement))){b.hidden=true;return}
+  const pos=ntBolhaAtual(c),dom=pos==null?null:e.view.nodeDOM(pos);
+  if(!(dom instanceof Element)){b.hidden=true;return}
   b.hidden=false;
-  const a=e.view.coordsAtPos(s.from),z=e.view.coordsAtPos(s.to),h=b.offsetHeight||40,w=b.offsetWidth||220,toque=matchMedia('(pointer:coarse)').matches;
-  const topo=toque?Math.max(z.bottom,a.bottom)+10:a.top-h-8;
-  b.style.top=Math.max(8,Math.min(topo<8?Math.max(z.bottom,a.bottom)+10:topo,innerHeight-h-8))+'px';
-  b.style.left=Math.max(8,Math.min((a.left+z.left)/2-w/2,innerWidth-w-8))+'px';
+  const r=dom.getBoundingClientRect(),h=b.offsetHeight||40,w=b.offsetWidth||220;
+  b.style.top=Math.max(8,Math.min(r.top+6,innerHeight-h-8))+'px';
+  b.style.left=Math.max(8,Math.min(r.right-w-6,innerWidth-w-8))+'px';
 }
 
 // ----- Alça ⋮⋮ (arrastar com mouse; clicar/tocar abre o menu Subir/Descer/Aninhar/Apagar) -----
@@ -2504,14 +2544,19 @@ function ntEditor(c,blocos,aoMudar){
   c.el=document.createElement('div');c.el.className='nt-ed';
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
     editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina&&c.pagina!=='notas'?'Página':'Notas',spellcheck:'true'},
-      transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\bsrc="\.\/img\/)[^>]*>/gi,''),
+      transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\b(?:data-nt-)?src="\.\/img\/)[^>]*>/gi,''),
       handlePaste:(v,e)=>{
         const cd=e.clipboardData;if(!cd)return false;
+        if(/data-nt-src="\.\/img\//.test(cd.getData('text/html')||''))return false;   // 1.56: cópia das próprias Notas (com imagens): o HTML recria os blocos de imagem
         const texto=cd.getData('text/plain'),arq=[...(cd.items||[])].find(i=>i.kind==='file'&&/^image\//.test(i.type))?.getAsFile();
         if(arq&&texto){e.preventDefault();v.pasteText(texto);return true}   // Excel/Word trazem imagem + texto: cola o texto
         if(arq){e.preventDefault();ntInsereImagem(arq,undefined,c);return true}
         return false},
-      handleKeyDown:(v,e)=>{if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='c'&&ntCopiaImagem(c)){e.preventDefault();return true}return false},
+      handleKeyDown:(v,e)=>{if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&e.key.toLowerCase()==='c'&&ntCopiaRica(c,e,false)){e.preventDefault();return true}return false},   // (o evento copy cobre o menu e os teclados sem Ctrl+C)
+      handleDOMEvents:{copy:(v,e)=>ntCopiaRica(c,e,false),cut:(v,e)=>ntCopiaRica(c,e,true),
+        dblclick:(v,e)=>{   // 1.56: duplo clique na imagem abre o visualizador das questões (zoom, arrastar, Esc)
+          const img=e.target.closest?.('img.nt-img');if(!img||typeof zoom!=='function')return false;
+          e.preventDefault();zoom(img.currentSrc||img.src);return true}},
       handleDrop:(v,e,slice,moved)=>{
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
@@ -2876,7 +2921,7 @@ const NT_ATALHOS=[
   ['Selecionar blocos',[[['Arrastar por fora do texto'],'Desenha um retângulo: os blocos que ele cruza ficam selecionados (no toque não há retângulo)'],[['Delete','Backspace'],'Apaga o grupo de uma vez'],[['Ctrl+C','Ctrl+X'],'Copia ou recorta o grupo'],[['Tab','Shift+Tab'],'O grupo entra no toggle de cima ou sai do toggle'],[['⋮⋮'],'Arrastar a alça de um bloco do grupo move o grupo todo'],[['Esc','clique'],'Limpa a seleção']]],
   ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Alt+K'],'Ir para página (Quick Switcher estilo Notion)'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
   ['Lembretes, frases e histórico',[[['@'],'Lembrete: Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm. Vira um chip e uma tarefa do plano; clique no chip para mudar a data; apagar o chip não apaga a tarefa'],[['/ Frase'],'Insere uma frase-padrão salva (filtre digitando, Enter insere)'],[['✚ Frase'],'Salva o texto selecionado como frase-padrão'],[['📋'],'Renomear e apagar frases'],[['🕘 Histórico'],'Versões anteriores (precisa de internet): ver, restaurar a página ou um bloco como edição nova']]],
-  ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Clicar na imagem'],'Largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],
+  ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Duplo clique na imagem'],'Abre a imagem grande (zoom, arrastar, Esc fecha). Mouse no canto de cima à direita: largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],
   ['Páginas',[[['☰'],'Passar o mouse mostra a lista de páginas por cima do texto (some ao sair); clicar fixa, clicar de novo solta. Arrastar a margem direita da lista muda a largura (duplo clique volta ao padrão)'],[['+ Nova página'],'Cria e abre uma página'],[['/ Página'],'Cria uma página e coloca um link para ela no ponto do cursor'],
     [['Clicar na página'],'Abre no painel grande, com o mesmo editor e a mesma barra'],[['Arrastar o item'],'Muda a ordem dentro da seção (no toque, pela alça ⋮⋮)'],[['📌'],'Fixa ou desafixa'],[['Esc','✕','clique fora'],'Fecha o painel e salva'],[['↗','Ctrl+clique','clique do meio'],'Abre a página (ou as Notas) em outra aba do navegador: várias páginas ao mesmo tempo, o que se escreve numa aparece na outra'],[['🗑'],'Exclui a página (pede confirmação)']]],
   ['Geral',[[['Ctrl+Z'],'Desfazer'],[['Ctrl+Y','Ctrl+Shift+Z'],'Refazer'],[['Ctrl+/'],'Abre/fecha este painel'],[['Esc'],'Fecha este painel']]],
@@ -3132,6 +3177,19 @@ document.addEventListener('mousemove',e=>{
     r.ativo=true;r.box=document.createElement('div');r.box.className='nt-rubber';document.body.appendChild(r.box);try{getSelection().removeAllRanges()}catch(x){}}
   e.preventDefault();ntRubberQuadro();
 },true);
+// Blocos do nível `ini` que o retângulo cruza. Se cruza um toggle aberto SÓ pelo conteúdo (não pela linha do título) e nenhum outro bloco do nível,
+// desce: seleciona os filhos que cruza, no nível deles (como no Notion). Cruzando a linha do título, ou mais de um bloco do nível, vale o bloco inteiro.
+function ntRubberPos(v,node,ini,q){
+  const cruza=dom=>{if(!(dom instanceof Element))return false;const b=dom.getBoundingClientRect();return b.width+b.height>0&&b.bottom>=q.T&&b.top<=q.B&&b.right>=q.L&&b.left<=q.R},pos=[];
+  node.forEach((n,off)=>{const p=ini+off;if(cruza(v.nodeDOM(p)))pos.push(p)});   // getBoundingClientRect só dos filhos do nível
+  if(pos.length===1){
+    const p=pos[0],n=v.state.doc.nodeAt(p);
+    if(n.type.name==='details'&&n.childCount===2&&!cruza(v.nodeDOM(p+1))){
+      const filhos=ntRubberPos(v,n.lastChild,p+1+n.firstChild.nodeSize+1,q);if(filhos.length)return filhos;
+    }
+  }
+  return pos;
+}
 function ntRubberQuadro(){
   const r=NTR;if(!r||r.raf)return;
   r.raf=requestAnimationFrame(()=>{
@@ -3140,11 +3198,7 @@ function ntRubberQuadro(){
     if(r.y<50)(s||window).scrollBy(0,-14);else if(r.y>innerHeight-50)(s||window).scrollBy(0,14);   // rolagem automática perto das bordas
     const o2=r.off(),x0=r.x0-o2.x,y0=r.y0-o2.y,L=Math.min(x0,r.x),T=Math.min(y0,r.y),R=Math.max(x0,r.x),B=Math.max(y0,r.y);
     Object.assign(r.box.style,{left:L+'px',top:T+'px',width:(R-L)+'px',height:(B-T)+'px'});
-    const v=r.c.ed.view,pos=[];
-    r.cont.node.forEach((n,off)=>{   // getBoundingClientRect só dos filhos do nível
-      const p=r.cont.ini+off,dom=v.nodeDOM(p);if(!(dom instanceof Element))return;
-      const b=dom.getBoundingClientRect();if(b.bottom>=T&&b.top<=B&&b.right>=L&&b.left<=R)pos.push(p);
-    });
+    const v=r.c.ed.view,pos=ntRubberPos(v,r.cont.node,r.cont.ini,{L,T,R,B});
     if(JSON.stringify(pos)!==JSON.stringify(r.pos)){r.pos=pos;v.dispatch(ntBselMeta(v.state.tr,pos))}
     if(r.y<50||r.y>innerHeight-50)ntRubberQuadro();
   });

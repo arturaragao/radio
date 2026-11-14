@@ -215,7 +215,10 @@ test('Notas 1.39: página única estilo Notion no Chrome', {timeout:180000},asyn
     assert.equal(await ev("NT.ed.getText().includes('[img:')"),false,'nada de [img:] em texto');
     // largura ajustável pela barra da imagem
     await ev(`(()=>{let p=null;NT.ed.state.doc.forEach((n,o)=>{if(n.type.name==='image')p=o});NT.ed.chain().focus().setNodeSelection(p).run()})()`);
-    await espera(100);assert.equal(await ev("!NT.bolha.hidden&&!NT.bolha.querySelector('.nt-bolha-img').hidden"),true,'barra da imagem');
+    await espera(100);assert.equal(await ev("NT.bolha.hidden"),true,'1.56: clique/seleção da imagem não abre a barra');
+    const cantoImg=await ev("(()=>{const r=document.querySelector('img.nt-img').getBoundingClientRect();return {x:r.right-12,y:r.top+12}})()");
+    await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:cantoImg.x-200,y:cantoImg.y+40,button:'none'});await call('Input.dispatchMouseEvent',{type:'mouseMoved',...cantoImg,button:'none'});
+    await espera(100);assert.equal(await ev("!NT.bolha.hidden&&!NT.bolha.querySelector('.nt-bolha-img').hidden"),true,'barra da imagem (canto, ao passar o mouse)');
     await ev("NT.bolha.querySelector('[data-l=\"50\"]').click()");assert.equal((await topo())[1].attrs.largura,50);
     assert.equal(await ev("document.querySelector('img.nt-img').style.width"),'50%');
     // abre um toggle para provar que o estado também volta

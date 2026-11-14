@@ -598,6 +598,8 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-topo{position:sticky;top:var(--nt-top,0px);z-index:4;display:flex;align-items:center;gap:8px;padding:6px 0;margin-bottom:6px;background:var(--bg);border-bottom:1px solid var(--bd)}
 .nt-topo h2{margin:0;flex:none}
 .nt-topo .b{flex:none;padding:6px 12px;font-size:.85rem}
+.nt-inicio{flex:none;white-space:nowrap;border:0;background:none;color:var(--mut);font:inherit;font-size:.85rem;padding:6px 8px;border-radius:4px;cursor:pointer}
+.nt-inicio:hover,.nt-inicio:focus-visible,.nt-inicio.on{background:var(--card2);color:var(--tx)}
 .nt-barra-slot{flex:1 1 0;min-width:0}
 .nt-ed,.nt-barra{--ntc-cinza:#686865;--ntc-marrom:#8c5e49;--ntc-laranja:#9e5409;--ntc-amarelo:#88611f;--ntc-verde:#3c7355;--ntc-azul:#2c6e93;--ntc-roxo:#7f599b;--ntc-rosa:#aa4379;--ntc-vermelho:#b6413d;
   --ntb-cinza:#e3e2e0;--ntb-marrom:#eee0da;--ntb-laranja:#fadec9;--ntb-amarelo:#fdecc8;--ntb-verde:#dbeddb;--ntb-azul:#d3e5ef;--ntb-roxo:#e8deee;--ntb-rosa:#f5e0e9;--ntb-vermelho:#ffe2dd}
@@ -748,7 +750,7 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-pg-vazio{margin:6px 4px;font-size:.85rem}
 @media(hover:none){.nt-pg-alca{opacity:.8}.nt-pg-pin,.nt-pg-aba{opacity:.6}}
 @media(max-width:700px){
-  .nt-topo{flex-wrap:wrap}
+  .nt-topo{flex-wrap:wrap;z-index:942}
   .nt-topo h2{flex:1}
   .nt-barra-slot{order:5;flex:1 1 100%}
   .nt-bt-t{display:none}
@@ -1193,7 +1195,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.57.0</small></div>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.58.0</small></div>
 <div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
 <main id="app"></main>
@@ -1201,5 +1203,5 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.57.0"</script><script src="shim.js?v=1.57.0"></script>
+<script>window.BCBR_VERSAO="1.58.0"</script><script src="shim.js?v=1.58.0"></script>
 </body></html>

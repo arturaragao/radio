@@ -33,7 +33,8 @@ test('Tema Sépia nítido 1.42: contraste WCAG >= 4,5 (calculado) nos dois temas
 });
 
 test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legível no escuro e no claro',()=>{
-  const linhas=css.split('\n'),escuro=vars(linhas.slice(10,12).join('\n')),claro=vars(linhas.slice(14,16).join('\n'));
+  const paleta=tema=>{const m=css.match(new RegExp(':root\\[data-theme="'+tema+'"\\] \\.nt-ed[^\\{]*\\{([^}]+)\\}'));assert.ok(m,'paleta '+tema);return vars(m[1])};
+  const escuro=paleta('dark'),claro=paleta('light');
   for(const [nome,p,t] of [['escuro',escuro,T.escuro],['claro',claro,T.claro]]){
     const textos=Object.keys(p).filter(k=>k.startsWith('ntc-')),fundos=Object.keys(p).filter(k=>k.startsWith('ntb-'));
     assert.equal(textos.length,9,nome);assert.equal(fundos.length,9,nome);
@@ -44,7 +45,7 @@ test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legív
 
 test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; nada técnico foi renomeado',()=>{
   const index=ler('index.html'),man=JSON.parse(ler('manifest.webmanifest'));
-  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.57.0<\/small><\/div>/);
+  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.58.0<\/small><\/div>/);
   assert.equal(man.name,'Radio');assert.equal(man.short_name,'Radio');assert.equal(man.theme_color,'#2f2923');assert.equal(man.background_color,'#221e1a');
   assert.match(index,/<meta name="theme-color" content="#2f2923" media="\(prefers-color-scheme: dark\)">/);
   assert.match(index,/<meta name="theme-color" content="#4a3320" media="\(prefers-color-scheme: light\)">/);

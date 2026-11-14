@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.57.0"
+VERSAO = "1.58.0"
+# 1.58.0: Notas — página raiz em botão de texto fixo ao lado da abertura da lateral, também no celular
 # 1.57.0: Notas — retângulo seleciona células em qualquer nível; Tab recua o bloco (indent) como filho do anterior; robô trata o recuo como achado/conclusão
 # 1.56.0: Notas — arrasto estilo Notion nos filhos do toggle; copiar blocos com imagens; clique na imagem só seleciona, duplo clique amplia
 # 1.55.0: laudos guardados no aparelho (opt-in); copiar acesso; copiar laudo; Notas: barra lateral só com texto

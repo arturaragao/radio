@@ -70,7 +70,7 @@ main:has(.nt){max-width:min(1560px,100%)}
 /* alça ⋮⋮ e menu do bloco */
 .nt-alca{position:absolute;z-index:5;width:20px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--mut);cursor:grab;font-size:.8rem;letter-spacing:-2px;user-select:none;touch-action:manipulation;opacity:.75}
 .nt-alca:hover{background:var(--card2);opacity:1}
-.nt-alca[hidden],.nt-menu-bloco[hidden],.nt-bolha[hidden],.nt-pop[hidden],.nt-bolha-img[hidden]{display:none}
+.nt-alca[hidden],.nt-menu-bloco[hidden],.nt-pop[hidden]{display:none}
 .nt-menu-bloco{position:absolute;z-index:30;display:flex;flex-direction:column;min-width:190px;padding:4px;border:1px solid var(--bd);border-radius:8px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .nt-menu-bloco button{text-align:left;border:0;background:none;color:var(--tx);font:inherit;font-size:.9rem;padding:8px 10px;border-radius:5px;cursor:pointer}
 .nt-menu-bloco button:hover{background:var(--card2)}
@@ -100,11 +100,6 @@ main:has(.nt){max-width:min(1560px,100%)}
 .nt-pop .nt-star.on{color:var(--pri-tx)}
 .nt-paleta-dica{font-size:.74rem;color:var(--mut)}
 .nt-pop .nt-sem-cor{min-height:34px;font-size:.88rem;border:1px solid var(--bd);margin-top:2px}
-/* barra da imagem (só aparece com a imagem selecionada) */
-.nt-bolha{position:fixed;z-index:970;border:1px solid var(--bd);border-radius:8px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.28);max-width:calc(100vw - 16px)}
-.nt-bolha-img{display:flex}
-.nt-bolha button{min-width:36px;min-height:36px;border:0;background:none;color:var(--tx);font:inherit;cursor:pointer;padding:0 8px;border-radius:6px}
-.nt-bolha button:hover{background:var(--card2)}
 /* menu "/" */
 .nt-slash{position:fixed;z-index:970;width:240px;max-height:260px;overflow:auto;padding:4px;border:1px solid var(--bd);border-radius:8px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.28)}
 .nt-slash-it{display:flex;flex-direction:column;align-items:flex-start;width:100%;border:0;background:none;color:var(--tx);font:inherit;text-align:left;padding:6px 10px;border-radius:5px;cursor:pointer}

@@ -63,26 +63,23 @@ test('Radio 1.56: Notas (seleção por retângulo nos filhos do toggle; espaço 
   const mouse=(type,x,y,n=1)=>call('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',clickCount:n,buttons:type==='mouseReleased'?0:1});
   const clica=async(x,y,n)=>{await mouse('mouseMoved',x,y);for(let k=1;k<=n;k++){await mouse('mousePressed',x,y,k);await mouse('mouseReleased',x,y,k)}await espera(250)};
 
-  await t.test('5: clique simples na imagem não abre a barra nem o visualizador; duplo clique abre a imagem grande; Esc fecha; barra no canto',async()=>{
+  await t.test('5: imagem sem barra, clique seleciona, duplo clique amplia e Delete apaga',async()=>{
     await reset(par('antes'),img('./img/a.png'),par('depois'));await poeImagens();await reset(par('antes'),img('./img/a.png'),par('depois'));await espera(300);
     const p=await centro();
     await clica(p.x,p.y,1);
     assert.equal(await ev('NT.ed.state.selection.node?.type.name'),'image','clique seleciona o bloco');
-    assert.equal(await ev('NT.bolha.hidden'),true,'sem painel de tamanho no clique simples');
+    assert.equal(await ev("document.querySelector('.nt-bolha,.nt-bolha-img')"),null,'barra removida');
     assert.equal(await ev("document.getElementById('zoom').hidden"),true);
     await clica(p.x,p.y,2);
     assert.equal(await ev("document.getElementById('zoom').hidden"),false,'duplo clique abre o visualizador');
     assert.equal(await ev("document.getElementById('zimg').src===document.querySelector('img.nt-img').src"),true);
     await especial('Escape');await espera(150);
     assert.equal(await ev("document.getElementById('zoom').hidden"),true,'Esc fecha');
-    // tamanho/lixeira: só com o mouse no canto da imagem
+    // Nem hover no canto nem seleção podem criar a barra.
     await mouse('mouseMoved',p.x-60,p.y);await mouse('mouseMoved',p.dx,p.dy);await espera(150);
-    assert.equal(await ev('NT.bolha.hidden'),false,'barra discreta no canto');
-    await ev("NT.bolha.querySelector('[data-l=\"50\"]').click()");await espera(150);
-    assert.equal(await ev("NT.ed.getJSON().content[1].attrs.largura"),50);
-    await ev("NT.bolha.querySelector('[data-l=\"apagar\"]').click()");await espera(150);
-    assert.equal(await ev("NT.ed.getJSON().content.some(n=>n.type==='image')"),false,'lixeira apaga');
-    assert.equal(await ev('NT.bolha.hidden'),true);
+    assert.equal(await ev("document.querySelector('.nt-bolha,.nt-bolha-img')"),null);
+    await clica(p.x,p.y,1);await especial('Delete');
+    assert.equal(await ev("NT.ed.getJSON().content.some(n=>n.type==='image')"),false,'Delete apaga');
   });
 
   await t.test('6: copiar blocos com imagens leva text/html com <img> (data URL, em ordem) e text/plain só com o texto; colar nas Notas devolve blocos de imagem',async()=>{

@@ -116,6 +116,8 @@ function ntBselExt(c){
           copy(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);return true},
           cut(v,e){const p=K.getState(v.state).pos;if(!p.length)return false;ntBselCopia(v,p,e);ntBselApaga(v,p);return true},
           mousedown(v,e){
+            if(ntCliqueContexto(e)){e.preventDefault();return true}
+            if(e.button!==0)return false;
             limpa(v);
             // 1.43 (bug): com um bloco que contém texto (toggle, destaque, citação) selecionado como NÓ, o ProseMirror trata qualquer clique dentro dele como
             // "arrastar o nó selecionado": não dava para selecionar nem arrastar o texto de uma linha de dentro (arrastava o toggle inteiro). Clicar dentro
@@ -245,16 +247,42 @@ function ntBselSolta(v,e,pos){
 }
 // Retângulo de arrasto. mousedown em margem/fundo (fora de qualquer bloco de texto) começa; as células que ele cruza (ntRubberPos, qualquer nível) ficam selecionadas.
 let ntUltPonteiro='mouse',NTR=null;
+const ntCliqueContexto=e=>e.button===2||(e.button===0&&e.ctrlKey&&/Mac|iPhone|iPad/.test(navigator.platform));
 document.addEventListener('pointerdown',e=>{ntUltPonteiro=e.pointerType},true);
-const NT_TEXTO_SEL='p,h1,h2,h3,li,summary,blockquote,hr,img,a,button,input,select,textarea,label,[data-type="detailsSummary"],.nt-plink,.nt-callout-c,.nt-lemb,.nt-alca,.nt-menu-bloco,.nt-barra,.nt-slash,.nt-pop,.nt-busca,.nt-bolha,.nt-modal,.nt-topo,.nt-lat,.nt-pan-topo,.nt-pan-titulo,.nt-atalhos,.nt-seta';
+const NT_TEXTO_SEL='p,h1,h2,h3,li,summary,blockquote,hr,img,a,button,input,select,textarea,label,[data-type="detailsSummary"],.nt-plink,.nt-callout-c,.nt-lemb,.nt-alca,.nt-menu-bloco,.nt-barra,.nt-slash,.nt-pop,.nt-busca,.nt-modal,.nt-topo,.nt-lat,.nt-pan-topo,.nt-pan-titulo,.nt-atalhos,.nt-seta';
 function ntBselCtx(t){
   if(!(t instanceof Element))return null;
   if(NP?.ed)return t.closest('#nt_pan')?NP:null;
   if(tela==='notas'&&NT.ed&&NT.el?.isConnected&&t.closest('main'))return NT;
   return null;
 }
+// Menu do grupo: mantém o foco e usa o mesmo clipboard rico do teclado.
+let ntSelMenuFecha=null;
+function ntSelecaoMenu(c,x,y){
+  ntSelMenuFecha?.();
+  const m=document.createElement('div');m.id='nt_sel_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Seleção de blocos');
+  m.innerHTML='<button type="button" role="menuitem" data-copia>Copiar</button><button type="button" role="menuitem" data-corta>Recortar</button>';
+  const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);ntSelMenuFecha=null};
+  const fora=e=>{if(!m.contains(e.target))fecha()};
+  ntSelMenuFecha=fecha;
+  m.addEventListener('mousedown',e=>e.preventDefault());
+  m.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    ntCopiaRica(c,e,b.hasAttribute('data-corta'));fecha();
+  });
+  document.body.appendChild(m);
+  m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+'px';
+  m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+'px';
+  document.addEventListener('pointerdown',fora,true);
+}
+document.addEventListener('contextmenu',e=>{
+  const c=ntBselCtx(e.target);if(!c||!ntBselPos(c.ed.state).length||(!c.el.contains(e.target)&&e.target.closest(NT_TEXTO_SEL)))return;
+  e.preventDefault();ntSelecaoMenu(c,e.clientX,e.clientY);
+});
 document.addEventListener('mousedown',e=>{
-  if(e.button!==0||ntUltPonteiro!=='mouse'||NTR)return;
+  const contexto=ntCliqueContexto(e)&&ntBselCtx(e.target);
+  if(contexto&&(contexto.el.contains(e.target)||!e.target.closest(NT_TEXTO_SEL))){e.preventDefault();return}
+  if(e.button!==0||ntCliqueContexto(e)||ntUltPonteiro!=='mouse'||NTR)return;
   const t=e.target,c=ntBselCtx(t);if(!c||t.closest(NT_TEXTO_SEL))return;
   const pm=c.el.querySelector('.ProseMirror');if(!pm||t.closest('.nt-ed')&&!pm.contains(t)&&t!==pm&&t.closest('.nt-ed')!==c.el)return;
   e.preventDefault();

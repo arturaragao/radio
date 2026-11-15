@@ -1,5 +1,5 @@
 // Radio 1.48: editor e navegação; persistência exclusivamente pela API SyncNotas.
-const ntCtx=()=>({ed:null,el:null,timer:null,shown:null,sujo:false,posImg:null,alvo:null,barra:null,bolha:null,buscaEl:null,grupoArrasto:null});
+const ntCtx=()=>({ed:null,el:null,timer:null,shown:null,sujo:false,posImg:null,alvo:null,barra:null,buscaEl:null,grupoArrasto:null});
 const NT={...ntCtx(),sync:null};
 let NP=null;
 const NT_ABERTOS='bcbr_nt_abertos',NT_COR='bcbr_nt_cor',NT_LAT='bcbr_nt_lat',NT_COR_PAD='bcbr_nt_cor_padrao',NT_LATW='bcbr_nt_latw',NT_PT_FECHADAS='bcbr_nt_pastas_fechadas';
@@ -324,7 +324,7 @@ async function ntImgPng(img){
   return new Promise((ok,no)=>c.toBlob(r=>r?ok(r):no(new Error('png')),'image/png'));
 }
 // 1.56: copiar blocos/células com imagens (Ctrl+C/Ctrl+X, grupo do retângulo ou seleção normal): text/html com <img> em data URL na ordem dos blocos (e data-nt-src com o
-// ./img/ original, para colar de volta nas Notas como bloco de imagem), text/plain só com o texto; uma imagem sozinha também vai como image/png. Sem imagem: copia normal.
+// ./img/ original, para colar de volta nas Notas como bloco de imagem), text/plain só com o texto; uma imagem sozinha também vai como image/png. Grupo sem imagem também usa este caminho (menu 1.59); texto nativo segue a cópia normal.
 const ntImgPronta=img=>img.complete&&img.naturalWidth?Promise.resolve():new Promise((ok,no)=>{img.addEventListener('load',ok,{once:true});img.addEventListener('error',no,{once:true})});
 async function ntImgDados(img){
   await ntImgPronta(img);
@@ -337,7 +337,7 @@ function ntCopiaRica(c,e,corta){
   if(grupo.length){const rs=ntBselIntervalos(st.doc,grupo);slice=new Slice(Fragment.from(ntBselNos(st.doc,rs)),0,0);rs.forEach(r=>faixas.push([r.from,r.to]))}
   else{if(st.selection.empty)return false;slice=st.selection.content();st.selection.ranges.forEach(r=>faixas.push([r.$from.pos,r.$to.pos]))}
   const pos=[];faixas.forEach(([de,ate])=>st.doc.nodesBetween(de,ate,(n,p)=>{if(n.type.name==='image'&&!pos.includes(p))pos.push(p)}));
-  if(!pos.length)return false;
+  if(!pos.length&&!grupo.length)return false;
   pos.sort((a,b)=>a-b);
   const els=pos.map(p=>v.nodeDOM(p)),{dom,text}=v.serializeForClipboard(slice),solo=pos.length===1&&slice.content.childCount===1&&slice.content.firstChild.type.name==='image';
   const html=(async()=>{
@@ -348,7 +348,7 @@ function ntCopiaRica(c,e,corta){
   const itens={'text/html':html,'text/plain':new Blob([text],{type:'text/plain'})};
   if(solo&&els[0] instanceof HTMLImageElement)itens['image/png']=ntImgPronta(els[0]).then(()=>ntImgPng(els[0]));
   e?.preventDefault();
-  navigator.clipboard.write([new ClipboardItem(itens)]).then(()=>toast(solo?'Imagem copiada.':'Copiado com as imagens.'),()=>toast('Não consegui copiar as imagens.'));
+  navigator.clipboard.write([new ClipboardItem(itens)]).then(()=>toast(solo?'Imagem copiada.':pos.length?'Copiado com as imagens.':'Copiado.'),()=>toast('Não consegui copiar.'));
   if(corta){if(grupo.length)ntBselApaga(v,grupo);else v.dispatch(st.tr.deleteSelection().scrollIntoView())}
   return true;
 }
@@ -651,47 +651,6 @@ function ntBarraPinta(c){
     bt.classList.toggle('on',on);if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist')bt.setAttribute('aria-pressed',String(on));
   }
 }
-// Barra da imagem (largura 25/50/75/100 % e apagar). 1.56: clique simples só seleciona a imagem; a barra aparece, discreta, ao passar o mouse no canto
-// de cima à direita dela (no toque, com a imagem selecionada). Duplo clique abre a imagem grande.
-function ntBolhaAlvo(c,img){let p=null;c.ed.state.doc.descendants((n,pos)=>{if(p==null&&n.type.name==='image'&&c.ed.view.nodeDOM(pos)===img)p=pos});return p}
-function ntBolhaAtual(c){   // posição da imagem alvo da barra, ou null
-  const e=c.ed;if(!e)return null;
-  if(c.bolhaImg){if(!c.bolhaImg.isConnected){c.bolhaImg=c.bolhaAlvo=null}else if(c.bolhaAlvo==null||e.view.nodeDOM(c.bolhaAlvo)!==c.bolhaImg)c.bolhaAlvo=ntBolhaAlvo(c,c.bolhaImg)}
-  let p=c.bolhaImg?c.bolhaAlvo:null;const s=e.state.selection;
-  if(p==null&&matchMedia('(pointer:coarse)').matches&&s.node?.type.name==='image'&&(e.isFocused||c.bolha?.contains(document.activeElement)))p=s.from;
-  return p!=null&&e.state.doc.nodeAt(p)?.type.name==='image'?p:null;
-}
-function ntBolha(c){
-  const b=document.createElement('div');b.className='nt-bolha';b.hidden=true;b.setAttribute('role','toolbar');b.setAttribute('aria-label','Imagem');
-  b.addEventListener('mousedown',e=>e.preventDefault());
-  b.innerHTML=`<div class="nt-bolha-img"><button type="button" data-l="25">25%</button><button type="button" data-l="50">50%</button><button type="button" data-l="75">75%</button><button type="button" data-l="100">100%</button><button type="button" data-l="apagar" title="Apagar imagem">🗑</button></div>`;
-  b.addEventListener('click',e=>{
-    const bt=e.target.closest('button[data-l]');if(!bt||!c.ed)return;
-    const pos=ntBolhaAtual(c);if(pos==null)return;const n=c.ed.state.doc.nodeAt(pos);
-    if(bt.dataset.l==='apagar'){c.bolhaImg=c.bolhaAlvo=null;c.ed.chain().focus().command(({tr})=>{tr.delete(pos,pos+n.nodeSize);return true}).run();ntBolhaPos(c)}
-    else c.ed.chain().focus().command(({tr})=>{tr.setNodeMarkup(pos,undefined,{...n.attrs,largura:+bt.dataset.l===100?null:+bt.dataset.l});return true}).run();
-  });
-  c.el.addEventListener('mousemove',e=>{
-    if(!c.ed)return;const img=e.target.closest?.('img.nt-img');
-    if(img){
-      const r=img.getBoundingClientRect();
-      if(e.clientX>r.right-64&&e.clientY<r.top+64){if(c.bolhaImg!==img){c.bolhaImg=img;c.bolhaAlvo=ntBolhaAlvo(c,img);ntBolhaPos(c)}return}
-      if(c.bolhaImg===img)return;   // já aberta: fica enquanto o mouse está na imagem
-    }else if(b.contains(e.target))return;
-    if(c.bolhaImg){c.bolhaImg=c.bolhaAlvo=null;ntBolhaPos(c)}
-  });
-  c.el.addEventListener('mouseleave',e=>{if(c.bolhaImg&&!b.contains(e.relatedTarget)){c.bolhaImg=c.bolhaAlvo=null;ntBolhaPos(c)}});
-  c.bolha=b;c.el.appendChild(b);
-}
-function ntBolhaPos(c){
-  const b=c.bolha,e=c.ed;if(!b||!e)return;
-  const pos=ntBolhaAtual(c),dom=pos==null?null:e.view.nodeDOM(pos);
-  if(!(dom instanceof Element)){b.hidden=true;return}
-  b.hidden=false;
-  const r=dom.getBoundingClientRect(),h=b.offsetHeight||40,w=b.offsetWidth||220;
-  b.style.top=Math.max(8,Math.min(r.top+6,innerHeight-h-8))+'px';
-  b.style.left=Math.max(8,Math.min(r.right-w-6,innerWidth-w-8))+'px';
-}
 
 // ----- Alça ⋮⋮ (arrastar com mouse; clicar/tocar abre o menu Subir/Descer/Aninhar/Apagar) -----
 function ntAlca(c){
@@ -792,9 +751,9 @@ function ntEditor(c,blocos,aoMudar){
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
   c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;aoMudar()});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
-  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBolhaPos(c);ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
-  ntBolha(c);ntAlca(c);ntTabelaBarra(c);
+  ntAlca(c);ntTabelaBarra(c);
 }
 function ntCria(){
   const lista=NT.paginaDados?.doc?.blocos,v=ntValidos(lista);
@@ -1150,7 +1109,7 @@ const NT_ATALHOS=[
   ['Selecionar blocos',[[['Arrastar por fora do texto'],'Desenha um retângulo: cada célula (frase, imagem, item de lista) que ele cruza fica selecionada, em qualquer nível; o toggle inteiro só quando passa pela linha do título (no toque não há retângulo)'],[['Delete','Backspace'],'Apaga o grupo de uma vez'],[['Ctrl+C','Ctrl+X'],'Copia ou recorta o grupo'],[['Tab','Shift+Tab'],'O grupo entra no toggle de cima, recua ou sai do toggle (como com o cursor, bloco a bloco quando os níveis são misturados)'],[['⋮⋮'],'Arrastar a alça de um bloco do grupo move o grupo todo'],[['Esc','clique'],'Limpa a seleção']]],
   ['Buscar',[[['Ctrl+F'],'Busca nesta página (na aba Notas): destaca tudo, mostra n/total; Enter e Shift+Enter navegam, Esc fecha; abre os toggles fechados'],[['Alt+K'],'Ir para página (Quick Switcher estilo Notion)'],[['Ctrl+P'],'Busca global em qualquer aba: notas, páginas, tarefas, calendário, questões'],[['Ctrl+K'],'Busca global (dentro do texto das Notas, Ctrl+K continua sendo link)']]],
   ['Lembretes, frases e histórico',[[['@'],'Lembrete: Hoje, Amanhã, dia da semana, dd/mm, dd/mm hh:mm. Vira um chip e uma tarefa do plano; clique no chip para mudar a data; apagar o chip não apaga a tarefa'],[['/ Frase'],'Insere uma frase-padrão salva (filtre digitando, Enter insere)'],[['✚ Frase'],'Salva o texto selecionado como frase-padrão'],[['📋'],'Renomear e apagar frases'],[['🕘 Histórico'],'Versões anteriores (precisa de internet): ver, restaurar a página ou um bloco como edição nova']]],
-  ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Duplo clique na imagem'],'Abre a imagem grande (zoom, arrastar, Esc fecha). Mouse no canto de cima à direita: largura 25/50/75/100 % ou apagar; Backspace/Delete também apaga']]],
+  ['Imagem',[[['Ctrl+V'],'Cola a imagem no cursor (reduz e envia)'],[['Arrastar arquivo'],'Solta a imagem no texto'],[['/ Imagem'],'Escolhe um arquivo'],[['Duplo clique na imagem'],'Abre a imagem grande (zoom, arrastar, Esc fecha). Backspace/Delete ou o menu do bloco apaga']]],
   ['Páginas',[[['☰'],'Passar o mouse mostra a lista de páginas por cima do texto (some ao sair); clicar fixa, clicar de novo solta. Arrastar a margem direita da lista muda a largura (duplo clique volta ao padrão)'],[['+ Nova página'],'Cria e abre uma página'],[['/ Página'],'Cria uma página e coloca um link para ela no ponto do cursor'],
     [['Clicar na página'],'Abre no painel grande, com o mesmo editor e a mesma barra'],[['Arrastar o item'],'Muda a ordem dentro da seção (no toque, pela alça ⋮⋮)'],[['📌'],'Fixa ou desafixa'],[['Esc','✕','clique fora'],'Fecha o painel e salva'],[['↗','Ctrl+clique','clique do meio'],'Abre a página (ou as Notas) em outra aba do navegador: várias páginas ao mesmo tempo, o que se escreve numa aparece na outra'],[['🗑'],'Exclui a página (pede confirmação)']]],
   ['Geral',[[['Ctrl+Z'],'Desfazer'],[['Ctrl+Y','Ctrl+Shift+Z'],'Refazer'],[['Ctrl+/'],'Abre/fecha este painel'],[['Esc'],'Fecha este painel']]],
@@ -1168,6 +1127,7 @@ document.addEventListener('keydown',e=>{
   if(tela!=='notas'&&!NP)return;
   if((e.ctrlKey||e.metaKey)&&(e.key==='/'||e.code==='Slash'||e.code==='IntlRo')){e.preventDefault();e.stopPropagation();ntAtalhosAberto()?ntAtalhosFecha():ntAtalhosAbre();return}
   if(e.key!=='Escape')return;
+  if(ntSelMenuFecha){e.preventDefault();e.stopPropagation();ntSelMenuFecha();return}
   if(ntAtalhosAberto()){e.preventDefault();e.stopPropagation();ntAtalhosFecha();return}
   const modal=[...document.querySelectorAll('.nt-modal')].pop();if(modal){e.preventDefault();e.stopPropagation();ntModalFecha(modal);return}   // histórico, frases e busca global: Esc fecha a de cima
   if(document.querySelector('.nt-lemb-pop'))return;

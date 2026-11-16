@@ -1,4 +1,4 @@
-// Banco CBR app 1.59.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.60.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -5041,7 +5041,7 @@ rebuildSrs();
 
 // ===== tema claro/escuro =====
 function aplicaTema(){const t=cfg.tema||'auto',r=document.documentElement;r.style.setProperty('--fs',(cfg.fs||93)/100);
-  if(t==='claro')r.dataset.theme='light';else if(t==='escuro')r.dataset.theme='dark';else delete r.dataset.theme;
+  r.dataset.theme=t==='claro'?'light':t==='escuro'?'dark':(tela==='questoes'||tela==='quiz'||tela==='fim'?'dark':'light');
   const b=$('#tg');if(b){b.textContent=t==='auto'?'◐':t==='claro'?'☀':'☾';b.title=b.ariaLabel='Tema: '+t}}
 function ciclaTema(){cfg.tema={auto:'claro',claro:'escuro',escuro:'auto'}[cfg.tema||'auto'];saveL('cbr_tema',cfg.tema);aplicaTema();persist()}
 try{const lt=localStorage.getItem('cbr_tema');if(lt)cfg.tema=JSON.parse(lt)}catch(e){}
@@ -5315,7 +5315,7 @@ function tabsOrdenadas(){const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=
 // ===== telas =====
 const TABS=[['hoje','Hoje'],['semana','Calendário'],['tarefas','Tarefas'],['notas','Notas'],['questoes','Questões'],['estudar','Estudar'],['fc','Flashcards'],['painel','Painel'],['banco','Banco'],['config','Config']];
 function go(t,s){if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='tarefas')smkIni();tela=t;sub=s??null;render();scrollTo(0,0)}
-function render(){aplicaLayout();
+function render(){aplicaLayout();aplicaTema();
   const ativa=tela==='quiz'?'questoes':tela==='fim'?'':tela==='rt'?'hoje':tela==='fcstudy'?'fc':tela;
   $('#nav').innerHTML=tabsOrdenadas().map(([k,n])=>`<button data-k="${k}" class="${ativa===k?'on':''}" onclick="go('${k}')">${n}</button>`).join('');
   const f={hoje:vHoje,agenda:vAgenda,rt:vRT,estudar:vEstudar,painel:vPainel,banco:vBanco,config:vConfig,quiz:vQuizQ,questoes:vQuestoes,fim:vFim,fc:vFc,fcstudy:vFcStudy,semana:vSemana,tarefas:vTarefas,notas:vNotas}[tela];

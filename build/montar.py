@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.59.0"
+VERSAO = "1.60.0"
+# 1.60.0: aba Questões abre no tema escuro e demais abas no tema claro por padrão (escolha manual em Config segue valendo)
 # 1.59.0: Notas — imagem sem barra flutuante; clique direito preserva a seleção e oferece copiar/recortar blocos
 # 1.58.0: Notas — página raiz em botão de texto fixo ao lado da abertura da lateral, também no celular
 # 1.57.0: Notas — retângulo seleciona células em qualquer nível; Tab recua o bloco (indent) como filho do anterior; robô trata o recuo como achado/conclusão

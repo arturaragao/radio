@@ -45,7 +45,7 @@ test('Tema Sépia nítido 1.42: paleta de cores do editor (--ntc-/--ntb-) legív
 
 test('Nome Radio 1.42: título, cabeçalho, manifest e tela de configuração; nada técnico foi renomeado',()=>{
   const index=ler('index.html'),man=JSON.parse(ler('manifest.webmanifest'));
-  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.59.0<\/small><\/div>/);
+  assert.match(index,/<title>Radio<\/title>/);assert.match(index,/<\/svg>Radio<small class="versao">v1.60.0<\/small><\/div>/);
   assert.equal(man.name,'Radio');assert.equal(man.short_name,'Radio');assert.equal(man.theme_color,'#2f2923');assert.equal(man.background_color,'#221e1a');
   assert.match(index,/<meta name="theme-color" content="#2f2923" media="\(prefers-color-scheme: dark\)">/);
   assert.match(index,/<meta name="theme-color" content="#4a3320" media="\(prefers-color-scheme: light\)">/);
@@ -75,4 +75,33 @@ test('1.45: Salvo e sincronizacao ficam na mesma linha do titulo, inclusive no c
   assert.doesNotMatch(index,/<div class="rd-topo"><button type="button" id="rd_sync"/);
   assert.match(css,/\.hr #rd_sync[^}]*white-space:nowrap/);
   assert.match(css,/@media\(max-width:520px\)[\s\S]*?\.hr\{gap:6px;min-width:0\}/);
+});
+
+test('1.60.0: aba Questões abre no tema escuro e demais abas no tema claro por padrão',()=>{
+  const vm=require('node:vm');
+  const app=ler('app.js');
+  const i0=app.indexOf('// ===== tema claro/escuro ====='),i1=app.indexOf('// ===== persistência:',i0);
+  assert.ok(i0>=0&&i1>i0,'bloco de tema encontrado em app.js');
+  const fn=app.slice(i0,i1);
+  const rIni=app.indexOf('function render(){');
+  assert.ok(rIni>=0,'render encontrado em app.js');
+  assert.match(app.slice(rIni,rIni+80),/aplicaTema\(\);/,'render chama aplicaTema antes de pintar #app');
+  const bt={textContent:'',title:'',ariaLabel:''};
+  const doc={documentElement:{dataset:{},style:{setProperty(){}}}};
+  const ctx=vm.createContext({cfg:{tema:'auto',fs:93},tela:'notas',document:doc,$:s=>s==='#tg'?bt:null,localStorage:{getItem:()=>null},saveL(){},persist(){}});
+  vm.runInContext(fn,ctx);
+  for(const t of ['notas','tarefas','semana','hoje','painel','estudar','fc','banco','config']){
+    ctx.tela=t;ctx.aplicaTema();
+    assert.equal(doc.documentElement.dataset.theme,'light',`aba ${t} deve abrir no claro por padrão`);
+  }
+  for(const t of ['questoes','quiz','fim']){
+    ctx.tela=t;ctx.aplicaTema();
+    assert.equal(doc.documentElement.dataset.theme,'dark',`aba ${t} deve abrir no escuro por padrão`);
+  }
+  ctx.tela='notas';ctx.aplicaTema();
+  assert.equal(doc.documentElement.dataset.theme,'light','sair de Questões volta ao claro');
+  ctx.cfg.tema='escuro';ctx.tela='notas';ctx.aplicaTema();
+  assert.equal(doc.documentElement.dataset.theme,'dark','escolha manual escuro vale nas outras abas');
+  ctx.cfg.tema='claro';ctx.tela='questoes';ctx.aplicaTema();
+  assert.equal(doc.documentElement.dataset.theme,'light','escolha manual claro vale em Questões');
 });

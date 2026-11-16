@@ -260,7 +260,7 @@
     const src = String(el.getAttribute("src") || ""), m = src.match(/(?:^|\/)img\/([^/?#]+)$/);
     if (!m || el.dataset.bcbrTentou === src) return;
     el.dataset.bcbrTentou = src;
-    imgDireto(decodeURIComponent(m[1])).then((u) => { el.src = u; }).catch(() => {});
+    imgDireto(decodeURIComponent(m[1])).then((u) => { el.src = u; }).catch(() => { if (el.classList.contains("fc-img")) el.hidden = true; });
   }, true);
   document.addEventListener("load", (ev) => {
     const el = ev.target; if (!el || el.tagName !== "IMG") return;

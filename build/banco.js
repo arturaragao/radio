@@ -127,13 +127,14 @@ const LAYOUTS=[['compacto','Compacto (padrão) — abas em cima, painel de quest
 function aplicaLayout(){if(typeof qaBotao==="function")qaBotao();
   const b=document.body,l=cfg.layout||'compacto';
   b.classList.toggle('emquiz',tela==='quiz');
+  b.classList.toggle('emfc',tela==='fcstudy');
   LAYOUTS.forEach(([k])=>b.classList.toggle('lay-'+k,k===l));
   let fb=document.getElementById('focoBtn');const foco=l==='foco'||l==='compfoco';
   if(tela==='quiz'&&l!=='original'){if(!fb){fb=document.createElement('button');fb.id='focoBtn';b.appendChild(fb)}
     fb.textContent=foco?'⤡ Sair do foco':'⤢ Foco';fb.title=foco?'Mostrar o cabeçalho e as abas':'Esconder o cabeçalho e as abas';
     fb.onclick=()=>{cfg.layout=foco?(l==='foco'?'otimizado':'compacto'):'compfoco';persist('_est');render()}}
   else if(fb)fb.remove();
-  if(tela==='quiz')setTimeout(qCentraNum,0);
+  if(tela==='quiz'||tela==='fcstudy')setTimeout(qCentraNum,0);
 }
 // 1.37.0: centraliza o número atual só dentro da faixa que rola na horizontal; nunca rola a página (pedido do Artur, 06/11/2026:
 // ao responder a página não pode mexer — o scrollIntoView antigo subia a página até a grade de números).

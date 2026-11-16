@@ -818,13 +818,12 @@ function ntResumoBtn(){
   const r=NT.pagina&&(window.RESUMOS_IDX||[]).find(x=>x.pagina===NT.pagina);if(!r)return '';
   const tag=norm('Resumo: '+r.titulo),A=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag));if(!A.length)return '';
   const now=Date.now(),hj=A.filter(c=>{const s=fcs[c.id];return !s||s[2]===0||s[3]<=now}).length;
-  return `<div class="nt-rs"><button type="button" class="b s" onclick="ntResumoFc('${esc(r.pagina)}')">🃏 Flashcards deste resumo (${A.length})${hj?` · ${hj} para hoje`:''}</button></div>`;
+  const b=(cfg.fcBlocos||[]).find(x=>x.rs===r.pagina&&!x.fim);
+  const feitas=b?b.ids.filter(id=>b.resp?.[id]).length:0;
+  return `<div class="nt-rs"><button type="button" class="b s" onclick="ntResumoFc('${esc(r.pagina)}')">🃏 Flashcards deste resumo (${A.length})${hj?` · ${hj} para hoje`:''}${b?` · ${feitas}/${b.ids.length} no bloco`:''}</button></div>`;
 }
-// Abre direto o estudo dos cartões deste resumo (vencidos + todos os novos, sem o limite diário de novos); nada pendente → aba Flashcards com a tag marcada.
-function ntResumoFc(id){const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===id);if(!r)return;const tag=norm('Resumo: '+r.titulo),now=Date.now();fcTags=new Set([tag]);
-  const q=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag)).filter(c=>{const s=fcs[c.id];return !s||s[2]===0||s[3]<=now}).map(c=>c.id);
-  if(!q.length){go('fc');toast('Tudo em dia neste resumo.');return}
-  fq={queue:q,shown:false,hist:[],re:new Set(),tot:q.length};go('fcstudy')}
+// Retoma o bloco salvo deste resumo (ou abre resumo se terminado) ou inicia com pendentes de hoje; nada pendente → aba Flashcards com a tag marcada.
+function ntResumoFc(id){if(typeof fcAbreResumo==='function'&&fcAbreResumo(id))return}
 function vNotas(){
   if(!SM.d)return '<div class="card"><p class="mut">As notas ainda não estão disponíveis neste aparelho. Tente novamente com conexão.</p></div>';
   NT.eraFoco=!!NT.ed&&!!NT.el&&NT.el.contains(document.activeElement);   // a aba é redesenhada: devolve o foco ao editor

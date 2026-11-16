@@ -120,8 +120,8 @@ const TIPOS=[
  {k:'rt',nome:'Revisão Teórica',desc:'Resumo do tema + 10 questões'},
  {k:'ps',nome:'Provas e simulados',desc:'Simulado cronometrado'}];
 const DATA_PROVA='2026-12-12',RI_DIARIA=50;
-const defCfg=()=>({pesos:{},diario:50,fcNovos:20,fcMax:200,prova:DATA_PROVA,tema:'auto',fs:93,tabs:[],pnOrd:[],keys:{},ri:null,est:null,etDone:{},agenda:{et:[1,1,1,0,0,0,0],ri:[1,1,1,1,1,0,0],rt:[0,0,1,1,0,0,0],ps:[0,0,0,0,0,1,1]}});
-const normCfg=c=>{c=Object.assign(defCfg(),c||{});c.prova=DATA_PROVA;c.nomes=c.nomes||{};c.ests=c.ests||[];
+const defCfg=()=>({pesos:{},diario:50,fcNovos:20,fcMax:200,fcNovosPrimeiro:true,prova:DATA_PROVA,tema:'auto',fs:93,tabs:[],pnOrd:[],keys:{},ri:null,est:null,fcAtivo:null,fcBlocos:[],etDone:{},agenda:{et:[1,1,1,0,0,0,0],ri:[1,1,1,1,1,0,0],rt:[0,0,1,1,0,0,0],ps:[0,0,0,0,0,1,1]}});
+const normCfg=c=>{c=Object.assign(defCfg(),c||{});c.prova=DATA_PROVA;c.nomes=c.nomes||{};c.ests=c.ests||[];c.fcNovosPrimeiro=c.fcNovosPrimeiro!==false;c.fcBlocos=Array.isArray(c.fcBlocos)?c.fcBlocos.filter(b=>b&&b.id&&Array.isArray(b.ids)):[];c.fcAtivo=typeof c.fcAtivo==='string'?c.fcAtivo:null;c.fcMortos=c.fcMortos&&typeof c.fcMortos==='object'&&!Array.isArray(c.fcMortos)?c.fcMortos:{};
   if(c.est){if(!c.ests.some(x=>x.ids===c.est.ids))c.ests.push({id:'m'+(c.est.u||0),...c.est});c.est=null}/* migra o estudo único antigo */c.agenda=Object.assign(defCfg().agenda,c.agenda||{});c.keys=c.keys||{};c.etDone=c.etDone||{};return c};
 let Q=window.QUESTOES||[];
 let all=load('cbr_log',[]);          // {q,t,ok,conf,ms,modo,x} (x = anulada)
@@ -135,11 +135,14 @@ function rsSemeia(){
   const vistos=new Set(),idx=new Map(cards.map(c=>[c.id,c]));
   (window.RESUMOS_IDX||[]).forEach(r=>(r.cards||[]).forEach(k=>{
     if(!k||!k.id)return;vistos.add(k.id);const tg='Resumo: '+r.titulo+';',ex=idx.get(k.id);
-    if(!ex){const c={id:k.id,f:k.f,v:k.v,tg,u:0,_rs:1};cards.push(c);idx.set(c.id,c)}
-    else if(ex._rs)Object.assign(ex,{f:k.f,v:k.v,tg})}));
+    const fi=Array.isArray(k.fi)&&k.fi.length?k.fi:null,vi=Array.isArray(k.vi)&&k.vi.length?k.vi:null;
+    if(!ex){const c={id:k.id,f:k.f,v:k.v,tg,u:0,_rs:1};if(fi)c.fi=fi;if(vi)c.vi=vi;cards.push(c);idx.set(c.id,c)}
+    else if(ex._rs){Object.assign(ex,{f:k.f,v:k.v,tg});if(fi)ex.fi=fi;else delete ex.fi;if(vi)ex.vi=vi;else delete ex.vi}
+    else{if(!ex.fi?.length&&fi)ex.fi=fi;if(!ex.vi?.length&&vi)ex.vi=vi}}));
   cards=cards.filter(c=>!c._rs||vistos.has(c.id))}
 rsSemeia();
 let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
+let fcAv=load('cbr_fcav',{});        // id -> {id,tema,frente,verso,voto,motivo,data,u}
 let over=load('cbr_over',{});        // id -> areaId (manual)
 let uimg=load('cbr_uimg',{});        // id -> dataURL das imagens que você adicionou nas questões (referência "u:ID")
 const imgSrc=u=>String(u).startsWith('u:')?(uimg[u.slice(2)]||''):((window.IMGDATA&&window.IMGDATA[u])||u);
@@ -185,14 +188,14 @@ function ciclaTema(){cfg.tema={auto:'claro',claro:'escuro',escuro:'auto'}[cfg.te
 try{const lt=localStorage.getItem('cbr_tema');if(lt)cfg.tema=JSON.parse(lt)}catch(e){}
 
 // ===== persistência: local + sincronização automática (db do Artifact) =====
-let DB=null,syncSt='local',dirty=new Set(),estDirty=false,flushT=null,retryT=null,primeiro=true;
+let DB=null,syncSt='local',dirty=new Set(),estDirty=false,flushT=null,retryT=null,primeiro=true; // primeiro: ainda sem o 1º snapshot do db
 const wkKey=t=>{const d=new Date(t);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const packLog=l=>[l.q,l.t,l.ok?1:0,l.conf||'',l.ms||0,l.modo||'',l.x?1:0,l.e||''];
 const unpackLog=a=>({q:a[0],t:a[1],ok:!!a[2],conf:a[3],ms:a[4],modo:a[5],x:a[6]?1:0,e:a[7]||''});
 const hk=(id,m)=>[...String(id)].reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7)%m;
 function recalc(){log=all.filter(l=>!l.x);rebuildSrs()}
 function persist(wk){
-  saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);
+  saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);if(typeof fcAv!=='undefined')saveL('cbr_fcav',fcAv);
   if(wk&&wk!=='_est')dirty.add(wk);
   if(!wk||wk==='_est'){estU=Date.now();saveL('cbr_u',estU)}
   estDirty=true;saveL('cbr_reset',resetAt);
@@ -212,19 +215,28 @@ async function flush(){
       else if(wk.startsWith('p:')){const k=+wk.slice(2),o={};Object.keys(pon).forEach(id=>{if(hk(id,8)===k)o[id]=pon[id]});await col.doc('pon_'+k).set({m:o})}
       else if(wk.startsWith('i:')){const k=+wk.slice(2),o={};Object.keys(ia).forEach(id=>{if(hk(id,8)===k)o[id]=ia[id]});await col.doc('ia_'+k).set({m:o})}
       else if(wk.startsWith('s:')){const k=+wk.slice(2),o={};Object.keys(fcs).forEach(id=>{if(hk(id,8)===k)o[id]=fcs[id]});await col.doc('fcs_'+k).set({s:o})}
+      else if(wk==='av:0'){if(typeof fcAv!=='undefined')await col.doc('fc_avaliacoes').set({items:fcAv})}
       else await col.doc('log_'+wk).set({items:all.filter(l=>wkKey(l.t)===wk).map(packLog)})}
     setSync('ok');
   }catch(e){setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)}
 }
 function mergeRemote(docs){
-  let changed=false;const rc={};
+  primeiro=false;let changed=false;const rc={},fcOk=typeof fcBlocosPreserva==='function';
   const est=docs.find(d=>d.id==='estado');
   if(est){const x=est.data()||{};
     if((x.resetAt||0)>resetAt){resetAt=x.resetAt;const n=all.length;all=all.filter(l=>l.t>=resetAt);if(all.length!==n)changed=true}
     if((x.u||0)>estU){
-      const nova=normCfg(x.cfg),ri=riPreserva(cfg.ri,nova.ri),republica=JSON.stringify(ri)!==JSON.stringify(nova.ri);
-      nova.ri=ri;over=x.over||{};cfg=nova;aplicaNomes();estU=x.u;saveL('cbr_u',estU);reArea();aplicaTema();changed=true;
+      const nova=normCfg(x.cfg),ri=riPreserva(cfg.ri,nova.ri),mor=fcOk?fcMortosUne(cfg.fcMortos,nova.fcMortos):nova.fcMortos,fcb=fcOk?fcBlocosPreserva(cfg.fcBlocos,nova.fcBlocos,mor):nova.fcBlocos,republica=JSON.stringify(ri)!==JSON.stringify(nova.ri)||JSON.stringify(fcb)!==JSON.stringify(nova.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(nova.fcMortos);
+      nova.ri=ri;nova.fcBlocos=fcb;nova.fcMortos=mor;if((!nova.fcAtivo||!fcb.some(b=>b.id===nova.fcAtivo&&!b.fim))&&cfg.fcAtivo&&fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))nova.fcAtivo=cfg.fcAtivo;
+      over=x.over||{};cfg=nova;aplicaNomes();estU=x.u;saveL('cbr_u',estU);reArea();aplicaTema();changed=true;
       if(republica)persist('_est');
+    }else if(fcOk){
+      // Local mais novo: ainda assim une os blocos remotos (senão o próximo envio apagaria o que o outro aparelho fez).
+      const rc0=normCfg(x.cfg),mor=fcMortosUne(cfg.fcMortos,rc0.fcMortos),fcb=fcBlocosPreserva(cfg.fcBlocos,rc0.fcBlocos,mor);
+      if(JSON.stringify(fcb)!==JSON.stringify(cfg.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(cfg.fcMortos)){
+        cfg.fcBlocos=fcb;cfg.fcMortos=mor;if(!fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))cfg.fcAtivo=fcb.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;
+        saveL('cbr_cfg',cfg);changed=true;estDirty=true}
+      else if((x.u||0)<estU)estDirty=true;
     }
     else if((x.u||0)<estU)estDirty=true;
   }else estDirty=true;
@@ -245,6 +257,8 @@ function mergeRemote(docs){
     else if(d.id.startsWith('ia_')){const o=x.m||{};Object.keys(o).forEach(id=>{if(!ia[id]){ia[id]=o[id];changed=true}})}
     else if(d.id.startsWith('fcs_')){const o=x.s||{};
       Object.keys(o).forEach(id=>{const ex=fcs[id];if(!ex||(o[id][5]||0)>(ex[5]||0)){fcs[id]=o[id];changed=true}})}
+    else if(d.id==='fc_avaliacoes'&&typeof fcAv!=='undefined'){const o=x.items||{};
+      Object.entries(o).forEach(([id,r])=>{if(r&&(!fcAv[id]||(r.u||0)>(fcAv[id].u||0))){fcAv[id]=r;changed=true}})}
   });
   const lc={};all.forEach(l=>{const w=wkKey(l.t);lc[w]=(lc[w]||0)+1});
   Object.keys(lc).forEach(w=>{if(lc[w]>(rc['log_'+w]||0))dirty.add(w)});
@@ -257,7 +271,9 @@ function mergeRemote(docs){
   const ik={};Object.keys(ia).forEach(id=>ik[hk(id,8)]=1);Object.keys(ik).forEach(k=>{if(!docs.some(d=>d.id==='ia_'+k))dirty.add('i:'+k)});
   const sk={};Object.keys(fcs).forEach(id=>sk[hk(id,8)]=1);
   Object.keys(sk).forEach(k=>{if(!docs.some(d=>d.id==='fcs_'+k))dirty.add('s:'+k)});
-  if(changed){aplicaEdTodas();all.sort((a,b)=>a.t-b.t);recalc();saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_reset',resetAt);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);saveL('cbr_uimg',uimg)}
+  if(typeof fcAv!=='undefined'){const avDoc=docs.find(d=>d.id==='fc_avaliacoes'),avRem=avDoc?(avDoc.data().items||{}):{};
+    if(Object.keys(fcAv).some(id=>!avRem[id]||(fcAv[id].u||0)>(avRem[id].u||0)))dirty.add('av:0')}
+  if(changed){aplicaEdTodas();all.sort((a,b)=>a.t-b.t);recalc();if(typeof fq!=='undefined'&&fq){const fb=cfg.fcBlocos?.find(b=>b.id===fq.id);if(fb&&fb.t0===fq.t0)Object.entries(fb.resp||{}).forEach(([k,v])=>{if(!fq.resp[k]||(v.t||0)>(fq.resp[k].t||0))fq.resp[k]=v})}saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_reset',resetAt);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);saveL('cbr_uimg',uimg);if(typeof fcAv!=='undefined')saveL('cbr_fcav',fcAv)}
   if(dirty.size||estDirty)flush();else setSync('ok');
   if(changed&&tela!=='quiz'&&tela!=='fcstudy')render();
 }
@@ -511,14 +527,14 @@ const ICO={
 function abreChip(k){
   if(k==='ri')return iniciaRI();
   if(k==='rt'){temaSel=null;return go('rt')}
-  if(k==='fc'){const c=fcContagem();return c.tot?(c.d+Math.min(c.n,Math.max(0,cfg.fcNovos-c.nh))?fcStart():go('fc')):go('fc')}
+  if(k==='fc'){if(fcAbre())return;const c=fcContagem();return c.tot?(fcTemParaHoje(c)?fcStart():go('fc','lista')):go('fc','lista')}
   const e=document.getElementById('card_'+k);if(e)e.scrollIntoView({behavior:'smooth',block:'center'});
 }
 const SIGLA={et:'ET',ri:'RI',rt:'RT',ps:'Simulado',fc:'Cartões'};
 // Ícones do plano de hoje: ficam verdes ao concluir; clicar leva ao cartão da atividade.
 function chipsHoje(agendados){
   const hoje=segunda()+idxHoje()*DAY,itens=agendados.map(t=>{const p=progDia(t.k,hoje);return {k:t.k,ok:p.ok,tx:p.ok?'Feito':t.k==='et'?'Pendente':p.n+'/'+p.alvo}});
-  const c=fcContagem(),pend=c.d+Math.min(c.n,Math.max(0,cfg.fcNovos-c.nh));
+  const c=fcContagem(),pend=fcTemParaHoje(c);
   itens.push({k:'fc',ok:c.tot>0&&pend===0,mut:c.tot===0,tx:c.tot===0?'sem cartões':pend===0?'Em dia':pend+' a fazer'});
   return `<div class="chips">${itens.map(i=>`<button class="chip ${i.ok?'done':''} ${i.mut?'mut':''}" aria-label="${SIGLA[i.k]}: ${i.tx}" onclick="abreChip('${i.k}')"><span class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICO[i.k]}</svg></span><b>${SIGLA[i.k]}</b><small>${i.tx}</small></button>`).join('')}</div>`;
 }
@@ -693,7 +709,7 @@ const ATABS=[
  ['hoje','Hoje / Semana',[['Nova tarefa (Hoje e Semana)','hoje',[['Alt + tecla','Abre "Nova tarefa". Dentro dela: ↑ ↓ ← → andam, A ou Espaço marcam o dia, Enter avança/adiciona, Esc volta/fecha']]],['Aba Semana','sem',[['↑ / ↓','Anda nas tarefas de hoje'],['Enter','Conclui / desmarca a tarefa'],['Esc','Solta a seleção']]]]],
  ['questao','Questão',[['Atalhos das questões','quiz',[['← / →','Questão anterior / próxima'],['↑ / ↓','Troca a alternativa (depois de responder: rola a página)'],['Espaço','Próxima questão (depois de responder)'],['Enter','Confirma como Certeza'],['Esc','Solta a imagem selecionada'],['← / → com imagem selecionada','Troca a imagem']]]]],
  ['imagem','Imagem aberta',[['Imagem aberta (zoom)','zoom',[['Esc','Fecha a imagem'],['=','Também aumenta (quando o aumentar é +)'],['Tecla de imagem (aba Questão)','Também fecha']]]]],
- ['fc','Flashcards',[['Atalhos dos flashcards','fc',[]]]]
+ ['fc','Flashcards',[['Atalhos dos flashcards','fc',[['← / →','Cartão anterior / próximo'],['Esc','Sair do bloco (salva para continuar depois)']]]]]
 ];
 let atTab='geral';
 const KEY=n=>(cfg.keys&&cfg.keys[n])||KEYDEF[n];
@@ -807,11 +823,16 @@ function nvBloco(){
 function painelNav(){
   const n=sess.ids.length,rs=sess.resp,feitas=sess.ids.filter(i=>rs[i]).length;
   const ok=sess.ids.filter(i=>rs[i]?.ok).length,er=feitas-ok;
-  return `<aside class="qnav"><div class="row" style="justify-content:space-between"><b>${sess.i+1} de ${n}</b>${!sess.sim?`<span class="mut"><span style="color:var(--ok)">✓ ${ok}</span> &nbsp; <span style="color:var(--bad)">✗ ${er}</span>${feitas?` &nbsp; <b style="color:var(--tx)">${pct(ok,feitas)}%</b>`:''}</span>`:''}</div>
-  <div class="mut" style="margin:2px 0 8px">${feitas} de ${n} respondidas</div>${barra(pct(feitas,n))}
-  <div class="qgrid">${sess.ids.map((id,i)=>{const r=rs[id];return `<button class="qn ${i===sess.i?'cur':''}" aria-label="Questão ${i+1}" onclick="irPara(${i})">${i+1}${r?`<i class="${sess.sim?'n':r.ok?'ok':'bad'}"></i>`:''}</button>`}).join('')}</div>
-${nvBloco()}
-  <p class="mut" style="font-size:.76rem;margin:10px 0 0">↑↓ alternativas (ou ${keyLab('a1')}–${keyLab('a5')}) · ←→ questões · ${keyLab('cut')} riscar · ${keyLab('cert')}/${keyLab('duv')}/${keyLab('chu')} confiança · ${keyLab('edit')} edita</p></aside>`;
+  return blocoPainel({i:sess.i,ids:sess.ids,resp:rs,feitas,ok,er,sim:!!sess.sim,itemLabel:'Questão',sub:`${feitas} de ${n} respondidas`,fn:'irPara',extra:nvBloco(),rodape:`↑↓ alternativas (ou ${keyLab('a1')}–${keyLab('a5')}) · ←→ questões · ${keyLab('cut')} riscar · ${keyLab('cert')}/${keyLab('duv')}/${keyLab('chu')} confiança · ${keyLab('edit')} edita`});
+}
+function blocoPainel({i,ids,resp,feitas,ok,er,sim=false,itemLabel,sub,fn,extra='',rodape='',rowStats=''}){
+  const n=ids.length;
+  const stats=rowStats||(sim?'':`<span style="color:var(--ok)">✓ ${ok}</span> &nbsp; <span style="color:var(--bad)">✗ ${er}</span>${feitas?` &nbsp; <b style="color:var(--tx)">${pct(ok,feitas)}%</b>`:''}`);
+  return `<aside class="qnav"><div class="row" style="justify-content:space-between"><b>${i+1} de ${n}</b>${stats?`<span class="mut">${stats}</span>`:''}</div>
+  <div class="mut" style="margin:2px 0 8px">${sub}</div>${barra(pct(feitas,n))}
+  <div class="qgrid">${ids.map((id,k)=>{const r=resp[id];return `<button type="button" class="qn ${k===i?'cur':''}" aria-label="${itemLabel} ${k+1}" onclick="${fn}(${k})">${k+1}${r?`<i class="${sim?'n':r.ok?'ok':'bad'}"></i>`:''}</button>`}).join('')}</div>
+${extra}${rodape?`
+  <p class="mut" style="font-size:.76rem;margin:10px 0 0">${rodape}</p>`:''}</aside>`;
 }
 const DIFV={f:80,m:50,d:20};
 function setDif(id,d){edSet(id,{dif:d});render();toast('Dificuldade: '+DIF[d].nome)}
@@ -908,7 +929,12 @@ function vQuiz(){
 }
 function reclass(id,a){if(!a)return;over[id]=a;QID[id]._a=a;persist('_est');render()}
 let zl=[],zi=0,zs=1,zx=0,zy=0;const zp=new Map();let zmoved=false,zdist=0;
-function zoom(u){const q=sess&&tela==='quiz'?cur():null;u=imgSrc(u);zl=q?[...(q.imgs||[]),...(q.imgsCom||[])].map(imgSrc).filter(Boolean):[u];if(!zl.includes(u))zl=[u];zi=zl.indexOf(u);$('#zimg').src=zl[zi];$('#zoom').hidden=false;zUi();zFit()}
+function zoom(u){const q=sess&&tela==='quiz'?cur():null,fc=tela==='fcstudy'&&fq&&!fq.fim?cardBy(fq.ids[fq.i]):null;
+  u=imgSrc(u);
+  zl=q?[...(q.imgs||[]),...(q.imgsCom||[])].map(imgSrc).filter(Boolean)
+    :fc?[...(fc.fi||[]),...(fq.shown?(fc.vi||[]):[])].map(x=>imgSrc(fcImgRef(x))).filter(Boolean)
+    :[u];
+  if(!zl.includes(u))zl=[u];zi=zl.indexOf(u);$('#zimg').src=zl[zi];$('#zoom').hidden=false;zUi();zFit()}
 function zUi(){$('#zinfo').textContent=zl.length>1?`${zi+1}/${zl.length}`:''}
 function zApply(){$('#zimg').style.transform=`translate(${zx}px,${zy}px) scale(${zs})`}
 function zFit(){zs=1;zx=0;zy=0;zApply()}
@@ -976,15 +1002,16 @@ function fcContagem(){
   return {n,d,m,hj,nh,tot:fcAtivos().length};
 }
 const fcFmt=d=>d>=365?(d/365).toFixed(1).replace('.',',')+' a':d>=30?(d/30).toFixed(1).replace('.',',')+' m':d+' d';
+const fcTemParaHoje=c=>cfg.fcNovosPrimeiro?(c.n+c.d):(c.d+Math.min(c.n,Math.max(0,cfg.fcNovos-c.nh)));
 function fcNext(s,g,inRe){
-  let [ease,ivl,reps,due,lapses]=s,again=false,ni=0;const t=Date.now();
-  if(inRe){ // reaprendendo na sessão: só sai da fila ao acertar
+  let [ease,ivl,reps,due,lapses]=s,again=false,ni=0;const t=Date.now(),np=!!cfg.fcNovosPrimeiro;
+  if(inRe&&!np){ // reaprendendo na sessão (modo antigo): só sai da fila ao acertar
     if(g===1)again=true;
     return {st:[ease,ivl,reps,due,lapses,t,s[6]],again,lb:g===1?'<1 min':fcFmt(Math.max(ivl,1))};
   }
   if(reps===0){
-    if(g<=2)again=true;else{reps=1;ni=g===3?1:4;if(g===4)ease+=.15}
-  }else if(g===1){lapses++;ease=Math.max(1.3,ease-.2);ni=1;again=true}
+    if(g<=2){if(np){reps=1;ni=1}else again=true}else{reps=1;ni=g===3?1:4;if(g===4)ease+=.15}
+  }else if(g===1){lapses++;ease=Math.max(1.3,ease-.2);ni=1;if(!np)again=true}
   else if(g===2){ease=Math.max(1.3,ease-.15);ni=Math.max(ivl+1,Math.round(ivl*1.2));reps++}
   else if(g===3){ni=Math.max(ivl+1,Math.round(ivl*ease));reps++}
   else{ni=Math.max(ivl+1,Math.round(ivl*ease*1.3));ease+=.15;reps++}
@@ -992,40 +1019,207 @@ function fcNext(s,g,inRe){
   const nreps=again&&s[2]>0?s[2]:reps;
   return {st:[ease,again?(s[2]>0?1:0):ni,nreps,again?(s[2]>0?t+DAY:0):t+ni*DAY,lapses,t,s[6]],again,lb};
 }
-let fq=null,fcBusca='',fcDelId=null,fcTags=new Set(),fcNew={f:'',v:''},fcEdit=null;
+const FC_NOTAS={1:'Errei',2:'Difícil',3:'Bom',4:'Fácil'};
+let fq=null,fcBusca='',fcDelId=null,fcTags=new Set(),fcNew={f:'',v:''},fcEdit=null,fcAvEdit=null;
+const fcImgRef=u=>{u=String(u||'').trim();if(!u)return '';return /^(gh:|u:|data:|https?:|\.?\/)/.test(u)?u:'gh:'+u};
+function fcImgsHtml(arr){
+  const list=(arr||[]).map(fcImgRef).filter(u=>u&&imgSrc(u));if(!list.length)return '';
+  return `<div class="fc-imgs">${list.map(ref=>`<img class="fc-img" src="${esc(imgSrc(ref))}" data-u="${esc(ref)}" onclick="zoom('${esc(ref.replace(/'/g,"\\'"))}')" loading="lazy" alt="Imagem do flashcard" onerror="if(!this.dataset.bcbrTentou)this.hidden=true">`).join('')}</div>`;
+}
+function fcAvSalvaReg(c,voto,motivo=''){
+  const now=Math.max(Date.now(),(fcAv[c.id]?.u||0)+1),reg={id:c.id,tema:c.tg||'',frente:rtTxt(c.f),verso:rtTxt(c.v||''),voto,motivo:String(motivo||'').trim(),data:new Date(now).toISOString(),u:now};
+  fcAv[c.id]=reg;persist('av:0');
+}
+function fcAvVota(v){
+  if(!fq||fq.fim)return;const c=cardBy(fq.ids[fq.i]);if(!c)return;
+  const cur=fcAv[c.id];
+  if(v===1){fcAvEdit=null;fcAvSalvaReg(c,cur?.voto===1?0:1,'');render();return}
+  if(cur?.voto===-1&&(!fcAvEdit||fcAvEdit.id!==c.id)){fcAvEdit=null;fcAvSalvaReg(c,0,'');render();return}
+  fcAvEdit={id:c.id,txt:cur?.motivo||''};render();const el=$('#fc_av_txt');el&&el.focus();
+}
+function fcAvEditar(){
+  if(!fq||fq.fim)return;const c=cardBy(fq.ids[fq.i]);if(!c)return;
+  fcAvEdit={id:c.id,txt:fcAv[c.id]?.motivo||''};render();const el=$('#fc_av_txt');el&&el.focus();
+}
+function fcAvSalva(){
+  if(!fcAvEdit)return;const c=cardBy(fcAvEdit.id);if(!c){fcAvEdit=null;render();return}
+  const el=$('#fc_av_txt');const txt=el?el.value:fcAvEdit.txt;
+  fcAvSalvaReg(c,-1,txt);fcAvEdit=null;render();toast('Avaliação salva');
+}
+function fcAvCancela(){fcAvEdit=null;render()}
 const cTags=c=>{const t=String(c.tg||'').trim();return (/[;,]/.test(t)?t.split(/[;,]/):t.split(/\s+/)).map(x=>x.trim()).filter(Boolean)};
 const cTagOk=c=>!fcTags.size||cTags(c).some(t=>fcTags.has(norm(t)));
 function fcTog(k){fcTags.has(k)?fcTags.delete(k):fcTags.add(k);render()}
+const fcIdsAtivos=ids=>(ids||[]).filter(id=>{const c=cardBy(id);return c&&!c.x&&!fst(id)[6]});
+// União de blocos entre aparelhos: preserva respostas de ambos por carimbo mais recente; reinício (t0 mais novo) vence o bloco antigo.
+// Descarte deixa tombstone {id:u}; o bloco só some se não teve atividade (u ou resposta) depois do descarte — atividade posterior em outro aparelho o mantém (mais seguro: não perde resposta).
+const fcBlocoUlt=b=>Math.max(b.u||0,...Object.values(b.resp||{}).map(r=>r&&r.t||0));
+function fcMortosUne(a,b){const m={...(a||{})};Object.entries(b||{}).forEach(([k,u])=>{if(!(m[k]>=u))m[k]=u});return Object.fromEntries(Object.entries(m).sort((x,y)=>y[1]-x[1]).slice(0,100))}
+function fcBlocosPreserva(local,remota,mortos){
+  const L=Array.isArray(local)?local:[],R=Array.isArray(remota)?remota:[],m=new Map();
+  const une=(a,b)=>{
+    if(!a)return b;if(!b)return a;
+    if((b.t0||0)>(a.t0||0))return b;
+    if((a.t0||0)>(b.t0||0))return a;
+    const resp={...(a.resp||{})};
+    Object.entries(b.resp||{}).forEach(([k,v])=>{if(!resp[k]||(v.t||0)>(resp[k].t||0))resp[k]=v});
+    const bMais=(b.u||0)>(a.u||0);
+    return {...(bMais?b:a),ids:[...new Set([...(bMais?b.ids:a.ids)||[],...(bMais?a.ids:b.ids)||[]])],resp,i:bMais?b.i:a.i,fim:bMais?!!b.fim:!!a.fim,u:Math.max(a.u||0,b.u||0)};
+  };
+  R.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,b)});
+  L.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,une(m.get(b.id),b))});
+  return [...m.values()].filter(b=>!(mortos&&mortos[b.id]>=fcBlocoUlt(b)));
+}
+function fcBlocosAbertos(){
+  return (cfg.fcBlocos||[]).filter(b=>!b.fim).map(b=>{const ids=fcIdsAtivos(b.ids),feitas=ids.filter(id=>b.resp?.[id]).length;
+    return ids.length?{...b,ids,feitas,n:ids.length}:null}).filter(Boolean).sort((a,b)=>(b.u||0)-(a.u||0));
+}
+function fcBlocoSalvaNovo(b){
+  const list=(cfg.fcBlocos||[]).filter(x=>x.id!==b.id&&!(b.rs&&x.rs===b.rs)&&(x.rs||!x.fim));
+  const semRs=list.filter(x=>!x.rs).sort((a,b)=>(b.u||0)-(a.u||0)).slice(0,4);
+  cfg.fcBlocos=[...list.filter(x=>x.rs),...semRs,b];cfg.fcAtivo=b.id;persist('_est');
+}
+function fcBlocoSync(){
+  if(!fq)return;fq.u=Date.now();
+  const b={id:fq.id,rs:fq.rs||'',titulo:fq.titulo||'',ids:[...fq.ids],i:fq.i,resp:JSON.parse(JSON.stringify(fq.resp||{})),fim:!!fq.fim,t0:fq.t0||fq.u,u:fq.u};
+  if(fq.re&&Object.keys(fq.re).length)b.re={...fq.re};
+  cfg.fcBlocos=cfg.fcBlocos||[];const k=cfg.fcBlocos.findIndex(x=>x.id===b.id);
+  if(k<0)cfg.fcBlocos.push(b);else cfg.fcBlocos[k]=b;
+  cfg.fcAtivo=b.id;
+}
+function fcBlocoSalva(wk){fcBlocoSync();persist(wk||'_est')}
+function fcBlocoCarrega(b){
+  const ids=fcIdsAtivos(b.ids);if(!ids.length)return false;
+  const i=Math.max(0,Math.min(+b.i||0,ids.length-1)),resp=JSON.parse(JSON.stringify(b.resp||{}));
+  fq={id:b.id,rs:b.rs||'',titulo:b.titulo||'',ids,i,resp,re:b.re?{...b.re}:{},shown:!!resp[ids[i]],fim:!!b.fim,t0:b.t0||Date.now(),u:b.u||Date.now(),hist:[]};
+  fcAvEdit=null;cfg.fcAtivo=b.id;return true;
+}
+function fcAbre(){
+  if(fq&&!fq.fim){fq.ids=fcIdsAtivos(fq.ids);if(fq.ids.length){fq.i=Math.min(fq.i,fq.ids.length-1);tela='fcstudy';sub=null;render();scrollTo(0,0);return true}fq=null}
+  const ab=fcBlocosAbertos();if(!ab.length)return false;
+  const b=ab.find(x=>x.id===cfg.fcAtivo)||ab[0];
+  if(!fcBlocoCarrega(b))return false;
+  persist('_est');tela='fcstudy';sub=null;render();scrollTo(0,0);return true;
+}
+function fcRetoma(id){
+  const b=(cfg.fcBlocos||[]).find(x=>x.id===id);if(!b||!fcBlocoCarrega(b)){toast('Bloco não encontrado');return}
+  persist('_est');go('fcstudy');
+}
+function fcDescarta(id){
+  const b=(cfg.fcBlocos||[]).find(x=>x.id===id);
+  cfg.fcMortos=fcMortosUne(cfg.fcMortos,{[id]:Math.max(Date.now(),b?fcBlocoUlt(b):0)});
+  cfg.fcBlocos=(cfg.fcBlocos||[]).filter(x=>x.id!==id);
+  if(cfg.fcAtivo===id)cfg.fcAtivo=null;
+  if(fq&&fq.id===id)fq=null;
+  persist('_est');render();toast('Bloco descartado');
+}
+// Mesmo conjunto que vFc lista (inclui suspensos). Com cartões ainda carregando (vazio ou db sem 1º snapshot) não poda: nunca esvazia a seleção por carga incompleta.
+function fcTagsPoda(){
+  if(!fcTags.size||!cards.length||(DB&&typeof primeiro!=='undefined'&&primeiro))return;
+  const ex=new Set();cards.filter(c=>!c.x).forEach(c=>cTags(c).forEach(t=>ex.add(norm(t))));
+  for(const k of [...fcTags])if(!ex.has(k))fcTags.delete(k);
+}
 function fcStart(){
+  fcTagsPoda();
   const now=Date.now(),c=fcContagem(),A=fcAtivos().filter(cTagOk);
   const rev=A.filter(x=>{const s=fcs[x.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).slice(0,cfg.fcMax).map(x=>x.id);
-  const nov=A.filter(x=>!fcs[x.id]||fcs[x.id][2]===0).slice(0,Math.max(0,cfg.fcNovos-c.nh)).map(x=>x.id);
-  const queue=[...rev,...nov];
-  if(!queue.length){toast('Nada para estudar agora.');return}
-  fq={queue,shown:false,hist:[],re:new Set(),tot:queue.length};
-  go('fcstudy');
+  const novAll=A.filter(x=>!fcs[x.id]||fcs[x.id][2]===0).map(x=>x.id);
+  const ids=cfg.fcNovosPrimeiro?(novAll.length?novAll:rev):[...rev,...novAll.slice(0,Math.max(0,cfg.fcNovos-c.nh))];
+  if(!ids.length){toast('Nada para estudar agora.');return}
+  const tgNomes=fcTags.size?[...new Set(A.flatMap(cTags).filter(t=>fcTags.has(norm(t))))].slice(0,3).join(', '):'';
+  const b={id:'fc_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),rs:'',titulo:fcTags.size?(tgNomes||'Seleção por tags'):'Cartões de hoje',ids,i:0,resp:{},fim:false,t0:now,u:now};
+  fcBlocoSalvaNovo(b);fcBlocoCarrega(b);go('fcstudy');
 }
+function fcResumoCards(rsId,modo='hoje'){
+  const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===rsId);if(!r)return [];
+  const tag=norm('Resumo: '+r.titulo),A=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag));
+  if(modo==='tudo')return A.map(c=>c.id);
+  if(modo==='errados'){const b=(fq&&fq.rs===rsId?fq:null)||(cfg.fcBlocos||[]).find(x=>x.rs===rsId);return fcIdsAtivos((b?.ids||[]).filter(id=>b.resp?.[id]&&!b.resp[id].ok))}
+  const now=Date.now(),nov=A.filter(c=>!fcs[c.id]||fcs[c.id][2]===0).map(c=>c.id);
+  const rev=A.filter(c=>{const s=fcs[c.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).map(c=>c.id);
+  return cfg.fcNovosPrimeiro?(nov.length?nov:rev):[...rev,...nov];
+}
+function fcResumoStart(rsId,modo='hoje'){
+  const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===rsId);if(!r)return false;
+  const ids=fcResumoCards(rsId,modo);
+  if(!ids.length){go('fc','lista');toast(modo==='errados'?'Nenhum erro neste resumo.':'Tudo em dia neste resumo.');return true}
+  const now=Date.now(),b={id:'rs:'+rsId,rs:rsId,titulo:'Resumo: '+r.titulo,ids,i:0,resp:{},fim:false,t0:now,u:now};
+  fcBlocoSalvaNovo(b);fcBlocoCarrega(b);go('fcstudy');return true;
+}
+function fcAbreResumo(rsId){
+  const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===rsId);if(!r)return false;
+  fcTags=new Set([norm('Resumo: '+r.titulo)]);
+  const b=(cfg.fcBlocos||[]).find(x=>x.rs===rsId);
+  if(b&&fcBlocoCarrega(b)){persist('_est');go('fcstudy');return true}
+  return fcResumoStart(rsId,'hoje');
+}
+function fcProxIdx(de=0){
+  if(!fq||!fq.ids.length)return -1;const n=fq.ids.length;
+  for(let j=0;j<n;j++){const k=(de+j)%n;if(!fq.resp[fq.ids[k]])return k}
+  return -1;
+}
+function fcIr(k){
+  if(!fq||k<0||k>=fq.ids.length)return;
+  fq.i=k;fq.shown=!!fq.resp[fq.ids[k]];fcAvEdit=null;fcBlocoSalva();render();scrollTo(0,0);
+}
+// Ao responder de novo um card já respondido no bloco, recalcula SRS a partir do estado pré-bloco (resp.p)
+// quando disponível (ou mantém SRS intacto se ausente), evitando duplicar revisões/lapsos.
 function fcGrade(g){
-  if(!fq||!fq.queue.length||!fq.shown)return;
-  const id=fq.queue[0],s=fst(id);
-  fq.hist.push({id,prev:fcs[id]?[...fcs[id]]:null,queue:[...fq.queue],re:[...fq.re]});
-  const r=fcNext(s,g,fq.re.has(id));
-  fcs[id]=r.st;fq.queue.shift();
-  if(r.again){fq.re.add(id);fq.queue.splice(Math.min(fq.queue.length,g===1?3:6),0,id)}else fq.re.delete(id);
-  fq.shown=false;persist('s:'+hk(id,8));render();
+  if(!fq||fq.fim||!fq.ids.length||!fq.shown)return;
+  const id=fq.ids[fq.i],prevR=fq.resp[id]?{...fq.resp[id]}:null,now=Date.now(),inRe=!!fq.re?.[id];
+  fq.hist.push({id,i:fq.i,prevSrs:fcs[id]?[...fcs[id]]:null,prevResp:prevR,prevFim:!!fq.fim,prevIds:[...fq.ids],prevRe:{...(fq.re||{})}});
+  if(!prevR){
+    const pre=fcs[id]?[...fcs[id]]:null,r=fcNext(pre||FC0(),g,inRe);
+    fcs[id]=r.st;
+    if(!cfg.fcNovosPrimeiro&&r.again){
+      fq.re=fq.re||{};fq.re[id]=1;
+      fq.ids.splice(fq.i,1);fq.ids.splice(Math.min(fq.ids.length,fq.i+(g===1?3:6)),0,id);
+      fq.i=Math.min(fq.i,fq.ids.length-1);fq.shown=!!fq.resp[fq.ids[fq.i]];
+      fcAvEdit=null;fcBlocoSalva('s:'+hk(id,8));render();scrollTo(0,0);return;
+    }
+    if(fq.re)delete fq.re[id];
+    fq.resp[id]={g,ok:g!==1,t:now,p:pre};
+  }else{
+    if(prevR.g!==g&&prevR.p!==undefined){const r=fcNext(prevR.p?[...prevR.p]:FC0(),g,false);fcs[id]=r.st}
+    fq.resp[id]={...prevR,g,ok:g!==1,t:now};
+  }
+  if(!prevR){
+    const nx=fcProxIdx(fq.i+1);
+    if(nx<0)fq.fim=true;else{fq.i=nx;fq.shown=!!fq.resp[fq.ids[nx]]}
+  }
+  fcAvEdit=null;fcBlocoSalva('s:'+hk(id,8));render();if(!prevR)scrollTo(0,0);
 }
 function fcUndo(){
   if(!fq||!fq.hist.length){toast('Nada para desfazer');return}
   const h=fq.hist.pop();
-  if(h.prev)fcs[h.id]=h.prev;else delete fcs[h.id];
-  fq.queue=h.queue;fq.re=new Set(h.re);fq.shown=false;persist('s:'+hk(h.id,8));render();toast('Desfeito');
+  if(h.prevSrs)fcs[h.id]=h.prevSrs;else delete fcs[h.id];
+  if(h.prevResp)fq.resp[h.id]=h.prevResp;else delete fq.resp[h.id];
+  if(h.prevIds)fq.ids=h.prevIds;
+  if(h.prevRe)fq.re=h.prevRe;
+  fq.i=Math.max(0,Math.min(h.i,fq.ids.length-1));fq.fim=!!h.prevFim;fq.shown=true;
+  fcAvEdit=null;fcBlocoSalva('s:'+hk(h.id,8));render();toast('Desfeito');
+}
+function fcEncerra(){if(!fq)return;fq.fim=true;fcBlocoSalva();render()}
+function fcSoErrados(){
+  if(!fq)return;
+  if(fq.rs){fcResumoStart(fq.rs,'errados');return}
+  const ids=fcIdsAtivos(fq.ids.filter(id=>fq.resp?.[id]&&!fq.resp[id].ok));
+  if(!ids.length){toast('Nenhum erro neste bloco');return}
+  const now=Date.now(),b={id:'fc_'+now.toString(36)+Math.random().toString(36).slice(2,5),rs:'',titulo:(fq.titulo?fq.titulo+' · ':'')+'Erros',ids,i:0,resp:{},fim:false,t0:now,u:now};
+  fcBlocoSalvaNovo(b);fcBlocoCarrega(b);go('fcstudy');
 }
 function fcKey(e){
-  if(!fq)return;const k=e.key;
-  if(keyIs(e,'fcshow')||k==='Enter'){e.preventDefault();if(!fq.queue.length)return;if(!fq.shown){fq.shown=true;render()}else fcGrade(3)}
+  if(!fq)return;
+  const tg=e.target;if(tg&&(/INPUT|SELECT|TEXTAREA/.test(tg.tagName)||tg.isContentEditable))return;
+  if((typeof QA!=='undefined'&&QA.on)||document.querySelector('.nt-modal'))return;
+  const k=e.key;
+  if(k==='Escape'){go('fc','lista');return}
+  if(fq.fim)return;
+  if(keyIs(e,'fcshow')||k==='Enter'){e.preventDefault();if(!fq.ids.length)return;if(!fq.shown){fq.shown=true;render()}else fcGrade(3)}
   else if(keyIs(e,'fc1'))fcGrade(1);else if(keyIs(e,'fc2'))fcGrade(2);else if(keyIs(e,'fc3'))fcGrade(3);else if(keyIs(e,'fc4'))fcGrade(4);
   else if(keyIs(e,'fcundo'))fcUndo();
-  else if(k==='Escape')go('fc');
+  else if(!e.shiftKey&&k==='ArrowLeft'){e.preventDefault();fcIr(fq.i-1)}
+  else if(!e.shiftKey&&k==='ArrowRight'){e.preventDefault();if(fq.i>=fq.ids.length-1)toast('Último cartão');else fcIr(fq.i+1)}
 }
 function fcFace(c){
   const clz=/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g,F=rtHtml(c.f),V=rtHtml(c.v||'');
@@ -1034,24 +1228,49 @@ function fcFace(c){
   }
   return {f:F,b:V};
 }
+function fcPainel(){
+  const ids=fq.ids,n=ids.length,rs=fq.resp||{},feitas=ids.filter(i=>rs[i]).length;
+  const ok=ids.filter(i=>rs[i]?.ok).length,er=feitas-ok;
+  const stats=`${feitas}/${n} feitos · <span style="color:var(--ok)">✓ ${ok}</span> &nbsp; <span style="color:var(--bad)">✗ ${er}</span>`;
+  return blocoPainel({i:fq.i,ids,resp:rs,feitas,ok,er,itemLabel:'Cartão',sub:`${feitas} de ${n} feitos`,fn:'fcIr',rowStats:stats});
+}
+function fcBarra(){
+  const ab=fcBlocosAbertos();if(ab.length<2)return '';
+  const eu=ab.find(b=>b.id===fq.id),nome=eu?`${eu.titulo||'Bloco'} · ${eu.feitas}/${eu.n}`:'Bloco atual';
+  return `<div class="qblocos"><span class="mut">Bloco:</span><select aria-label="Trocar de bloco de flashcards" onchange="if(this.value)fcRetoma(this.value);this.blur()"><option value="">${esc(nome)}</option>${ab.filter(b=>b.id!==fq.id).map(b=>`<option value="${esc(b.id)}">→ ${esc(b.titulo||'Bloco')} · ${b.feitas}/${b.n}</option>`).join('')}</select></div>`;
+}
 function vFcStudy(){
+  if(!fq&&!fcAbre())return vFc();
   if(!fq)return vFc();
-  if(!fq.queue.length){const c=fcContagem();return `<div class="card" style="text-align:center"><h2>Sessão concluída</h2><p class="mut">${fq.tot} cartões estudados. Restam ${c.d} a rever e ${c.n} novos.</p><div class="row" style="justify-content:center"><button class="b" onclick="go('fc')">Voltar aos cartões</button>${fq.hist.length?`<button class="b s" onclick="fcUndo()">Desfazer (Z)</button>`:''}</div></div>`}
-  const id=fq.queue[0],c=cardBy(id),f=fcFace(c),s=fst(id),re=fq.re.has(id);
-  const nn=fq.queue.filter(x=>!fq.re.has(x)&&(fcs[x]?.[2]??0)===0).length,nl=fq.queue.filter(x=>fq.re.has(x)).length,nr=fq.queue.length-nn-nl;
-  const lbl=g=>fcNext(s,g,re).lb;
-  return `<div class="fcbar"><button class="b s" onclick="go('fc')">Sair (Esc)</button><div class="fcn"><span style="color:var(--pri-tx)">${nn} novos</span><span style="color:var(--bad)">${nl} aprendendo</span><span style="color:var(--ok)">${nr} a rever</span></div></div>
-  <div class="card fcard"><div class="fcf">${f.f}</div>${fq.shown?`<hr><div class="fcf">${f.b||'<span class="mut">(sem verso)</span>'}</div>`:''}
-  ${c.tg?`<div class="mut" style="margin-top:14px;font-size:.78rem">${esc(c.tg)}</div>`:''}</div>
-  ${fq.shown?`<div class="fcg"><button class="g1" onclick="fcGrade(1)"><small>${lbl(1)}</small>Errei <kbd>${keyLab('fc1')}</kbd></button><button class="g2" onclick="fcGrade(2)"><small>${lbl(2)}</small>Difícil <kbd>${keyLab('fc2')}</kbd></button><button class="g3" onclick="fcGrade(3)"><small>${lbl(3)}</small>Bom <kbd>${keyLab('fc3')}</kbd></button><button class="g4" onclick="fcGrade(4)"><small>${lbl(4)}</small>Fácil <kbd>${keyLab('fc4')}</kbd></button></div>`
+  fq.ids=fcIdsAtivos(fq.ids);
+  if(!fq.ids.length){fq=null;return vFc()}
+  if(fq.i>=fq.ids.length)fq.i=fq.ids.length-1;
+  const ids=fq.ids,n=ids.length,rs=fq.resp||{},feitas=ids.filter(i=>rs[i]).length,ok=ids.filter(i=>rs[i]?.ok).length,er=feitas-ok;
+  if(fq.fim){
+    const hj=fq.rs?fcResumoCards(fq.rs,'hoje').length:0,totRs=fq.rs?fcResumoCards(fq.rs,'tudo').length:0;
+    return `<div class="card" style="text-align:center"><h2>Bloco concluído</h2>${fq.titulo?`<p class="mut" style="margin-top:-6px">${esc(fq.titulo)}</p>`:''}
+    <div class="kpis" style="margin:14px 0"><div class="kpi"><b>${feitas}/${n}</b><span class="mut">feitos</span></div><div class="kpi"><b style="color:var(--ok)">${ok}</b><span class="mut">acertos</span></div><div class="kpi"><b style="color:var(--bad)">${er}</b><span class="mut">erros</span></div><div class="kpi"><b>${feitas?pct(ok,feitas)+'%':'—'}</b><span class="mut">aproveitamento</span></div></div>
+    <div class="row" style="justify-content:center">${fq.rs?`${hj?`<button class="b" onclick="fcResumoStart('${esc(fq.rs)}','hoje')">Estudar pendentes de hoje (${hj})</button>`:''}<button class="b ${hj?'s':''}" onclick="fcResumoStart('${esc(fq.rs)}','tudo')">Recomeçar tudo (${totRs})</button>`:`<button class="b" onclick="fcStart()">Novo bloco</button>`}${er?`<button class="b s" onclick="fcSoErrados()">Só os errados (${er})</button>`:''}${fq.hist.length?`<button class="b s" onclick="fcUndo()">Desfazer (${keyLab('fcundo')})</button>`:''}<button class="b s" onclick="go('fc','lista')">Voltar aos cartões</button></div></div>`;
+  }
+  const id=ids[fq.i],c=cardBy(id),f=fcFace(c),r=rs[id],s=(r&&r.p!==undefined)?(r.p||FC0()):fst(id),inRe=!!fq.re?.[id];
+  const lbl=g=>fcNext(s,g,inRe).lb,av=fcAv[id],edAv=fcAvEdit&&fcAvEdit.id===id;
+  const imgsF=fcImgsHtml(c.fi),imgsV=fcImgsHtml(c.vi);
+  const avHtml=`<div class="fcard-rod">${c.tg?`<span class="mut" style="font-size:.78rem">${esc(c.tg)}</span>`:'<span></span>'}<div class="fc-av"><button type="button" class="ok ${av?.voto===1?'on':''}" aria-label="Gostei do cartão" aria-pressed="${av?.voto===1}" title="Gostei" onclick="fcAvVota(1)">👍</button><button type="button" class="bad ${av?.voto===-1?'on':''}" aria-label="Não gostei do cartão" aria-pressed="${av?.voto===-1}" title="Não gostei" onclick="fcAvVota(-1)">👎</button></div></div>${av?.voto===-1&&!edAv?`<div class="fc-av-mot mut">${av.motivo?`Motivo: ${esc(av.motivo)}`:'Marcado como não gostei'} <button type="button" class="fc-av-ed" onclick="fcAvEditar()">Editar motivo</button></div>`:''}${edAv?`<div class="fc-av-box"><input id="fc_av_txt" placeholder="O que não gostou?" value="${esc(fcAvEdit.txt)}" oninput="fcAvEdit.txt=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();fcAvSalva()}else if(event.key==='Escape'){event.preventDefault();fcAvCancela()}"><div class="row" style="margin-top:6px"><button type="button" class="b" style="padding:5px 12px;font-size:.82rem" onclick="fcAvSalva()">Salvar</button><button type="button" class="b s" style="padding:5px 12px;font-size:.82rem" onclick="fcAvCancela()">Cancelar</button></div></div>`:''}`;
+  return `${fcBarra()}<div class="fcbar"><div class="row"><button class="b s" onclick="go('fc','lista')">Sair (Esc)</button>${fq.titulo?`<span class="pill">${esc(fq.titulo)}</span>`:''}</div><button class="b s" onclick="fcEncerra()">Encerrar bloco</button></div>
+  <div class="qlay"><div style="min-width:0">
+  <div class="fcwrap"><button type="button" class="b s fcnav-bt fcprev" onclick="fcIr(${fq.i-1})" ${fq.i<=0?'disabled':''} aria-label="Cartão anterior" title="Anterior (←)">‹</button>
+  <div class="card fcard">${r?`<div class="fcresp ${r.ok?'ok':'bad'}">Resposta dada: ${FC_NOTAS[r.g]||''}</div>`:''}<div class="fcf">${f.f}${imgsF}</div>${fq.shown?`<hr><div class="fcf">${f.b||(!imgsV?'<span class="mut">(sem verso)</span>':'')}${imgsV}</div>`:''}${avHtml}</div>
+  <button type="button" class="b s fcnav-bt fcnext" onclick="fcIr(${fq.i+1})" ${fq.i>=n-1?'disabled':''} aria-label="Próximo cartão" title="Próximo (→)">›</button></div>
+  ${fq.shown?`<div class="fcg"><button class="g1 ${r?.g===1?'sel':''}" onclick="fcGrade(1)"><small>${lbl(1)}</small>Errei <kbd>${keyLab('fc1')}</kbd></button><button class="g2 ${r?.g===2?'sel':''}" onclick="fcGrade(2)"><small>${lbl(2)}</small>Difícil <kbd>${keyLab('fc2')}</kbd></button><button class="g3 ${r?.g===3?'sel':''}" onclick="fcGrade(3)"><small>${lbl(3)}</small>Bom <kbd>${keyLab('fc3')}</kbd></button><button class="g4 ${r?.g===4?'sel':''}" onclick="fcGrade(4)"><small>${lbl(4)}</small>Fácil <kbd>${keyLab('fc4')}</kbd></button></div>`
    :`<div class="row" style="justify-content:center"><button class="b" style="min-width:260px;padding:14px" onclick="fq.shown=true;render()">Mostrar resposta <kbd>${keyLab('fcshow')}</kbd></button></div>`}
-  <p class="mut" style="text-align:center;margin-top:14px;font-size:.8rem">${keyLab('fcshow')}: mostrar e marcar Bom · ${keyLab('fc1')}–${keyLab('fc4')}: nota · ${keyLab('fcundo')}: desfazer · Esc: sair</p>`;
+  <p class="mut" style="text-align:center;margin-top:14px;font-size:.8rem">← / →: anterior / próximo · ${keyLab('fcshow')}: mostrar e marcar Bom · ${keyLab('fc1')}–${keyLab('fc4')}: nota · ${keyLab('fcundo')}: desfazer · Esc: sair</p>
+  </div>${fcPainel()}</div>`;
 }
 function cardHoje(){
-  const c=fcContagem();
+  const c=fcContagem(),ab=fcBlocosAbertos();
   return `<div class="card" id="card_fc" style="margin-top:16px"><div class="row" style="justify-content:space-between"><span class="kick">Flashcards</span><span class="pill">${c.tot} no total</span></div><h3>Cartões de hoje</h3>
-  <p class="mut">${c.tot?`${c.d} a rever, ${c.n} novos (limite ${cfg.fcNovos} por dia).`:'Nenhum cartão ainda. Importe seus flashcards na aba Flashcards.'}</p>
-  <div class="row"><button class="b" ${c.d+Math.min(c.n,Math.max(0,cfg.fcNovos-c.nh))?'':'disabled'} onclick="fcStart()">Estudar cartões</button></div></div>`;
+  <p class="mut">${c.tot?`${c.d} a rever, ${c.n} novos${cfg.fcNovosPrimeiro?' (novos primeiro)':` (limite ${cfg.fcNovos} por dia)`}.`:'Nenhum cartão ainda. Importe seus flashcards na aba Flashcards.'}</p>
+  <div class="row">${ab.length?`<button class="b" onclick="go('fc')">Continuar bloco (${ab[0].feitas}/${ab[0].n})</button>`:`<button class="b" ${fcTemParaHoje(c)?'':'disabled'} onclick="fcStart()">Estudar cartões</button>`}</div></div>`;
 }
 function fcAdd(){
   const f=rtVal(fcNew.f),v=rtVal(fcNew.v),t=$('#fc_t').value.trim();
@@ -1075,15 +1294,25 @@ function fcEditSalva(){const c=cardBy(fcEdit.id),f=rtVal(fcEdit.f),v=rtVal(fcEdi
   Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});delete c._rs;persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
 function fcSusp(id){const s=fst(id).slice();s[6]=s[6]?0:1;s[5]=Date.now();fcs[id]=s;persist('s:'+hk(id,8));render()}
 function fcDel(id){if(fcDelId!==id){fcDelId=id;render();return}fcDelId=null;const c=cardBy(id);c.x=1;c.u=Date.now();delete c._rs;persist('c:'+hk(id,32));render();toast('Cartão excluído')}
+function fcBannerBlocos(){
+  const ab=fcBlocosAbertos();if(!ab.length)return '';
+  return ab.map(b=>{
+    const ok=b.ids.filter(id=>b.resp?.[id]?.ok).length,dt=b.u?new Date(b.u).toLocaleString('pt-BR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'';
+    return `<div class="iab" style="margin:10px 0"><div class="kick">${b.titulo?esc(b.titulo):'Bloco em andamento'}</div><p style="margin:6px 0">${b.feitas} de ${b.n} feitos${b.feitas?` · ${pct(ok,b.feitas)}% de acerto`:''} · parou no cartão ${(b.i||0)+1}${dt?` · salvo em ${dt}`:''}</p><div class="row"><button class="b" onclick="fcRetoma('${esc(b.id)}')">Continuar</button><button class="b s" onclick="fcDescarta('${esc(b.id)}')">Descartar</button></div></div>`;
+  }).join('');
+}
 function vFc(){
+  if(fq?.fim)fq=null;
+  fcTagsPoda();
   const c=fcContagem(),q=norm(fcBusca||'');
   const lista=cards.filter(x=>!x.x&&cTagOk(x)&&(!q||norm(rtTxt(x.f)+' '+rtTxt(x.v)+' '+(x.tg||'')).includes(q))).slice(0,60);
   const TG={};cards.filter(x=>!x.x).forEach(x=>cTags(x).forEach(t=>{const k=norm(t);(TG[k]??={t,n:0}).n++}));
   const nSel=fcAtivos().filter(cTagOk).length;
   const now=Date.now();
-  return `<div class="card"><h2>Flashcards</h2>
+  return `<div class="card"><h2>Flashcards</h2>${fcBannerBlocos()}
   <div class="kpis"><div class="kpi"><b style="color:var(--pri-tx)">${c.n}</b><span class="mut">novos</span></div><div class="kpi"><b style="color:var(--ok)">${c.d}</b><span class="mut">a rever</span></div><div class="kpi"><b>${c.m}</b><span class="mut">maduros (21+ d)</span></div><div class="kpi"><b>${c.hj}</b><span class="mut">revisados hoje</span></div></div>
-  <div class="row" style="margin-top:14px"><button class="b" ${c.tot?'':'disabled'} onclick="fcStart()">Estudar agora</button><span class="mut">${c.tot} cartões · ${cfg.fcNovos} novos e ${cfg.fcMax} revisões por dia (ajuste em Config)</span></div></div>
+  <div class="row" style="margin-top:14px"><button class="b" ${c.tot?'':'disabled'} onclick="fcStart()">Estudar agora</button><span class="mut">${c.tot} cartões · ${cfg.fcNovosPrimeiro?'novos primeiro (sem limite diário)':`${cfg.fcNovos} novos e ${cfg.fcMax} revisões por dia`}</span></div>
+  <label class="check" style="margin-top:10px;font-size:.86rem"><input type="checkbox" id="fc_novos_pri" ${cfg.fcNovosPrimeiro?'checked':''} onchange="cfg.fcNovosPrimeiro=this.checked;persist('_est');render()"> Novos primeiro (sem repetir errado na mesma sessão)</label></div>
   <div class="card"><h3>Selecionar por tags</h3>${Object.keys(TG).length?`<div>${Object.entries(TG).sort((a,b)=>b[1].n-a[1].n).map(([k,x])=>`<button class="tag ${fcTags.has(k)?'on':''}" style="cursor:pointer" onclick="fcTog('${k.replace(/'/g,"\\'")}')">${esc(x.t)} · ${x.n}</button>`).join('')}</div>
   <p class="row" style="margin-top:10px"><button class="b" ${fcTags.size&&nSel?'':'disabled'} onclick="fcStart()">Estudar selecionados (${fcTags.size?nSel:0})</button><button class="b s" ${fcTags.size?'':'disabled'} onclick="fcTags.clear();render()">Limpar seleção</button><span class="mut">Cartões com qualquer uma das tags marcadas. A lista abaixo e o botão Estudar agora também respeitam a seleção.</span></p>`:'<p class="mut">Os cartões ainda não têm tags.</p>'}</div>
   <div class="card"><h3>Adicionar cartão</h3><div class="row" style="align-items:stretch"><div style="flex:1;min-width:220px">${rtEd('fc_f',fcNew.f,370,'fcNew.f','Frente (aceita {{c1::lacuna}} estilo Anki)')}</div><div style="flex:1;min-width:220px">${rtEd('fc_v',fcNew.v,370,'fcNew.v','Verso')}</div></div>
@@ -1302,6 +1531,7 @@ function cfgGeral(){
   <label>Cartões novos por dia <input id="c_fn" type="number" min="0" max="500" value="${cfg.fcNovos}" onchange="cfg.fcNovos=+this.value;persist('_est')" style="width:80px"></label>
   <label>Máx. revisões de cartões por dia <input id="c_fm" type="number" min="10" max="2000" value="${cfg.fcMax}" onchange="cfg.fcMax=+this.value;persist('_est')" style="width:90px"></label>
   <label>Data da prova <input id="c_p" type="text" value="12/12/2026" readonly></label></p>
+  <label class="check" style="display:block;margin:6px 0"><input type="checkbox" id="c_fnp" ${cfg.fcNovosPrimeiro?'checked':''} onchange="cfg.fcNovosPrimeiro=this.checked;persist('_est')"> Flashcards: novos primeiro (sem repetir errado na mesma sessão)</label>
   <p class="mut">Revisão Inteligente: 50 questões por dia. Prova em 12/12/2026.</p>
   <h3>Peso das áreas na prova (%)</h3><p class="mut">Vazio = usa a incidência no banco. Preencha com o peso real quando tiver.</p>
   <div class="row">${AREAS.map(a=>`<label style="width:46%;min-width:240px">${a.nome} <input id="p_${a.id}" type="number" step="0.5" style="width:70px" placeholder="${(S[a.id]?.banco/(Q.length||1)*100||0).toFixed(1)}" value="${cfg.pesos[a.id]??''}" onchange="setPeso('${a.id}',this.value)"></label>`).join('')}</div></div>`;

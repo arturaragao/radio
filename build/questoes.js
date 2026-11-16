@@ -116,7 +116,7 @@ function qGuarda(root){const v={};root.querySelectorAll('img[data-u]').forEach(i
 function qReusa(root,v){root.querySelectorAll('img[data-u]').forEach(im=>{const o=(v[im.dataset.u]||[]).shift();if(!o)return;
   [...o.attributes].forEach(a=>{if(a.name!=='src'&&!im.hasAttribute(a.name))o.removeAttribute(a.name)});
   [...im.attributes].forEach(a=>{if(a.name!=='src')o.setAttribute(a.name,a.value)});im.replaceWith(o)})}
-function qPinta(html){const app=$('#app'),v=qGuarda(app);app.innerHTML=html;qReusa(app,v);qMarcaGal();qPreCarrega();if(typeof smkPinta==='function')smkPinta()}
+function qPinta(html){const app=$('#app'),v=qGuarda(app);app.innerHTML=html;qReusa(app,v);qMarcaGal();qPreCarrega();if(tela==='notas'&&typeof ntMonta==='function')ntMonta();if(typeof smkPinta==='function')smkPinta()}
 // pré-carrega as imagens da questão atual e das 3 seguintes (ficam prontas na memória)
 const qPre=new Map();
 function qPreCarrega(){

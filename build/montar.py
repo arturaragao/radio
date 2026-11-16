@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.60.0"
+VERSAO = "1.61.0"
+# 1.61.0: Flashcards — bloco persistente (sincronizado), painel superior igual ao de Questões, setas ←/→ e retomada nos resumos
 # 1.60.0: aba Questões abre no tema escuro e demais abas no tema claro por padrão (escolha manual em Config segue valendo)
 # 1.59.0: Notas — imagem sem barra flutuante; clique direito preserva a seleção e oferece copiar/recortar blocos
 # 1.58.0: Notas — página raiz em botão de texto fixo ao lado da abertura da lateral, também no celular
@@ -133,7 +134,7 @@ troca("base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map", "for(const 
 # 1.50.1: "Chave dos laudos" na aba Config > Geral (campo, salvar, testar, remover)
 troca("function cfgGeral(){", "function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){")
 troca("quiz:vQuiz,", "quiz:vQuizQ,questoes:vQuestoes,")
-troca("function go(t,s){tela=t;", "function go(t,s){if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='tarefas')smkIni();tela=t;")
+troca("function go(t,s){tela=t;", "function go(t,s){if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='fc'&&!s&&fcAbre())return;if(t==='tarefas')smkIni();tela=t;")
 troca("const ativa=tela==='quiz'||tela==='fim'?'':", "const ativa=tela==='quiz'?'questoes':tela==='fim'?'':")
 troca("$('#app').innerHTML=f();", "qPinta(f());")
 # atalhos do zoom configuráveis (Config > Atalhos)

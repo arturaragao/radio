@@ -1,12 +1,15 @@
 // Offline (1.62.0): botão "Baixar offline" por aparelho (desligado por padrão, flag bcbr_offline='1').
 // Ligar registra o service worker (sw.js), baixa app + Notas (índice + páginas + imagens) + questões, e mantém atualizado em segundo plano.
 // Desligar pede confirmação, desregistra o SW e apaga os caches dele, preservando progresso, IndexedDB de dados e chaves.
-const OF={prog:'',baixando:false,tamEst:null,tamUso:null,ultFundo:0},OF_LS='bcbr_offline',OF_FLAG='bcbr_baixou';
+const OF={prog:'',pct:null,baixando:false,tamEst:null,tamUso:null,ultFundo:0},OF_LS='bcbr_offline',OF_FLAG='bcbr_baixou';
 const ofAtivo=()=>{try{return localStorage.getItem(OF_LS)==='1'}catch(e){return false}};
 const ofMB=b=>(Math.max(0,b)/1048576).toFixed(1).replace('.',',')+' MB';
-const OF_ICO_DOWN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
-const OF_ICO_LOAD='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke-dasharray="40" stroke-dashoffset="12"/></svg>';
-const OF_ICO_OK='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>';
+const OF_ICO_DOWN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+const OF_ICO_OK='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="rgba(74,222,128,.16)" stroke="currentColor" stroke-width="1.8"/><path d="M8.2 12.4l2.6 2.6 5.2-5.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function ofIcoLoad(pct){
+  const p=Math.max(0,Math.min(100,Math.round(pct||0))),c=56.55,off=(c*(1-p/100)).toFixed(2);
+  return `<svg class="of-ring" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle class="of-trk" cx="12" cy="12" r="9"/><circle class="of-arc" cx="12" cy="12" r="9" stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg><span class="of-pct">${p}%</span><span class="of-bar" aria-hidden="true"><i style="width:${p}%"></i></span>`;
+}
 function ofPendentes(){
   let n=0;
   try{if(typeof ntTemPendentes==='function'&&ntTemPendentes())n++;if(SM.sujo)n++}catch(e){}
@@ -15,7 +18,6 @@ function ofPendentes(){
 }
 function ofTexto(){
   const off=navigator.onLine===false||!!window.BCBR?.semRede,n=ofPendentes(),p=n===1?'pendente':'pendentes';
-  if(OF.prog)return `baixando para offline · ${OF.prog}`;
   return off?`offline · ${n} ${p}`:n?`sincronizando · ${n} ${p}`:'';
 }
 function ofPinta(){
@@ -27,11 +29,13 @@ function ofPinta(){
 function ofPintaBtn(){
   const b=document.getElementById('of_btn');if(!b)return;
   const on=ofAtivo(),est=OF.baixando?'baixando':on?'baixado':'off';
-  b.dataset.estado=est;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));
-  b.setAttribute('aria-label',est==='baixado'?'Offline neste PC (clique para remover)':est==='baixando'?'Baixando para offline…':'Baixar offline');
-  const ico=est==='baixado'?OF_ICO_OK:est==='baixando'?OF_ICO_LOAD:OF_ICO_DOWN;
+  const p=OF.pct==null?0:Math.max(0,Math.min(100,Math.round(OF.pct)));
+  b.dataset.estado=est;b.classList.toggle('on',on&&!OF.baixando);b.setAttribute('aria-pressed',String(on));
+  if(est==='baixando')b.dataset.pct=String(p);else delete b.dataset.pct;
+  b.setAttribute('aria-label',est==='baixado'?'Offline neste PC (clique para remover)':est==='baixando'?`Baixando offline (${p}%)`:'Baixar offline');
+  const ico=est==='baixado'?OF_ICO_OK:est==='baixando'?ofIcoLoad(p):OF_ICO_DOWN;
   if(b.innerHTML!==ico)b.innerHTML=ico;
-  b.title=est==='baixando'?('Baixando offline'+(OF.prog?' · '+OF.prog:'…')):on?('Offline neste PC · '+(OF.tamUso!=null?ofMB(OF.tamUso):'calculando…')):('Baixar offline · '+(OF.tamEst!=null?'~'+ofMB(OF.tamEst):'calculando…'));
+  b.title=est==='baixando'?`Baixando offline · ${p}%`:on?('Offline neste PC · '+(OF.tamUso!=null?ofMB(OF.tamUso):'calculando…')):('Baixar offline · '+(OF.tamEst!=null?'~'+ofMB(OF.tamEst):'calculando…'));
 }
 const ofPrazo=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>null),new Promise(r=>setTimeout(()=>r(null),ms))]);
 // Soma os bytes guardados nos caches do Service Worker.
@@ -73,7 +77,7 @@ async function ofCalculaTamanho(){
     const ab=typeof SyncNotas?.estado==='function'?(SyncNotas.estado().abertas||{}):{};
     for(const m of metas){
       const p=ab[m.id];
-      if(p?.doc){const s=JSON.stringify(p.doc);ntPagBytes+=s.length;for(const x of s.matchAll(/\.\/img\/([\w.-]+)/g))ntImgs.add(x[1])}
+      if(p?.doc){const s=JSON.stringify(p.doc);ntPagBytes+=s.length;for(const x of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let n=x[1];try{n=decodeURIComponent(n)}catch(e2){}ntImgs.add(n)}}
       else ntPagBytes+=8000;
     }
   }catch(e){}
@@ -82,26 +86,28 @@ async function ofCalculaTamanho(){
 }
 function ofImagensNotas(){
   const s=JSON.stringify(SyncNotas.estado().abertas),out=new Set();
-  for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))out.add(m[1]);
+  for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let n=m[1];try{n=decodeURIComponent(n)}catch(e){}out.add(n)}
   return [...out];
 }
 async function ofBaixaTudo(silencioso=false){
-  if(OF.baixando||!window.BCBR?.baixarTudo||navigator.onLine===false)return;
-  OF.baixando=true;if(!silencioso)ofPintaBtn();
+  if(OF.baixando||!window.BCBR?.baixarTudo||navigator.onLine===false||(window.BCBR?.pausaAte||0)>Date.now())return;
+  OF.baixando=true;OF.pct=0;if(!silencioso)ofPintaBtn();
   try{
     await ofPrazo(BCBR.carregarDados?.(true),5000);
     let imgsNotas=[];
     if(typeof SyncNotas?.baixarTodas==='function'){
-      const r=await ofPrazo(SyncNotas.baixarTodas((i,t)=>{if(!silencioso){OF.prog=`notas ${i}/${t}`;ofPinta();ofPintaBtn()}}),15000);
+      const r=await ofPrazo(SyncNotas.baixarTodas((i,t)=>{if(!silencioso){OF.prog=`notas ${i}/${t}`;OF.pct=t?Math.round((i/t)*30):15;ofPintaBtn()}}),15000);
       imgsNotas=r?.imagens||[];
     }else imgsNotas=ofImagensNotas();
-    await ofPrazo(BCBR.baixarTudo((i,t)=>{if(!silencioso&&t){OF.prog=`${i}/${t}`;ofPinta();ofPintaBtn()}},imgsNotas),20000);
+    if(!silencioso&&OF.pct<30){OF.pct=30;ofPintaBtn()}
+    await ofPrazo(BCBR.baixarTudo((i,t)=>{if(!silencioso){OF.prog=t?`${i}/${t}`:'';OF.pct=t?30+Math.round((i/t)*70):100;ofPintaBtn()}},imgsNotas),20000);
+    if(!silencioso){OF.pct=100;ofPintaBtn()}
     try{localStorage.setItem(OF_FLAG,'1')}catch(e){}
-  }catch(e){}finally{OF.baixando=false;OF.prog='';ofPinta();await ofCalculaTamanho()}
+  }catch(e){}finally{OF.baixando=false;OF.prog='';OF.pct=null;ofPinta();await ofCalculaTamanho()}
 }
 async function ofLigar(){
   if(OF.baixando)return;
-  OF.baixando=true;OF.prog='';ofPintaBtn();ofPinta();
+  OF.baixando=true;OF.prog='';OF.pct=0;ofPintaBtn();ofPinta();
   try{
     try{localStorage.setItem(OF_LS,'1')}catch(e){}
     if('serviceWorker' in navigator){
@@ -120,7 +126,7 @@ async function ofLigar(){
     OF.baixando=false;
     await ofBaixaTudo(false);
   }finally{
-    OF.baixando=false;OF.prog='';ofPintaBtn();ofPinta();
+    OF.baixando=false;OF.prog='';OF.pct=null;ofPintaBtn();ofPinta();
   }
 }
 async function ofDesligar(){

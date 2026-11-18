@@ -175,16 +175,16 @@ test('Radio 1.62.0: Notas rápidas, Baixar offline e Preliminares com dias abert
     await ev("localStorage.removeItem('__atraso_notas');0");
   });
 
-  await t.test('3. Preliminares: dias abertos ao carregar; fechar um dia e recarregar continua fechado',async()=>{
+  await t.test('3. Preliminares: dias fechados ao carregar; abrir um dia e recarregar continua aberto',async()=>{
     await ev("go('preliminares');0");
     await ate("document.querySelectorAll('.prl-n0').length===3",10000);
     const abertosIni=await ev("[...document.querySelectorAll('.prl-n0')].map(d=>[d.dataset.k,d.open])");
-    assert.deepEqual(abertosIni,[['d|2026-11-12',true],['d|2026-11-11',true],['d|2026-11-10',true]],'todos os dias abertos ao carregar');
+    assert.deepEqual(abertosIni,[['d|2026-11-12',false],['d|2026-11-11',false],['d|2026-11-10',false]],'todos os dias fechados ao carregar');
 
-    // Fecha o dia 2026-11-11 manualmente
+    // Abre o dia 2026-11-11 manualmente
     await ev("document.querySelector('.prl-n0[data-k=\"d|2026-11-11\"]>summary').click();0");
-    await ate("!document.querySelector('.prl-n0[data-k=\"d|2026-11-11\"]').open");
-    assert.deepEqual(JSON.parse(await ev("localStorage.getItem('bcbr_prl_fechados')")),['2026-11-11']);
+    await ate("document.querySelector('.prl-n0[data-k=\"d|2026-11-11\"]').open");
+    assert.deepEqual(JSON.parse(await ev("localStorage.getItem('bcbr_prl_abertos')")),['2026-11-11']);
 
     // Recarrega a página de verdade e reabre Preliminares
     await call('Page.navigate',{url:C.URL_});
@@ -192,7 +192,7 @@ test('Radio 1.62.0: Notas rápidas, Baixar offline e Preliminares com dias abert
     await ev("go('preliminares');0");
     await ate("document.querySelectorAll('.prl-n0').length===3",10000);
     const abertosDep=await ev("[...document.querySelectorAll('.prl-n0')].map(d=>[d.dataset.k,d.open])");
-    assert.deepEqual(abertosDep,[['d|2026-11-12',true],['d|2026-11-11',false],['d|2026-11-10',true]],'dia fechado continua fechado após recarregar');
+    assert.deepEqual(abertosDep,[['d|2026-11-12',false],['d|2026-11-11',true],['d|2026-11-10',false]],'dia aberto continua aberto após recarregar');
   });
 
   assert.deepEqual(C.erros,[]);

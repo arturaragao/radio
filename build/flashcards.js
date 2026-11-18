@@ -216,13 +216,20 @@ function fcNext(s,g,inRe){
 }
 const FC_NOTAS={1:'Errei',2:'Difícil',3:'Bom',4:'Fácil'};
 let fq=null,fcBusca='',fcDelId=null,fcTags=new Set(),fcNew={f:'',v:''},fcEdit=null,fcAvEdit=null;
-const fcImgRef=u=>{u=String(u||'').trim();if(!u)return '';return /^(gh:|u:|data:|https?:|\.?\/)/.test(u)?u:'gh:'+u};
+function fcImgRef(u){
+  u=String(u||'').trim();if(!u)return '';
+  if(/^(u:|data:|https?:)/.test(u))return u;
+  if(u.startsWith('gh:'))u=u.slice(3);
+  u=u.replace(/^\.?\/?(?:imagens|img)\//,'');
+  try{if(/%[0-9a-fA-F]{2}/.test(u))u=decodeURIComponent(u)}catch(e){}
+  return u?'gh:'+u:'';
+}
 function fcImgsHtml(arr){
   const list=(arr||[]).map(fcImgRef).filter(u=>u&&imgSrc(u));if(!list.length)return '';
-  return `<div class="fc-imgs">${list.map(ref=>`<img class="fc-img" src="${esc(imgSrc(ref))}" data-u="${esc(ref)}" onclick="zoom('${esc(ref.replace(/'/g,"\\'"))}')" loading="lazy" alt="Imagem do flashcard" onerror="if(!this.dataset.bcbrTentou)this.hidden=true">`).join('')}</div>`;
+  return `<div class="fc-imgs">${list.map(ref=>`<img class="fc-img" src="${esc(imgSrc(ref))}" data-u="${esc(ref)}" onclick="zoom('${esc(ref.replace(/'/g,"\\'"))}')" loading="lazy" alt="Imagem do flashcard" onerror="if(!this.dataset.bcbrTentou||!/(?:^|\\/)img\\//.test(this.getAttribute('src')||''))this.hidden=true">`).join('')}</div>`;
 }
 function fcAvSalvaReg(c,voto,motivo=''){
-  const now=Math.max(Date.now(),(fcAv[c.id]?.u||0)+1),reg={id:c.id,tema:c.tg||'',frente:rtTxt(c.f),verso:rtTxt(c.v||''),voto,motivo:String(motivo||'').trim(),data:new Date(now).toISOString(),u:now};
+  const now=Math.max(Date.now(),(fcAv[c.id]?.u||0)+1),reg={id:c.id,tema:c.tg||'',frente:fcTxt(c.f),verso:fcTxt(c.v||''),voto,motivo:String(motivo||'').trim(),data:new Date(now).toISOString(),u:now};
   fcAv[c.id]=reg;persist('av:0');
 }
 function fcAvVota(v){
@@ -446,8 +453,105 @@ function fcKey(e){
   else if(!e.shiftKey&&k==='ArrowLeft'){e.preventDefault();fcIr(fq.i-1)}
   else if(!e.shiftKey&&k==='ArrowRight'){e.preventDefault();if(fq.i>=fq.ids.length-1)toast('Último cartão');else fcIr(fq.i+1)}
 }
+function fcSanitiza(raw){
+  let s=String(raw??'');
+  if(!s)return '';
+  if(typeof isRt==='function'&&isRt(s))return rtClean(s.slice(1));
+  s=s.replace(/\r\n?/g,'\n').replace(/\n+/g,'\n');
+  if(typeof document==='undefined'||typeof document.createElement!=='function'){
+    return esc(s.replace(/<br\s*\/?>/gi,'\n').replace(/<\/?(?:b|strong|i|em|ul|ol|li|p|div)\b[^>]*>/gi,'')).replace(/\n/g,'<br>');
+  }
+  if(!/<(?:br|ul|ol|li|p|div)\b/i.test(s))s=s.replace(/\n/g,'<br>');
+  else s=s.replace(/([^>])\n/g,'$1<br>');
+  const t=document.createElement('template');t.innerHTML=s;
+  const BAD=/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|IFRAME|OBJECT|EMBED|SVG|MATH|IMG|LINK|META|HEAD|TITLE|FORM|INPUT|BUTTON|TEXTAREA|SELECT)$/;
+  const walk=n=>{
+    let out='';
+    n.childNodes.forEach(c=>{
+      if(c.nodeType===3){out+=esc(c.nodeValue.replace(/[\r\n\t]+/g,' '));return}
+      if(c.nodeType!==1)return;
+      const tg=c.tagName;
+      if(BAD.test(tg))return;
+      if(tg==='BR'){out+='<br>';return}
+      if(tg==='UL'||tg==='OL'){
+        let lis='';
+        c.childNodes.forEach(ch=>{
+          if(ch.nodeType===1&&ch.tagName==='LI'){
+            const li=walk(ch).replace(/^(?:\s|<br>)*•\s*/,'').replace(/(?:\s*<br>\s*)+$/,'').trim();
+            if(li)lis+=`<li>${li}</li>`;
+          }
+        });
+        if(lis)out+=`<ul>${lis}</ul>`;
+        return;
+      }
+      if(tg==='LI'){
+        const li=walk(c).replace(/^(?:\s|<br>)*•\s*/,'').replace(/(?:\s*<br>\s*)+$/,'').trim();
+        if(li)out+=`<ul><li>${li}</li></ul>`;
+        return;
+      }
+      const inner=walk(c);
+      if(tg==='B'||tg==='STRONG'){if(inner)out+=`<b>${inner}</b>`;return}
+      if(tg==='I'||tg==='EM'){if(inner)out+=`<i>${inner}</i>`;return}
+      if(tg==='P'||tg==='DIV'){if(inner.trim())out+=inner.replace(/(?:<br>)+$/,'')+'<br>';return}
+      out+=inner;
+    });
+    return out;
+  };
+  return walk(t.content).replace(/^(?:\s*<br>\s*)+|(?:\s*<br>\s*)+$/gi,'').replace(/(<br>\s*){3,}/gi,'<br><br>').trim();
+}
+function fcFormataCard(html){
+  if(!html)return '';
+  let s=html,peg='';
+  const pegaPeg=re=>{
+    const m=s.match(re);
+    if(!m)return false;
+    let resto='',rotHtml='';
+    if(m.length===4&&re.source.includes('<\\/i>')){
+      rotHtml=`<i>${m[1].trim()}${(m[2]||'').replace(/\s*<\/li>\s*<\/ul>\s*$/i,'')}</i>`;
+      resto=m[3]||'';
+    }else{
+      rotHtml=`<i>${(m[1]||'Pegadinha:').trim()}</i>`;
+      resto=m[2]||'';
+    }
+    let fecha='';
+    if(/<\/li>\s*<\/ul>\s*$/i.test(resto)){resto=resto.replace(/<\/li>\s*<\/ul>\s*$/i,'');fecha='</li></ul>'}
+    resto=resto.replace(/^(?:\s*<br>\s*)+|(?:\s*<br>\s*)+$/gi,'').trim();
+    s=(s.slice(0,m.index)+fecha).replace(/(?:\s*<br>\s*)+$/gi,'').trim();
+    peg=`<div class="fc-peg">${rotHtml}${resto?' '+resto:''}</div>`;
+    return true;
+  };
+  pegaPeg(/(?:<br>\s*|\s)*<i>\s*(Pegadinha\s*:?)\s*<\/i>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*<i>\s*(Pegadinha\s*:?)([\s\S]*?)<\/i>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*<b>\s*(Pegadinha\s*:?)\s*<\/b>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*(Pegadinha\s*:)([\s\S]*)$/i);
+  if(/•/.test(s)&&!/<ul>/i.test(s)){
+    const idx=s.search(/(?:<br>\s*|\s)*•\s*/);
+    let cab=idx>=0?s.slice(0,idx):'';
+    const corpo=idx>=0?s.slice(idx):s;
+    cab=cab.replace(/(?:\s*<br>\s*)+$/gi,'').replace(/<\/b>\s*\.\s*$/i,'</b>').trim();
+    const itens=corpo.split(/(?:<br>\s*|\s)*•\s*/).map(x=>x.replace(/(?:\s*<br>\s*)+$/gi,'').trim()).filter(Boolean);
+    if(itens.length){
+      return (cab?`<div class="fc-dx">${cab}</div>`:'')+`<ul>${itens.map(x=>`<li>${x}</li>`).join('')}</ul>`+peg;
+    }
+  }
+  if(/<ul>/i.test(s)){
+    s=s.replace(/^([\s\S]*?)<br>\s*(<ul>)/i,(_,cab,ul)=>{
+      const c=cab.replace(/(?:\s*<br>\s*)+$/gi,'').replace(/<\/b>\s*\.\s*$/i,'</b>').trim();
+      return (c?`<div class="fc-dx">${c}</div>`:'')+ul;
+    });
+    return s+peg;
+  }
+  return peg?(s?`<div>${s}</div>`:'')+peg:s;
+}
+function fcTxt(s){
+  s=String(s||'');
+  if(typeof isRt==='function'&&isRt(s))return rtTxt(s);
+  if(typeof document==='undefined'||typeof document.createElement!=='function')return s.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const d=document.createElement('div');d.innerHTML=fcSanitiza(s).replace(/<br>|<\/li>/gi,'$& ');
+  return (d.textContent||'').replace(/\s+/g,' ').trim();
+}
 function fcFace(c){
-  const clz=/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g,F=rtHtml(c.f),V=rtHtml(c.v||'');
+  const clz=/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g,F=fcFormataCard(fcSanitiza(c.f)),V=fcFormataCard(fcSanitiza(c.v||''));
   if(clz.test(F)){
     return {f:F.replace(clz,'<span class="cz">[...]</span>'),b:F.replace(clz,'<span class="cz on">$1</span>')+(V?'<br><br>'+V:'')};
   }
@@ -487,6 +591,7 @@ function vFcStudy(){
   const imgsF=fcImgsHtml(c.fi),imgsV=fcImgsHtml(c.vi);
   const rodInfo=[c.tg,meta.tema&&!String(c.tg||'').includes(meta.tema)?meta.tema:'',meta.fonte].filter(Boolean).join(' · ');
   const avHtml=`<div class="fcard-rod">${rodInfo?`<span class="mut" style="font-size:.78rem">${esc(rodInfo)}</span>`:'<span></span>'}<div class="fc-av"><button type="button" class="ok ${av?.voto===1?'on':''}" aria-label="Gostei do cartão" aria-pressed="${av?.voto===1}" title="Gostei" onclick="fcAvVota(1)">👍</button><button type="button" class="bad ${av?.voto===-1?'on':''}" aria-label="Não gostei do cartão" aria-pressed="${av?.voto===-1}" title="Não gostei" onclick="fcAvVota(-1)">👎</button></div></div>${av?.voto===-1&&!edAv?`<div class="fc-av-mot mut">${av.motivo?`Motivo: ${esc(av.motivo)}`:'Marcado como não gostei'} <button type="button" class="fc-av-ed" onclick="fcAvEditar()">Editar motivo</button></div>`:''}${edAv?`<div class="fc-av-box"><input id="fc_av_txt" placeholder="O que não gostou?" value="${esc(fcAvEdit.txt)}" oninput="fcAvEdit.txt=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();fcAvSalva()}else if(event.key==='Escape'){event.preventDefault();fcAvCancela()}"><div class="row" style="margin-top:6px"><button type="button" class="b" style="padding:5px 12px;font-size:.82rem" onclick="fcAvSalva()">Salvar</button><button type="button" class="b s" style="padding:5px 12px;font-size:.82rem" onclick="fcAvCancela()">Cancelar</button></div></div>`:''}`;
+  if(typeof setTimeout==='function'&&typeof document!=='undefined')setTimeout(()=>{const g=document.querySelector('.qnav .qgrid'),cur=g?.querySelector('.qn.cur');if(g&&cur)g.scrollTop=Math.max(0,cur.offsetTop-g.offsetTop-4)},0);
   return `${fcBarra()}<div class="fcbar"><div class="row"><button class="b s" onclick="go('fc','lista')">Sair (Esc)</button>${fq.titulo?`<span class="pill">${esc(fq.titulo)}</span>`:''}</div><button class="b s" onclick="fcEncerra()">Encerrar bloco</button></div>
   <div class="qlay"><div style="min-width:0">
   <div class="fcwrap"><button type="button" class="b s fcnav-bt fcprev" onclick="fcIr(${fq.i-1})" ${fq.i<=0?'disabled':''} aria-label="Cartão anterior" title="Anterior (←)">‹</button>
@@ -520,7 +625,7 @@ function fcImportar(){
     const c={id:'c'+Date.now().toString(36)+(n++).toString(36),f,v,tg:limpa(r[2]),u:Date.now()};cards.push(c);dirty.add('c:'+hk(c.id,32))});
   persist();render();toast(n+' cartões importados');
 }
-function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:rtHtml(c.f),v:rtHtml(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
+function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:fcSanitiza(c.f),v:fcSanitiza(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
 function fcEditSalva(){const c=cardBy(fcEdit.id),f=rtVal(fcEdit.f),v=rtVal(fcEdit.v);if(!f){toast('A frente não pode ficar vazia.');return}
   Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});delete c._rs;persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
 function fcSusp(id){const s=fst(id).slice();s[6]=s[6]?0:1;s[5]=Date.now();fcs[id]=s;persist('s:'+hk(id,8));render()}
@@ -597,7 +702,7 @@ function vFc(){
   const nTodos=baseTema.length,nCom=baseTema.filter(fcTemImagem).length,nSem=nTodos-nCom;
   const {ops:temaOps,areas,sem}=fcOpcoesTema(todos.filter(x=>cTagOk(x)&&fcImgOk(x)));
   const filtrados=todos.filter(fcFiltroOk);
-  const lista=filtrados.filter(x=>!q||norm(rtTxt(x.f)+' '+rtTxt(x.v)+' '+(x.tg||'')+' '+fcMeta(x).tema).includes(q)).slice(0,60);
+  const lista=filtrados.filter(x=>!q||norm(fcTxt(x.f)+' '+fcTxt(x.v)+' '+(x.tg||'')+' '+fcMeta(x).tema).includes(q)).slice(0,60);
   const TG={};todos.forEach(x=>cTags(x).forEach(t=>{const k=norm(t);(TG[k]??={t,n:0}).n++}));
   const nSel=fcAtivos().filter(fcFiltroOk).length,temFiltro=!!(fcTags.size||fcTema||fcImg!=='todos');
   const now=Date.now(),hFeitos=fcHojeEstado().feitos.length,hFila=fcHojeFila(),hRest=hFila.length;
@@ -633,5 +738,5 @@ function vFc(){
   <div class="card"><h3>Navegar (${filtrados.length}${temFiltro?` de ${todos.length}`:''})</h3><p class="row"><input id="fc_q" placeholder="Buscar nos cartões" value="${esc(fcBusca)}" onchange="fcBusca=this.value;render()" style="flex:1;min-width:200px"></p>
   ${lista.length?`<div class="tw"><table><tr><th>Frente</th><th>Estado</th><th></th></tr>${lista.map(x=>{const s=fcs[x.id];const st=s&&s[6]?'suspenso':!s||s[2]===0?'novo':s[3]<=now?'vencido':'em '+Math.max(1,Math.ceil((s[3]-now)/DAY))+' d';
    const m=fcMeta(x),p=fcChaveParts(m.chave),subInfo=[fcTemImagem(x)?'🖼':'',p?fcChaveLabel(p):m.tema||''].filter(Boolean).join(' ');
-   return `<tr><td>${esc(rtTxt(x.f).slice(0,90))}${subInfo?`<div class="mut" style="font-size:.76rem">${esc(subInfo)}</div>`:''}</td><td>${st}${s&&s[2]>0?` · ${fcFmt(s[1])}`:''}</td><td style="white-space:nowrap"><button class="b s" style="padding:4px 10px" onclick="fcEditAbre('${x.id}')">Editar</button> <button class="b s" style="padding:4px 10px" onclick="fcSusp('${x.id}')">${s&&s[6]?'Reativar':'Suspender'}</button> <button class="b s" style="padding:4px 10px" onclick="fcDel('${x.id}')">${fcDelId===x.id?'Confirmar':'Excluir'}</button></td></tr>${fcEdit&&fcEdit.id===x.id?`<tr><td colspan="3"><div class="iab"><div class="kick">Editar flashcard</div><div><b style="font-size:.85rem">Frente</b>${rtEd('ed_f',fcEdit.f,120,'fcEdit.f')}</div><div style="margin-top:8px"><b style="font-size:.85rem">Verso</b>${rtEd('ed_v',fcEdit.v,300,'fcEdit.v')}</div><label style="display:block;margin-top:6px">Tags (separadas por ;)<input style="width:100%" value="${esc(fcEdit.tg)}" oninput="fcEdit.tg=this.value"></label><div class="row" style="margin-top:8px"><button class="b" onclick="fcEditSalva()">Salvar</button><button class="b s" onclick="fcEdit=null;render()">Cancelar</button></div></div></td></tr>`:''}`}).join('')}</table></div>`:'<p class="mut">Nenhum cartão ainda. Importe ou adicione acima.</p>'}</div>`;
+   return `<tr><td>${esc(fcTxt(x.f).slice(0,90))}${subInfo?`<div class="mut" style="font-size:.76rem">${esc(subInfo)}</div>`:''}</td><td>${st}${s&&s[2]>0?` · ${fcFmt(s[1])}`:''}</td><td style="white-space:nowrap"><button class="b s" style="padding:4px 10px" onclick="fcEditAbre('${x.id}')">Editar</button> <button class="b s" style="padding:4px 10px" onclick="fcSusp('${x.id}')">${s&&s[6]?'Reativar':'Suspender'}</button> <button class="b s" style="padding:4px 10px" onclick="fcDel('${x.id}')">${fcDelId===x.id?'Confirmar':'Excluir'}</button></td></tr>${fcEdit&&fcEdit.id===x.id?`<tr><td colspan="3"><div class="iab"><div class="kick">Editar flashcard</div><div><b style="font-size:.85rem">Frente</b>${rtEd('ed_f',fcEdit.f,120,'fcEdit.f')}</div><div style="margin-top:8px"><b style="font-size:.85rem">Verso</b>${rtEd('ed_v',fcEdit.v,300,'fcEdit.v')}</div><label style="display:block;margin-top:6px">Tags (separadas por ;)<input style="width:100%" value="${esc(fcEdit.tg)}" oninput="fcEdit.tg=this.value"></label><div class="row" style="margin-top:8px"><button class="b" onclick="fcEditSalva()">Salvar</button><button class="b s" onclick="fcEdit=null;render()">Cancelar</button></div></div></td></tr>`:''}`}).join('')}</table></div>`:'<p class="mut">Nenhum cartão ainda. Importe ou adicione acima.</p>'}</div>`;
 }

@@ -11,6 +11,7 @@ function rdEstado(){
   const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
   if(s.volatil)return 'Pendente — mantenha esta aba aberta';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Pendente — sem conexão';
+  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return window.BCBR.limiteMsg;
   if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
   if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Enviando…';
   return s.ultima||RD.ultima?'Salvo ✓':'Aguardando sincronização';

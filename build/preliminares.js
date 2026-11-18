@@ -313,11 +313,11 @@ async function prelLocalSet(on,aviso=true){
   if(aviso)prelCfgMsg(on?'Laudos serão guardados neste aparelho.':'Laudos apagados deste aparelho.');
 }
 // ---- tela ----
-const PRL_FECHADOS_LS='bcbr_prl_fechados';   // 1.62.0: dias fechados à mão pelo usuário (só datas, nunca texto de laudo)
-function prelDiasFechadosLer(){try{const l=JSON.parse(localStorage.getItem(PRL_FECHADOS_LS)||'[]');return new Set(Array.isArray(l)?l:[])}catch(e){return new Set()}}
-function prelDiaFechadoSalva(dia,fechado){
-  const s=prelDiasFechadosLer();if(fechado)s.add(dia);else s.delete(dia);
-  try{const l=[...s];if(l.length)localStorage.setItem(PRL_FECHADOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_FECHADOS_LS)}catch(e){}
+const PRL_ABERTOS_LS='bcbr_prl_abertos';   // 1.64.0: dias abertos à mão pelo usuário (só datas, nunca texto de laudo)
+function prelDiasAbertosLer(){try{const l=JSON.parse(localStorage.getItem(PRL_ABERTOS_LS)||'[]');return new Set(Array.isArray(l)?l:[])}catch(e){return new Set()}}
+function prelDiaAbertoSalva(dia,aberto){
+  const s=prelDiasAbertosLer();if(aberto)s.add(dia);else s.delete(dia);
+  try{const l=[...s];if(l.length)localStorage.setItem(PRL_ABERTOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_ABERTOS_LS)}catch(e){}
 }
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
 const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2))};
@@ -327,7 +327,7 @@ function prelTg(el){
   const k=el.dataset.k;
   if(el.dataset.def&&el.open&&PRL.estado[k]===undefined)return;   // abriu sozinho por causa do filtro: não vira escolha do usuário
   if(PRL.estado[k]===el.open)return;PRL.estado[k]=el.open;
-  if(k&&k.startsWith('d|'))prelDiaFechadoSalva(k.slice(2),!el.open);
+  if(k&&k.startsWith('d|'))prelDiaAbertoSalva(k.slice(2),el.open);
   if(!el.open)return;
   if(el.dataset.ac)prelPar(el.dataset.ac);
   else{const d=el.querySelector(':scope>.prl-in');if(d&&!d.firstChild){d.innerHTML=prelFilhosHtml(k);prelPares()}}   // níveis 1 e 2 geram os filhos só quando abertos
@@ -417,10 +417,10 @@ function prelListaHtml(){
   const its=prelVis(),at=prelFiltroAtivo();
   if(!its.length)return `<p class="mut" role="status">${PRL.itens.length?'Nada encontrado com esse filtro.':'Ainda não há laudos preliminares gravados.'}</p>`;
   if(PRL.modo==='exame')return prelN1(prelAgrupa(its),'*',at,its.length);   // 1.54.0: Categoria > Exame > Acesso (a data aparece em cada acesso)
-  const fechados=prelDiasFechadosLer();
+  const abertos=prelDiasAbertosLer();
   return prelAgrupaDias(its).map(d=>{
-    const k0='d|'+d.dia,padrao=!fechados.has(d.dia),ab0=prelAberto(k0,padrao);
-    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
+    const k0='d|'+d.dia,tem=abertos.has(d.dia),def=at&&!tem&&PRL.estado[k0]===undefined,ab0=prelAberto(k0,tem||def);
+    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${def?'data-def="1"':''} ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
   }).join('');
 }
 function prelFormChave(){

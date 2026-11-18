@@ -56,7 +56,10 @@ test('Radio 1.55: página Preliminares (Chrome, dados sintéticos)',{timeout:120
     assert.equal(await ev("SyncNotas.estado().paginas.some(p=>p.id==='preliminares'||p.titulo==='Preliminares')"),false,'não é página sincronizada');
   });
   await t.test('níveis 1 > 2 > 3 abrem sob demanda; acesso é o título; ✓ só nos lidos; chefe e data ao lado',async()=>{
-    assert.equal(await ev("document.querySelector('.prl-n0[data-k=\"d|2026-11-12\"]').open"),true,'1.62: dias vêm abertos por padrão');
+    assert.equal(await ev("document.querySelector('.prl-n0[data-k=\"d|2026-11-12\"]').open"),false,'1.64: dias vêm fechados por padrão');
+    assert.equal(await ev("document.querySelectorAll('.prl-n1').length"),0);
+    await ev("document.querySelector('.prl-n0[data-k=\"d|2026-11-12\"]>summary').click()");
+    await ate("document.querySelector('.prl-n1[data-k=\"c1|2026-11-12|Ultrassom\"]')");
     assert.equal(await ev("document.querySelectorAll('.prl-n2').length"),0);
     await ev("document.querySelector('.prl-n1[data-k=\"c1|2026-11-12|Ultrassom\"]>summary').click()");
     await ate("document.querySelector('.prl-n2')");

@@ -8,7 +8,19 @@
   const LS = { tk: "bcbr_gh_token", gm: "bcbr_gemini_key", gmModelo: "bcbr_gemini_modelo", off: "bcbr_offline" };
   const tok = () => localStorage.getItem(LS.tk) || "";
   const offlineAtivo = () => { try { return localStorage.getItem(LS.off) === "1"; } catch (e) { return false; } };
-  window.BCBR = { REPO };
+  window.BCBR = { REPO, pausaAte: 0, limiteMsg: "" };
+  const fmtHora = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  const ehLimite = (st, h, resp) => st === 429 || (st === 403 && (h?.get?.("x-ratelimit-remaining") === "0" || window.BCBR.cota?.rest === 0 || !!h?.get?.("retry-after") || /rate.?limit|secondary|abuse|limite|too many|wait a few/i.test(resp || "")));
+  const calculaEspera = (h) => {
+    const ra = h?.get?.("retry-after");
+    if (ra) {
+      const seg = Number(ra); if (Number.isFinite(seg) && seg > 0) return seg * 1000;
+      const dt = Date.parse(ra); if (Number.isFinite(dt) && dt > Date.now()) return dt - Date.now();
+    }
+    const rst = Number(h?.get?.("x-ratelimit-reset") || 0);
+    if (Number.isFinite(rst) && rst > 0) { const ms = rst * 1000 - Date.now() + 1000; if (ms > 0) return ms; }
+    return 60000;
+  };
   let configAberta = false, carregamentoPendente = false, recusada = "", aguardando401 = "";
   const aba = Math.random().toString(36).slice(2);
   // Recupera a cópia já usada pelo SW nas versões anteriores, sem apagar nenhuma chave.
@@ -67,6 +79,10 @@
   window.BCBR.config = telaConfig;
 
   async function api(path, opt = {}) {
+    if ((window.BCBR.pausaAte || 0) > Date.now()) {
+      const ate = window.BCBR.pausaAte, msg = window.BCBR.limiteMsg || ("GitHub ocupado, tentando às " + fmtHora(ate));
+      throw Object.assign(new Error(msg), { status: 429, limite: true, ate });
+    }
     const chave = tok();
     let r;
     try { r = await fetch(API + path, {
@@ -77,13 +93,29 @@
     // 1.40: cota do GitHub (BCBR.cota) para o ciclo rápido da Semana/Notas voltar a 90 s se faltar; opt.etag = GET condicional (304 não gasta cota).
     const rest = r.headers?.get?.("x-ratelimit-remaining");
     if (rest != null) window.BCBR.cota = { rest: +rest, reset: +r.headers?.get?.("x-ratelimit-reset") || 0 };
-    if (r.status === 304) return { naoMudou: true };
+    if (r.status === 304) { window.BCBR.pausaAte = 0; window.BCBR.limiteMsg = ""; return { naoMudou: true }; }
     if (r.status === 401) { await credencialRecusada(chave); throw Object.assign(new Error("chave"), { chave: true, status: 401 }); }
-    if (!r.ok) throw Object.assign(new Error("GitHub " + r.status), { status: r.status, resp: await r.text().catch(() => "") });
+    if (!r.ok) {
+      const resp = await r.text().catch(() => "");
+      if (ehLimite(r.status, r.headers, resp)) {
+        const ate = Math.max(window.BCBR.pausaAte || 0, Date.now() + calculaEspera(r.headers));
+        const msg = "GitHub ocupado, tentando às " + fmtHora(ate);
+        window.BCBR.pausaAte = ate; window.BCBR.limiteMsg = msg;
+        throw Object.assign(new Error(msg), { status: r.status, resp, limite: true, ate });
+      }
+      throw Object.assign(new Error("GitHub " + r.status), { status: r.status, resp });
+    }
+    window.BCBR.pausaAte = 0; window.BCBR.limiteMsg = "";
     if (opt.etag !== undefined) { const j = await r.json(); j.etag = r.headers?.get?.("etag") || ""; return j; }
     return opt.accept === "raw" ? r : r.json();
   }
   const raw = (sha) => api(`/repos/${REPO}/git/blobs/${sha}`, { accept: "raw" }).then(r => r.text());
+  const rawItem = async (f) => {
+    if (f && f.download_url) {
+      try { const r = await fetch(f.download_url, { cache: "no-store" }); if (r.ok) return r.text(); } catch (e) {}
+    }
+    return raw(f.sha);
+  };
   const b64 = (s) => btoa(unescape(encodeURIComponent(s)));
   Object.assign(window.BCBR, { api, raw, b64 });   // usados pela aba Semana (build/semana.js)
 
@@ -116,12 +148,13 @@
   // fundo=true: o app já abriu com a cópia do aparelho; só baixa o que mudou e guarda (vale ao recarregar). Devolve true se mudou.
   async function carregarDados(fundo) {
     const lista = await api(`/repos/${REPO}/contents/dados`);
+    const item = Object.fromEntries(lista.map((f) => [f.name, f]));
     const sha = Object.fromEntries(lista.map((f) => [f.name, f.sha]));
     let mudou = false;
     const pegar = async (nome) => {
       const c = await kvGet("f:" + nome);
       if (c && c.sha === sha[nome]) return c.txt;
-      const txt = await raw(sha[nome]); mudou = true; await kvSet("f:" + nome, { sha: sha[nome], txt }); return txt;
+      const txt = await rawItem(item[nome]); mudou = true; await kvSet("f:" + nome, { sha: sha[nome], txt }); return txt;
     };
     const metodos = async () => {
       if (sha["metodos.json"]) return pegar("metodos.json");
@@ -143,7 +176,7 @@
       if (!f) { if (await kvGet(cacheKey)) { await kvSet(cacheKey, null); mudou = true; } return ""; }
       const c = await kvGet(cacheKey);
       if (c && c.sha === f.sha) return c.txt;
-      const txt = await raw(f.sha); mudou = true; await kvSet(cacheKey, { sha: f.sha, txt }); return txt;
+      const txt = await rawItem(f); mudou = true; await kvSet(cacheKey, { sha: f.sha, txt }); return txt;
     };
     const lerResumos = (t) => { try { const j = t ? JSON.parse(t) : null; return Array.isArray(j) ? j : null; } catch (e) { return null; } };
     const lerFcQuestoes = (t) => { try { const j = t ? JSON.parse(t) : null; return j && Array.isArray(j.cards) ? j : (Array.isArray(j) ? { v: 1, cards: j } : null); } catch (e) { return null; } };
@@ -209,8 +242,8 @@
             try { const m = await puxar(); if (m || primeira) avisar(); } catch (e) { err && err(e); }
           };
           ciclo(true);
-          setInterval(() => document.visibilityState === "visible" && ciclo(false), 60000);
-          document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && ciclo(false));
+          setInterval(() => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && ciclo(false), 60000);
+          document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && ciclo(false));
           return () => { ouvintes = ouvintes.filter((x) => x !== o); };
         },
       };
@@ -231,67 +264,119 @@
   window.claude = { use: async (k) => (k === "db" ? DBshim : k === "sample" ? (localStorage.getItem(LS.gm) ? gemini : null) : null) };
 
   // ---------- baixar tudo (offline) ----------
+  const encPath = (nome) => String(nome || "").replace(/^\/+/, "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const normImgNome = (u) => {
+    let s = String(u || "").trim();
+    if (!s || /^(u:|data:|https?:)/.test(s)) return "";
+    if (s.startsWith("gh:")) s = s.slice(3);
+    s = s.replace(/^\.?\/?(?:imagens|img)\//, "");
+    try { if (/%[0-9a-fA-F]{2}/.test(s)) s = decodeURIComponent(s); } catch (e) {}
+    return s.trim();
+  };
   window.BCBR.baixarTudo = async (aoAndar, extras = []) => {   // extras: imagens das notas (nomes de arquivo)
+    if ((window.BCBR.pausaAte || 0) > Date.now()) return 0;
     if ("serviceWorker" in navigator) await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 4000))]).catch(() => {});   // as imagens passam pelo SW, que guarda no aparelho
-    const fs = [...new Set([...(window.QUESTOES || []).flatMap((q) => [...q.imgs, ...q.imgsCom]).map((u) => u.slice(3)), ...extras])];
-    let n = 0;
-    for (let i = 0; i < fs.length; i += 6) {
-      await Promise.all(fs.slice(i, i + 6).map(async (f) => {
+    const fcImgs = [
+      ...(window.RESUMOS_IDX || []).flatMap((r) => (r.cards || []).flatMap((k) => [...(k.fi || []), ...(k.vi || [])])),
+      ...((Array.isArray(window.FC_QUESTOES) ? window.FC_QUESTOES : window.FC_QUESTOES?.cards) || []).flatMap((k) => [...(k.fi || []), ...(k.vi || [])]),
+    ];
+    const fs = [...new Set([...(window.QUESTOES || []).flatMap((q) => [...q.imgs, ...q.imgsCom]), ...fcImgs, ...extras].map(normImgNome).filter(Boolean))];
+    let cacheImg = null; try { cacheImg = await caches.open("bcbr-img"); } catch (e) {}
+    let n = 0, parar = false;
+    for (let i = 0; i < fs.length && !parar; i += 3) {
+      await Promise.all(fs.slice(i, i + 3).map(async (f) => {
+        if (parar || (window.BCBR.pausaAte || 0) > Date.now()) { parar = true; return; }
+        const urlImg = "./img/" + encPath(f);
         try {
-          const r = await fetch("./img/" + encodeURIComponent(f));
+          if (cacheImg && ((await cacheImg.match(urlImg)) || (await cacheImg.match("./img/" + f)))) return;
+          const r = await fetch(urlImg);
+          if (r.status === 403 || r.status === 429) { parar = true; return; }
           if (!r.ok) await imgDireto(f);
-        } catch (e) { await imgDireto(f).catch(() => {}); }
+        } catch (e) {
+          if (e?.limite || e?.status === 403 || e?.status === 429) { parar = true; return; }
+          await imgDireto(f).catch((e2) => { if (e2?.limite || e2?.status === 403 || e2?.status === 429) parar = true; });
+        }
       }));
-      n = Math.min(fs.length, i + 6); aoAndar && aoAndar(n, fs.length);
+      n = Math.min(fs.length, i + 3); aoAndar && aoAndar(n, fs.length);
     }
     return fs.length;
   };
 
   // ---------- imagens: plano B quando o service worker não serve ./img/ (1ª abertura, endereço alternativo) ----------
   const imgCache = new Map(), imgOk = new Map();
-  window.BCBR.imgPronta = (nome) => imgOk.get(nome) || null;
-  async function imgDireto(nome) {
+  window.BCBR.imgPronta = (nome) => imgOk.get(nome) || imgOk.get(normImgNome(nome)) || null;
+  async function imgDireto(nomeOrig) {
+    const nome = normImgNome(nomeOrig) || String(nomeOrig || "");
+    if (!nome) throw new Error("img vazia");
     if (imgCache.has(nome)) return imgCache.get(nome);
     const p = (async () => {
-      try { const c = await caches.open("bcbr-img"); const h = await c.match("./img/" + encodeURIComponent(nome)); if (h) return URL.createObjectURL(await h.blob()); } catch (e) {}
-      const r = await api(`/repos/${REPO}/contents/imagens/${encodeURIComponent(nome)}`, { accept: "raw" });
-      if (!r.ok) throw new Error("img " + r.status);
+      try {
+        const c = await caches.open("bcbr-img");
+        const h = (await c.match("./img/" + encPath(nome))) || (await c.match("./img/" + nome));
+        if (h && h.ok) {
+          const b = await h.blob();
+          if (b.size > 0 && !/text\/html|application\/json/i.test(b.type || "")) return URL.createObjectURL(b);
+          await c.delete("./img/" + encPath(nome)).catch(() => {});
+        }
+      } catch (e) {}
+      const tentativas = [...new Set([nome, nome.normalize("NFC"), nome.normalize("NFD")])];
+      let r = null, errUlt = null;
+      for (const nm of tentativas) {
+        try {
+          r = await api(`/repos/${REPO}/contents/imagens/${encPath(nm)}`, { accept: "raw" });
+          if (r && r.ok) break;
+        } catch (e) {
+          errUlt = e;
+          if (e?.status !== 404) throw e;
+        }
+      }
+      if (!r || !r.ok) throw errUlt || new Error("img " + (r?.status || 404));
       const b = await r.blob();
+      if (!b.size || /text\/html|application\/json/i.test(b.type || "")) throw new Error("img invalida");
       if (offlineAtivo()) {
-        try { const c = await caches.open("bcbr-img"); await c.put("./img/" + encodeURIComponent(nome), new Response(b.slice(0), { headers: { "Content-Type": b.type || "image/jpeg" } })); } catch (e) {}
+        try { const c = await caches.open("bcbr-img"); await c.put("./img/" + encPath(nome), new Response(b.slice(0), { headers: { "Content-Type": b.type || "image/jpeg" } })); } catch (e) {}
       }
       return URL.createObjectURL(b);
     })();
-    imgCache.set(nome, p); p.then((u) => imgOk.set(nome, u)).catch(() => imgCache.delete(nome)); return p;
+    imgCache.set(nome, p);
+    p.then((u) => { imgOk.set(nome, u); imgOk.set(nome.normalize("NFC"), u); if (nomeOrig !== nome) imgOk.set(nomeOrig, u); }).catch(() => imgCache.delete(nome));
+    return p;
   }
   document.addEventListener("error", (ev) => {
     const el = ev.target;
     if (!el || el.tagName !== "IMG") return;
-    const src = String(el.getAttribute("src") || ""), m = src.match(/(?:^|\/)img\/([^/?#]+)$/);
-    if (!m || el.dataset.bcbrTentou === src) return;
+    const src = String(el.getAttribute("src") || ""), m = src.match(/(?:^|\/)(?:img|imagens)\/([^?#]+)$/);
+    if (!m || el.dataset.bcbrTentou === src) {
+      if (el.classList.contains("fc-img") && el.dataset.bcbrTentou) el.hidden = true;
+      return;
+    }
     el.dataset.bcbrTentou = src;
-    imgDireto(decodeURIComponent(m[1])).then((u) => { el.src = u; }).catch(() => { if (el.classList.contains("fc-img")) el.hidden = true; });
+    let nome = m[1]; try { nome = decodeURIComponent(nome); } catch (e) {}
+    imgDireto(nome).then((u) => { el.hidden = false; el.src = u; }).catch(() => { if (el.classList.contains("fc-img")) el.hidden = true; });
   }, true);
   document.addEventListener("load", (ev) => {
     const el = ev.target; if (!el || el.tagName !== "IMG") return;
-    const m = String(el.getAttribute("src") || "").match(/(?:^|\/)img\/([^/?#]+)$/);
-    if (m && !imgOk.has(decodeURIComponent(m[1]))) imgDireto(decodeURIComponent(m[1])).catch(() => {});
+    const m = String(el.getAttribute("src") || "").match(/(?:^|\/)(?:img|imagens)\/([^?#]+)$/);
+    if (m) {
+      let nome = m[1]; try { nome = decodeURIComponent(nome); } catch (e) {}
+      if (!imgOk.has(nome)) imgDireto(nome).catch(() => {});
+    }
   }, true);
   Object.assign(window.BCBR, { imgDireto, passarChaveSW, carregarDados, kvGet });
 
   // ---------- aviso "versão nova / questões novas" (o app abre na hora com a cópia do aparelho e se atualiza por trás) ----------
-  function aviso(txt) {
+  function aviso() {
     let el = document.getElementById("bcbr_aviso");
     if (!el) {
       el = document.createElement("div"); el.id = "bcbr_aviso";
-      el.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:99999;display:flex;gap:10px;align-items:center;background:var(--card,#1e293b);color:var(--tx,#fff);border:1px solid var(--pri,#3b82f6);border-radius:12px;padding:8px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:.9rem;max-width:calc(100vw - 32px)";
+      el.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:99999;display:flex;gap:8px;align-items:center;background:var(--card,#1e293b);color:var(--tx,#fff);border:1px solid var(--pri,#3b82f6);border-radius:12px;padding:6px 10px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:.9rem;max-width:calc(100vw - 32px)";
       document.body.appendChild(el);
     }
-    el.innerHTML = `<span>${txt}</span><button class="b s" id="bcbr_av_ok">Atualizar</button><button class="b s sm-ghost" id="bcbr_av_no" aria-label="Depois">✕</button>`;
+    el.innerHTML = `<button class="b s" id="bcbr_av_ok">Atualizar</button><button class="b s sm-ghost" id="bcbr_av_no" aria-label="Depois">✕</button>`;
     document.getElementById("bcbr_av_ok").onclick = () => location.reload();
     document.getElementById("bcbr_av_no").onclick = () => el.remove();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (e) => { if (e.data === "bcbr-nova") aviso("Versão nova do app pronta."); });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (e) => { if (e.data === "bcbr-nova") aviso(); });
   // 1.19.2: atualização instantânea (pedido do Artur, 24/10/2026): ao abrir e ao voltar para a tela, confere versao.txt (sem cache).
   // Se mudou, apaga a cópia do app no aparelho e recarrega sozinho (progresso e rascunhos já ficam salvos).
   async function confereVersao() {
@@ -308,7 +393,10 @@
   window.bcbrConfereVersao = confereVersao;
   confereVersao();
   let ultChecagem = Date.now();
-  const checarDados = () => carregarDados(true).then((m) => { if (m) aviso("Questões novas baixadas."); }).catch(() => {});
+  const checarDados = () => {
+    if ((window.BCBR.pausaAte || 0) > Date.now()) return Promise.resolve(false);
+    return carregarDados(true).then((m) => { if (m) aviso(); return m; }).catch(() => false);
+  };
   document.addEventListener("visibilitychange", () => {   // app que ficou aberto em segundo plano: confere de novo (no máx. a cada 10 min)
     if (document.visibilityState === "visible") confereVersao();
     if (document.visibilityState === "visible" && Date.now() - ultChecagem > 600000) { ultChecagem = Date.now(); checarDados(); }

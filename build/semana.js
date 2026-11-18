@@ -93,7 +93,10 @@ async function smLerArquivo(path=SM_ARQ,opts={}){
 }
 function smErroLeitura(e){
   if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
-  if((e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse/i.test(e.resp||e.message||'')))return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+  if(e.limite||(e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse|ocupado/i.test(e.resp||e.message||''))){
+    if(e.ate){const d=new Date(e.ate);return 'Limite de uso do GitHub atingido; tentando às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
+    return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+  }
   if(e.status===401||e.status===403)return 'GitHub recusou a chave (401/403) — confira a chave em Ajustes.';
   const motivo=e.name==='SyntaxError'?'JSON inválido':e.name==='URIError'||e.name==='InvalidCharacterError'?'codificação inválida':e.status?'HTTP '+e.status:String(e.message||'resposta inválida').slice(0,100);
   return 'Não consegui ler os dados do GitHub ('+motivo+'); mostrando a última cópia do aparelho.';
@@ -104,10 +107,12 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
 }
 // 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
+  if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now()){if(BCBR.limiteMsg)SM.erro=BCBR.limiteMsg;return}
   if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
   try{await smPuxar1()}finally{SM.puxando=0;smEnviaSujo()}
 }
 async function smPuxar1(){
+  if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now())return;
   smAgendaPuxar();
   if(typeof SyncNotas!=='undefined'){await SyncNotas.receberLegado();await SyncNotas.enviar();await SyncNotas.listarPaginas();if(typeof ntSincroniza==='function')await ntSincroniza()}
   try{
@@ -664,14 +669,14 @@ function smCardHoje(){
 const smCarga=Promise.resolve().then(smPuxar);
 // 1.40: com o app visível busca a cada 10 s (304 não gasta cota); se a cota do GitHub estiver acabando (BCBR.cota, vinda dos cabeçalhos), volta a 90 s.
 // Também busca ao voltar à tela, ao ganhar foco e (notas.js) ao voltar a conexão. No app Android o mesmo ciclo vale: smNativo só ENVIA o resumo para o widget.
-function smIntervalo(){const c=BCBR.cota;if(!c)return 10000;if(c.rest<=5)return Math.max(90000,c.reset*1000-Date.now()+1000);return c.rest<500?90000:10000}
+function smIntervalo(){const p=(typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0;if(p>Date.now())return Math.max(10000,p-Date.now()+1000);const c=BCBR.cota;if(!c)return 10000;if(c.rest<=5)return Math.max(90000,c.reset*1000-Date.now()+1000);return c.rest<500?90000:10000}
 function smCiclo(){
   clearTimeout(SM.tmCiclo);
-  SM.tmCiclo=setTimeout(async()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false)await smPuxar().catch(()=>{});smCiclo()},smIntervalo());
+  SM.tmCiclo=setTimeout(async()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false&&!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now()))await smPuxar().catch(()=>{});smCiclo()},smIntervalo());
 }
 smCiclo();
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){smPuxar();smAuto()}});
-window.addEventListener('focus',()=>smPuxar());
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now())){smPuxar();smAuto()}});
+window.addEventListener('focus',()=>{if(!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now()))smPuxar()});
 // anel da meta de hoje + dias até a prova + ritmo (estavam no cartão de hoje da aba Semana; agora no "Meta até a prova" da aba Hoje)
 function smMetaHoje(){
   if(!SM.d)return'';const hj=smHoje(),q=smQ(hj),m=smMetaDe(hj),dd=diasProva(),rit=smRitmo(),r=smRetaIni(),tp=smTipo(hj);

@@ -257,7 +257,7 @@ function criarSyncNotas(o){
     }catch(e){erro=e.message}
   }
   async function baixarTodas(aoAndar){
-    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))imgs.add(m[1])};
+    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let nm=m[1];try{nm=decodeURIComponent(nm)}catch(e){}imgs.add(nm)}};
     let n=0;
     for(const m of pgs){
       try{
@@ -268,7 +268,7 @@ function criarSyncNotas(o){
           else p=await abrirPagina(m.id);
         }
         if(p?.doc)colhe(p.doc);
-      }catch(e){}
+      }catch(e){if(e?.limite||e?.status===403||e?.status===429)break}
       n++;aoAndar&&aoAndar(n,pgs.length);
     }
     return {paginas:pgs.length,imagens:[...imgs]};

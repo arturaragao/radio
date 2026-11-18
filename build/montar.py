@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.63.0"
+VERSAO = "1.64.0"
+# 1.64.0: Preliminares fechados por padrão (lembra abertos); botão offline clean com check verde nítido e anel/barra %; aviso sem texto; flashcards HTML sanitizado/formatado + painel <= 90 px + imagens (caminhos/acentos/cache); 403/429 com espera e mensagem sem "sem conexão"
 # 1.63.0: Flashcards — atalhos (Espaço vira/volta, Enter próximo, G abre/fecha imagem), filtros/grupos por tema e com/sem imagem, flashcards/questoes.json, bloco diário de 100 ("Hoje: 100 cards"); Notas: cursor no fim do texto colado
 # 1.62.0: Notas rápidas (debounce 800 ms, abertura do cache IndexedDB, render progressivo, lazy images); botão "Baixar offline" ao lado de sincronizado; Preliminares com dias abertos por padrão (lembra fechados)
 # 1.61.0: Flashcards — bloco persistente (sincronizado), painel superior igual ao de Questões, setas ←/→ e retomada nos resumos
@@ -42,7 +43,7 @@ def troca(a, b, n=1):
 
 # imagens do repositório privado (servidas pelo sw.js)
 troca("const imgSrc=u=>String(u).startsWith('u:')?",
-      "const imgSrc=u=>String(u).startsWith('gh:')?(window.BCBR&&BCBR.imgPronta(String(u).slice(3))||'./img/'+encodeURIComponent(String(u).slice(3))):String(u).startsWith('u:')?")
+      "const imgSrc=u=>String(u).startsWith('gh:')?(window.BCBR&&BCBR.imgPronta(String(u).slice(3))||'./img/'+String(u).slice(3).split('/').map(encodeURIComponent).join('/')):String(u).startsWith('u:')?")
 # 1.19.1: botão de tema só com ícone (Artur: com a versão do APK no topo ele descia para outra linha)
 troca("b.textContent=t==='auto'?'Tema: auto':t==='claro'?'Tema: claro':'Tema: escuro'",
       "{b.textContent=t==='auto'?'◐':t==='claro'?'☀':'☾';b.title=b.ariaLabel='Tema: '+t}")
@@ -133,9 +134,11 @@ troca("let sess=null,tela='hoje',sub=null;", "let sess=null,tela='notas',sub=nul
 troca("aplicaTema();render();iniciaSync();", "aplicaTema();smkIni();render();iniciaSync();smAtalhosInicia();")
 # Atalhos aguardam o primeiro resultado de progresso, inclusive o caminho de erro/offline.
 troca("if(!db)return;", "if(!db){smSyncResolve();return;}")
+troca("function setSync(s){syncSt=s;const el=$('#sync');if(!el)return;\n  el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:'Sem conexão, tentando de novo',local:'Só neste aparelho'}[s]}",
+      "function syncErroTxt(e){const p=window.BCBR?.pausaAte||0;if(e?.limite||p>Date.now()||e?.status===429||(e?.status===403&&(BCBR.cota?.rest===0||/rate.?limit|secondary|ocupado/i.test(e?.resp||e?.message||''))))return window.BCBR?.limiteMsg||'GitHub ocupado, tentando em breve';return 'Sem conexão, tentando de novo'}\nfunction setSync(s,e){syncSt=s;const el=$('#sync');if(!el)return;\n  el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:syncErroTxt(e),local:'Só neste aparelho'}[s]}")
 troca("DB.collection('cbr').onSnapshot(s=>mergeRemote(s.docs),()=>setSync('err'));",
-      "DB.collection('cbr').onSnapshot(s=>{mergeRemote(s.docs);smSyncResolve()},()=>{setSync('err');smSyncResolve()});")
-troca("}catch(e){setSync('err')}\n}", "}catch(e){setSync('err');smSyncResolve()}\n}")
+      "DB.collection('cbr').onSnapshot(s=>{mergeRemote(s.docs);smSyncResolve()},e=>{setSync('err',e);smSyncResolve()});")
+troca("}catch(e){setSync('err')}\n}", "}catch(e){setSync('err',e);smSyncResolve()}\n}")
 troca("qa:'a',smdel:'f'", "qa:'a',smdel:'f',smurg:'u'")
 troca("smdel:'Apagar a tarefa selecionada'", "smdel:'Apagar a tarefa selecionada',smurg:'U = urgente (tarefa selecionada)'")
 troca("sem:['smdel']", "sem:['smdel','smurg']")
@@ -143,7 +146,7 @@ troca("const TABS=[['hoje','Hoje'],", "const TABS=[['hoje','Hoje'],['semana','Se
 troca("const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=>base.includes(k));", "const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=>base.includes(k));if(o.length&&!o.includes('semana'))o.splice(Math.max(0,o.indexOf('hoje'))+1,0,'semana');")
 # 1.42 offline: o que não chegou ao GitHub volta para a fila (antes o flush tirava a chave de "dirty" antes de gravar e, sem internet, ela se perdia até o remoto mudar)
 troca("if(!DB)return;setSync('saving');", "if(!DB)return;setSync('saving');const tentadas=[...dirty],tinhaEst=estDirty;")
-troca("setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)", "tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)")
+troca("setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)", "const atraso=Math.max(15000,(window.BCBR?.pausaAte||0)-Date.now()+500);tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err',e);clearTimeout(retryT);retryT=setTimeout(flush,atraso)")
 troca("fc:vFc,fcstudy:vFcStudy}[tela];", "fc:vFc,fcstudy:vFcStudy,semana:vSemana,tarefas:vTarefas,notas:vNotas}[tela];")
 troca("  ${metaProvaCard()}${chipsHoje(agendados)}", "  ${smCardHoje()}${metaProvaCard()}${chipsHoje(agendados)}")
 # aba Questões à direita da Semana: último bloco em andamento + troca de bloco + atalhos (22/10/2026)

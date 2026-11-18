@@ -1,4 +1,4 @@
-// Banco CBR app 1.63.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.64.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -258,7 +258,7 @@ function criarSyncNotas(o){
     }catch(e){erro=e.message}
   }
   async function baixarTodas(aoAndar){
-    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))imgs.add(m[1])};
+    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let nm=m[1];try{nm=decodeURIComponent(nm)}catch(e){}imgs.add(nm)}};
     let n=0;
     for(const m of pgs){
       try{
@@ -269,7 +269,7 @@ function criarSyncNotas(o){
           else p=await abrirPagina(m.id);
         }
         if(p?.doc)colhe(p.doc);
-      }catch(e){}
+      }catch(e){if(e?.limite||e?.status===403||e?.status===429)break}
       n++;aoAndar&&aoAndar(n,pgs.length);
     }
     return {paginas:pgs.length,imagens:[...imgs]};
@@ -633,7 +633,10 @@ async function smLerArquivo(path=SM_ARQ,opts={}){
 }
 function smErroLeitura(e){
   if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
-  if((e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse/i.test(e.resp||e.message||'')))return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+  if(e.limite||(e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse|ocupado/i.test(e.resp||e.message||''))){
+    if(e.ate){const d=new Date(e.ate);return 'Limite de uso do GitHub atingido; tentando às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
+    return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+  }
   if(e.status===401||e.status===403)return 'GitHub recusou a chave (401/403) — confira a chave em Ajustes.';
   const motivo=e.name==='SyntaxError'?'JSON inválido':e.name==='URIError'||e.name==='InvalidCharacterError'?'codificação inválida':e.status?'HTTP '+e.status:String(e.message||'resposta inválida').slice(0,100);
   return 'Não consegui ler os dados do GitHub ('+motivo+'); mostrando a última cópia do aparelho.';
@@ -644,10 +647,12 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
 }
 // 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
+  if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now()){if(BCBR.limiteMsg)SM.erro=BCBR.limiteMsg;return}
   if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
   try{await smPuxar1()}finally{SM.puxando=0;smEnviaSujo()}
 }
 async function smPuxar1(){
+  if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now())return;
   smAgendaPuxar();
   if(typeof SyncNotas!=='undefined'){await SyncNotas.receberLegado();await SyncNotas.enviar();await SyncNotas.listarPaginas();if(typeof ntSincroniza==='function')await ntSincroniza()}
   try{
@@ -1204,14 +1209,14 @@ function smCardHoje(){
 const smCarga=Promise.resolve().then(smPuxar);
 // 1.40: com o app visível busca a cada 10 s (304 não gasta cota); se a cota do GitHub estiver acabando (BCBR.cota, vinda dos cabeçalhos), volta a 90 s.
 // Também busca ao voltar à tela, ao ganhar foco e (notas.js) ao voltar a conexão. No app Android o mesmo ciclo vale: smNativo só ENVIA o resumo para o widget.
-function smIntervalo(){const c=BCBR.cota;if(!c)return 10000;if(c.rest<=5)return Math.max(90000,c.reset*1000-Date.now()+1000);return c.rest<500?90000:10000}
+function smIntervalo(){const p=(typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0;if(p>Date.now())return Math.max(10000,p-Date.now()+1000);const c=BCBR.cota;if(!c)return 10000;if(c.rest<=5)return Math.max(90000,c.reset*1000-Date.now()+1000);return c.rest<500?90000:10000}
 function smCiclo(){
   clearTimeout(SM.tmCiclo);
-  SM.tmCiclo=setTimeout(async()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false)await smPuxar().catch(()=>{});smCiclo()},smIntervalo());
+  SM.tmCiclo=setTimeout(async()=>{if(document.visibilityState==='visible'&&navigator.onLine!==false&&!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now()))await smPuxar().catch(()=>{});smCiclo()},smIntervalo());
 }
 smCiclo();
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){smPuxar();smAuto()}});
-window.addEventListener('focus',()=>smPuxar());
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now())){smPuxar();smAuto()}});
+window.addEventListener('focus',()=>{if(!(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now()))smPuxar()});
 // anel da meta de hoje + dias até a prova + ritmo (estavam no cartão de hoje da aba Semana; agora no "Meta até a prova" da aba Hoje)
 function smMetaHoje(){
   if(!SM.d)return'';const hj=smHoje(),q=smQ(hj),m=smMetaDe(hj),dd=diasProva(),rit=smRitmo(),r=smRetaIni(),tp=smTipo(hj);
@@ -4360,11 +4365,11 @@ async function prelLocalSet(on,aviso=true){
   if(aviso)prelCfgMsg(on?'Laudos serão guardados neste aparelho.':'Laudos apagados deste aparelho.');
 }
 // ---- tela ----
-const PRL_FECHADOS_LS='bcbr_prl_fechados';   // 1.62.0: dias fechados à mão pelo usuário (só datas, nunca texto de laudo)
-function prelDiasFechadosLer(){try{const l=JSON.parse(localStorage.getItem(PRL_FECHADOS_LS)||'[]');return new Set(Array.isArray(l)?l:[])}catch(e){return new Set()}}
-function prelDiaFechadoSalva(dia,fechado){
-  const s=prelDiasFechadosLer();if(fechado)s.add(dia);else s.delete(dia);
-  try{const l=[...s];if(l.length)localStorage.setItem(PRL_FECHADOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_FECHADOS_LS)}catch(e){}
+const PRL_ABERTOS_LS='bcbr_prl_abertos';   // 1.64.0: dias abertos à mão pelo usuário (só datas, nunca texto de laudo)
+function prelDiasAbertosLer(){try{const l=JSON.parse(localStorage.getItem(PRL_ABERTOS_LS)||'[]');return new Set(Array.isArray(l)?l:[])}catch(e){return new Set()}}
+function prelDiaAbertoSalva(dia,aberto){
+  const s=prelDiasAbertosLer();if(aberto)s.add(dia);else s.delete(dia);
+  try{const l=[...s];if(l.length)localStorage.setItem(PRL_ABERTOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_ABERTOS_LS)}catch(e){}
 }
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
 const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2))};
@@ -4374,7 +4379,7 @@ function prelTg(el){
   const k=el.dataset.k;
   if(el.dataset.def&&el.open&&PRL.estado[k]===undefined)return;   // abriu sozinho por causa do filtro: não vira escolha do usuário
   if(PRL.estado[k]===el.open)return;PRL.estado[k]=el.open;
-  if(k&&k.startsWith('d|'))prelDiaFechadoSalva(k.slice(2),!el.open);
+  if(k&&k.startsWith('d|'))prelDiaAbertoSalva(k.slice(2),el.open);
   if(!el.open)return;
   if(el.dataset.ac)prelPar(el.dataset.ac);
   else{const d=el.querySelector(':scope>.prl-in');if(d&&!d.firstChild){d.innerHTML=prelFilhosHtml(k);prelPares()}}   // níveis 1 e 2 geram os filhos só quando abertos
@@ -4464,10 +4469,10 @@ function prelListaHtml(){
   const its=prelVis(),at=prelFiltroAtivo();
   if(!its.length)return `<p class="mut" role="status">${PRL.itens.length?'Nada encontrado com esse filtro.':'Ainda não há laudos preliminares gravados.'}</p>`;
   if(PRL.modo==='exame')return prelN1(prelAgrupa(its),'*',at,its.length);   // 1.54.0: Categoria > Exame > Acesso (a data aparece em cada acesso)
-  const fechados=prelDiasFechadosLer();
+  const abertos=prelDiasAbertosLer();
   return prelAgrupaDias(its).map(d=>{
-    const k0='d|'+d.dia,padrao=!fechados.has(d.dia),ab0=prelAberto(k0,padrao);
-    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
+    const k0='d|'+d.dia,tem=abertos.has(d.dia),def=at&&!tem&&PRL.estado[k0]===undefined,ab0=prelAberto(k0,tem||def);
+    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${def?'data-def="1"':''} ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
   }).join('');
 }
 function prelFormChave(){
@@ -4557,6 +4562,7 @@ function rdEstado(){
   const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
   if(s.volatil)return 'Pendente — mantenha esta aba aberta';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Pendente — sem conexão';
+  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return window.BCBR.limiteMsg;
   if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
   if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Enviando…';
   return s.ultima||RD.ultima?'Salvo ✓':'Aguardando sincronização';
@@ -4743,12 +4749,15 @@ document.addEventListener('keydown',e=>{
 // Offline (1.62.0): botão "Baixar offline" por aparelho (desligado por padrão, flag bcbr_offline='1').
 // Ligar registra o service worker (sw.js), baixa app + Notas (índice + páginas + imagens) + questões, e mantém atualizado em segundo plano.
 // Desligar pede confirmação, desregistra o SW e apaga os caches dele, preservando progresso, IndexedDB de dados e chaves.
-const OF={prog:'',baixando:false,tamEst:null,tamUso:null,ultFundo:0},OF_LS='bcbr_offline',OF_FLAG='bcbr_baixou';
+const OF={prog:'',pct:null,baixando:false,tamEst:null,tamUso:null,ultFundo:0},OF_LS='bcbr_offline',OF_FLAG='bcbr_baixou';
 const ofAtivo=()=>{try{return localStorage.getItem(OF_LS)==='1'}catch(e){return false}};
 const ofMB=b=>(Math.max(0,b)/1048576).toFixed(1).replace('.',',')+' MB';
-const OF_ICO_DOWN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
-const OF_ICO_LOAD='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke-dasharray="40" stroke-dashoffset="12"/></svg>';
-const OF_ICO_OK='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>';
+const OF_ICO_DOWN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+const OF_ICO_OK='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="rgba(74,222,128,.16)" stroke="currentColor" stroke-width="1.8"/><path d="M8.2 12.4l2.6 2.6 5.2-5.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function ofIcoLoad(pct){
+  const p=Math.max(0,Math.min(100,Math.round(pct||0))),c=56.55,off=(c*(1-p/100)).toFixed(2);
+  return `<svg class="of-ring" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle class="of-trk" cx="12" cy="12" r="9"/><circle class="of-arc" cx="12" cy="12" r="9" stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg><span class="of-pct">${p}%</span><span class="of-bar" aria-hidden="true"><i style="width:${p}%"></i></span>`;
+}
 function ofPendentes(){
   let n=0;
   try{if(typeof ntTemPendentes==='function'&&ntTemPendentes())n++;if(SM.sujo)n++}catch(e){}
@@ -4757,7 +4766,6 @@ function ofPendentes(){
 }
 function ofTexto(){
   const off=navigator.onLine===false||!!window.BCBR?.semRede,n=ofPendentes(),p=n===1?'pendente':'pendentes';
-  if(OF.prog)return `baixando para offline · ${OF.prog}`;
   return off?`offline · ${n} ${p}`:n?`sincronizando · ${n} ${p}`:'';
 }
 function ofPinta(){
@@ -4769,11 +4777,13 @@ function ofPinta(){
 function ofPintaBtn(){
   const b=document.getElementById('of_btn');if(!b)return;
   const on=ofAtivo(),est=OF.baixando?'baixando':on?'baixado':'off';
-  b.dataset.estado=est;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));
-  b.setAttribute('aria-label',est==='baixado'?'Offline neste PC (clique para remover)':est==='baixando'?'Baixando para offline…':'Baixar offline');
-  const ico=est==='baixado'?OF_ICO_OK:est==='baixando'?OF_ICO_LOAD:OF_ICO_DOWN;
+  const p=OF.pct==null?0:Math.max(0,Math.min(100,Math.round(OF.pct)));
+  b.dataset.estado=est;b.classList.toggle('on',on&&!OF.baixando);b.setAttribute('aria-pressed',String(on));
+  if(est==='baixando')b.dataset.pct=String(p);else delete b.dataset.pct;
+  b.setAttribute('aria-label',est==='baixado'?'Offline neste PC (clique para remover)':est==='baixando'?`Baixando offline (${p}%)`:'Baixar offline');
+  const ico=est==='baixado'?OF_ICO_OK:est==='baixando'?ofIcoLoad(p):OF_ICO_DOWN;
   if(b.innerHTML!==ico)b.innerHTML=ico;
-  b.title=est==='baixando'?('Baixando offline'+(OF.prog?' · '+OF.prog:'…')):on?('Offline neste PC · '+(OF.tamUso!=null?ofMB(OF.tamUso):'calculando…')):('Baixar offline · '+(OF.tamEst!=null?'~'+ofMB(OF.tamEst):'calculando…'));
+  b.title=est==='baixando'?`Baixando offline · ${p}%`:on?('Offline neste PC · '+(OF.tamUso!=null?ofMB(OF.tamUso):'calculando…')):('Baixar offline · '+(OF.tamEst!=null?'~'+ofMB(OF.tamEst):'calculando…'));
 }
 const ofPrazo=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>null),new Promise(r=>setTimeout(()=>r(null),ms))]);
 // Soma os bytes guardados nos caches do Service Worker.
@@ -4815,7 +4825,7 @@ async function ofCalculaTamanho(){
     const ab=typeof SyncNotas?.estado==='function'?(SyncNotas.estado().abertas||{}):{};
     for(const m of metas){
       const p=ab[m.id];
-      if(p?.doc){const s=JSON.stringify(p.doc);ntPagBytes+=s.length;for(const x of s.matchAll(/\.\/img\/([\w.-]+)/g))ntImgs.add(x[1])}
+      if(p?.doc){const s=JSON.stringify(p.doc);ntPagBytes+=s.length;for(const x of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let n=x[1];try{n=decodeURIComponent(n)}catch(e2){}ntImgs.add(n)}}
       else ntPagBytes+=8000;
     }
   }catch(e){}
@@ -4824,26 +4834,28 @@ async function ofCalculaTamanho(){
 }
 function ofImagensNotas(){
   const s=JSON.stringify(SyncNotas.estado().abertas),out=new Set();
-  for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))out.add(m[1]);
+  for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let n=m[1];try{n=decodeURIComponent(n)}catch(e){}out.add(n)}
   return [...out];
 }
 async function ofBaixaTudo(silencioso=false){
-  if(OF.baixando||!window.BCBR?.baixarTudo||navigator.onLine===false)return;
-  OF.baixando=true;if(!silencioso)ofPintaBtn();
+  if(OF.baixando||!window.BCBR?.baixarTudo||navigator.onLine===false||(window.BCBR?.pausaAte||0)>Date.now())return;
+  OF.baixando=true;OF.pct=0;if(!silencioso)ofPintaBtn();
   try{
     await ofPrazo(BCBR.carregarDados?.(true),5000);
     let imgsNotas=[];
     if(typeof SyncNotas?.baixarTodas==='function'){
-      const r=await ofPrazo(SyncNotas.baixarTodas((i,t)=>{if(!silencioso){OF.prog=`notas ${i}/${t}`;ofPinta();ofPintaBtn()}}),15000);
+      const r=await ofPrazo(SyncNotas.baixarTodas((i,t)=>{if(!silencioso){OF.prog=`notas ${i}/${t}`;OF.pct=t?Math.round((i/t)*30):15;ofPintaBtn()}}),15000);
       imgsNotas=r?.imagens||[];
     }else imgsNotas=ofImagensNotas();
-    await ofPrazo(BCBR.baixarTudo((i,t)=>{if(!silencioso&&t){OF.prog=`${i}/${t}`;ofPinta();ofPintaBtn()}},imgsNotas),20000);
+    if(!silencioso&&OF.pct<30){OF.pct=30;ofPintaBtn()}
+    await ofPrazo(BCBR.baixarTudo((i,t)=>{if(!silencioso){OF.prog=t?`${i}/${t}`:'';OF.pct=t?30+Math.round((i/t)*70):100;ofPintaBtn()}},imgsNotas),20000);
+    if(!silencioso){OF.pct=100;ofPintaBtn()}
     try{localStorage.setItem(OF_FLAG,'1')}catch(e){}
-  }catch(e){}finally{OF.baixando=false;OF.prog='';ofPinta();await ofCalculaTamanho()}
+  }catch(e){}finally{OF.baixando=false;OF.prog='';OF.pct=null;ofPinta();await ofCalculaTamanho()}
 }
 async function ofLigar(){
   if(OF.baixando)return;
-  OF.baixando=true;OF.prog='';ofPintaBtn();ofPinta();
+  OF.baixando=true;OF.prog='';OF.pct=0;ofPintaBtn();ofPinta();
   try{
     try{localStorage.setItem(OF_LS,'1')}catch(e){}
     if('serviceWorker' in navigator){
@@ -4862,7 +4874,7 @@ async function ofLigar(){
     OF.baixando=false;
     await ofBaixaTudo(false);
   }finally{
-    OF.baixando=false;OF.prog='';ofPintaBtn();ofPinta();
+    OF.baixando=false;OF.prog='';OF.pct=null;ofPintaBtn();ofPinta();
   }
 }
 async function ofDesligar(){
@@ -5270,7 +5282,7 @@ let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
 let fcAv=load('cbr_fcav',{});        // id -> {id,tema,frente,verso,voto,motivo,data,u}
 let over=load('cbr_over',{});        // id -> areaId (manual)
 let uimg=load('cbr_uimg',{});        // id -> dataURL das imagens que você adicionou nas questões (referência "u:ID")
-const imgSrc=u=>String(u).startsWith('gh:')?(window.BCBR&&BCBR.imgPronta(String(u).slice(3))||'./img/'+encodeURIComponent(String(u).slice(3))):String(u).startsWith('u:')?(uimg[u.slice(2)]||''):((window.IMGDATA&&window.IMGDATA[u])||u);
+const imgSrc=u=>String(u).startsWith('gh:')?(window.BCBR&&BCBR.imgPronta(String(u).slice(3))||'./img/'+String(u).slice(3).split('/').map(encodeURIComponent).join('/')):String(u).startsWith('u:')?(uimg[u.slice(2)]||''):((window.IMGDATA&&window.IMGDATA[u])||u);
 let cfg=normCfg(load('cbr_cfg',{}));
 // nomes que você deu às grandes áreas e aos temas (só o rótulo muda; as tags das questões ficam como estão)
 const dn=(d,v)=>cfg.nomes[d+'|'+v]||v;
@@ -5326,8 +5338,9 @@ function persist(wk){
   estDirty=true;saveL('cbr_reset',resetAt);
   clearTimeout(flushT);flushT=setTimeout(flush,700);
 }
-function setSync(s){syncSt=s;const el=$('#sync');if(!el)return;
-  el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:'Sem conexão, tentando de novo',local:'Só neste aparelho'}[s]}
+function syncErroTxt(e){const p=window.BCBR?.pausaAte||0;if(e?.limite||p>Date.now()||e?.status===429||(e?.status===403&&(BCBR.cota?.rest===0||/rate.?limit|secondary|ocupado/i.test(e?.resp||e?.message||''))))return window.BCBR?.limiteMsg||'GitHub ocupado, tentando em breve';return 'Sem conexão, tentando de novo'}
+function setSync(s,e){syncSt=s;const el=$('#sync');if(!el)return;
+  el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:syncErroTxt(e),local:'Só neste aparelho'}[s]}
 async function flush(){
   if(!DB)return;setSync('saving');const tentadas=[...dirty],tinhaEst=estDirty;
   try{
@@ -5343,7 +5356,7 @@ async function flush(){
       else if(wk==='av:0'){if(typeof fcAv!=='undefined')await col.doc('fc_avaliacoes').set({items:fcAv})}
       else await col.doc('log_'+wk).set({items:all.filter(l=>wkKey(l.t)===wk).map(packLog)})}
     setSync('ok');
-  }catch(e){tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err');clearTimeout(retryT);retryT=setTimeout(flush,15000)}
+  }catch(e){const atraso=Math.max(15000,(window.BCBR?.pausaAte||0)-Date.now()+500);tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err',e);clearTimeout(retryT);retryT=setTimeout(flush,atraso)}
 }
 function mergeRemote(docs){
   primeiro=false;let changed=false;const rc={},fcOk=typeof fcBlocosPreserva==='function';
@@ -5407,8 +5420,8 @@ async function iniciaSync(){
     const db=await claude.use('db');
     if(!db){smSyncResolve();return;}
     DB=db;setSync('saving');
-    DB.collection('cbr').onSnapshot(s=>{mergeRemote(s.docs);smSyncResolve()},()=>{setSync('err');smSyncResolve()});
-  }catch(e){setSync('err');smSyncResolve()}
+    DB.collection('cbr').onSnapshot(s=>{mergeRemote(s.docs);smSyncResolve()},e=>{setSync('err',e);smSyncResolve()});
+  }catch(e){setSync('err',e);smSyncResolve()}
 }
 
 // ===== estatísticas =====
@@ -6323,13 +6336,20 @@ function fcNext(s,g,inRe){
 }
 const FC_NOTAS={1:'Errei',2:'Difícil',3:'Bom',4:'Fácil'};
 let fq=null,fcBusca='',fcDelId=null,fcTags=new Set(),fcNew={f:'',v:''},fcEdit=null,fcAvEdit=null;
-const fcImgRef=u=>{u=String(u||'').trim();if(!u)return '';return /^(gh:|u:|data:|https?:|\.?\/)/.test(u)?u:'gh:'+u};
+function fcImgRef(u){
+  u=String(u||'').trim();if(!u)return '';
+  if(/^(u:|data:|https?:)/.test(u))return u;
+  if(u.startsWith('gh:'))u=u.slice(3);
+  u=u.replace(/^\.?\/?(?:imagens|img)\//,'');
+  try{if(/%[0-9a-fA-F]{2}/.test(u))u=decodeURIComponent(u)}catch(e){}
+  return u?'gh:'+u:'';
+}
 function fcImgsHtml(arr){
   const list=(arr||[]).map(fcImgRef).filter(u=>u&&imgSrc(u));if(!list.length)return '';
-  return `<div class="fc-imgs">${list.map(ref=>`<img class="fc-img" src="${esc(imgSrc(ref))}" data-u="${esc(ref)}" onclick="zoom('${esc(ref.replace(/'/g,"\\'"))}')" loading="lazy" alt="Imagem do flashcard" onerror="if(!this.dataset.bcbrTentou)this.hidden=true">`).join('')}</div>`;
+  return `<div class="fc-imgs">${list.map(ref=>`<img class="fc-img" src="${esc(imgSrc(ref))}" data-u="${esc(ref)}" onclick="zoom('${esc(ref.replace(/'/g,"\\'"))}')" loading="lazy" alt="Imagem do flashcard" onerror="if(!this.dataset.bcbrTentou||!/(?:^|\\/)img\\//.test(this.getAttribute('src')||''))this.hidden=true">`).join('')}</div>`;
 }
 function fcAvSalvaReg(c,voto,motivo=''){
-  const now=Math.max(Date.now(),(fcAv[c.id]?.u||0)+1),reg={id:c.id,tema:c.tg||'',frente:rtTxt(c.f),verso:rtTxt(c.v||''),voto,motivo:String(motivo||'').trim(),data:new Date(now).toISOString(),u:now};
+  const now=Math.max(Date.now(),(fcAv[c.id]?.u||0)+1),reg={id:c.id,tema:c.tg||'',frente:fcTxt(c.f),verso:fcTxt(c.v||''),voto,motivo:String(motivo||'').trim(),data:new Date(now).toISOString(),u:now};
   fcAv[c.id]=reg;persist('av:0');
 }
 function fcAvVota(v){
@@ -6553,8 +6573,105 @@ function fcKey(e){
   else if(!e.shiftKey&&k==='ArrowLeft'){e.preventDefault();fcIr(fq.i-1)}
   else if(!e.shiftKey&&k==='ArrowRight'){e.preventDefault();if(fq.i>=fq.ids.length-1)toast('Último cartão');else fcIr(fq.i+1)}
 }
+function fcSanitiza(raw){
+  let s=String(raw??'');
+  if(!s)return '';
+  if(typeof isRt==='function'&&isRt(s))return rtClean(s.slice(1));
+  s=s.replace(/\r\n?/g,'\n').replace(/\n+/g,'\n');
+  if(typeof document==='undefined'||typeof document.createElement!=='function'){
+    return esc(s.replace(/<br\s*\/?>/gi,'\n').replace(/<\/?(?:b|strong|i|em|ul|ol|li|p|div)\b[^>]*>/gi,'')).replace(/\n/g,'<br>');
+  }
+  if(!/<(?:br|ul|ol|li|p|div)\b/i.test(s))s=s.replace(/\n/g,'<br>');
+  else s=s.replace(/([^>])\n/g,'$1<br>');
+  const t=document.createElement('template');t.innerHTML=s;
+  const BAD=/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|IFRAME|OBJECT|EMBED|SVG|MATH|IMG|LINK|META|HEAD|TITLE|FORM|INPUT|BUTTON|TEXTAREA|SELECT)$/;
+  const walk=n=>{
+    let out='';
+    n.childNodes.forEach(c=>{
+      if(c.nodeType===3){out+=esc(c.nodeValue.replace(/[\r\n\t]+/g,' '));return}
+      if(c.nodeType!==1)return;
+      const tg=c.tagName;
+      if(BAD.test(tg))return;
+      if(tg==='BR'){out+='<br>';return}
+      if(tg==='UL'||tg==='OL'){
+        let lis='';
+        c.childNodes.forEach(ch=>{
+          if(ch.nodeType===1&&ch.tagName==='LI'){
+            const li=walk(ch).replace(/^(?:\s|<br>)*•\s*/,'').replace(/(?:\s*<br>\s*)+$/,'').trim();
+            if(li)lis+=`<li>${li}</li>`;
+          }
+        });
+        if(lis)out+=`<ul>${lis}</ul>`;
+        return;
+      }
+      if(tg==='LI'){
+        const li=walk(c).replace(/^(?:\s|<br>)*•\s*/,'').replace(/(?:\s*<br>\s*)+$/,'').trim();
+        if(li)out+=`<ul><li>${li}</li></ul>`;
+        return;
+      }
+      const inner=walk(c);
+      if(tg==='B'||tg==='STRONG'){if(inner)out+=`<b>${inner}</b>`;return}
+      if(tg==='I'||tg==='EM'){if(inner)out+=`<i>${inner}</i>`;return}
+      if(tg==='P'||tg==='DIV'){if(inner.trim())out+=inner.replace(/(?:<br>)+$/,'')+'<br>';return}
+      out+=inner;
+    });
+    return out;
+  };
+  return walk(t.content).replace(/^(?:\s*<br>\s*)+|(?:\s*<br>\s*)+$/gi,'').replace(/(<br>\s*){3,}/gi,'<br><br>').trim();
+}
+function fcFormataCard(html){
+  if(!html)return '';
+  let s=html,peg='';
+  const pegaPeg=re=>{
+    const m=s.match(re);
+    if(!m)return false;
+    let resto='',rotHtml='';
+    if(m.length===4&&re.source.includes('<\\/i>')){
+      rotHtml=`<i>${m[1].trim()}${(m[2]||'').replace(/\s*<\/li>\s*<\/ul>\s*$/i,'')}</i>`;
+      resto=m[3]||'';
+    }else{
+      rotHtml=`<i>${(m[1]||'Pegadinha:').trim()}</i>`;
+      resto=m[2]||'';
+    }
+    let fecha='';
+    if(/<\/li>\s*<\/ul>\s*$/i.test(resto)){resto=resto.replace(/<\/li>\s*<\/ul>\s*$/i,'');fecha='</li></ul>'}
+    resto=resto.replace(/^(?:\s*<br>\s*)+|(?:\s*<br>\s*)+$/gi,'').trim();
+    s=(s.slice(0,m.index)+fecha).replace(/(?:\s*<br>\s*)+$/gi,'').trim();
+    peg=`<div class="fc-peg">${rotHtml}${resto?' '+resto:''}</div>`;
+    return true;
+  };
+  pegaPeg(/(?:<br>\s*|\s)*<i>\s*(Pegadinha\s*:?)\s*<\/i>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*<i>\s*(Pegadinha\s*:?)([\s\S]*?)<\/i>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*<b>\s*(Pegadinha\s*:?)\s*<\/b>([\s\S]*)$/i)
+    ||pegaPeg(/(?:<br>\s*|\s)*(Pegadinha\s*:)([\s\S]*)$/i);
+  if(/•/.test(s)&&!/<ul>/i.test(s)){
+    const idx=s.search(/(?:<br>\s*|\s)*•\s*/);
+    let cab=idx>=0?s.slice(0,idx):'';
+    const corpo=idx>=0?s.slice(idx):s;
+    cab=cab.replace(/(?:\s*<br>\s*)+$/gi,'').replace(/<\/b>\s*\.\s*$/i,'</b>').trim();
+    const itens=corpo.split(/(?:<br>\s*|\s)*•\s*/).map(x=>x.replace(/(?:\s*<br>\s*)+$/gi,'').trim()).filter(Boolean);
+    if(itens.length){
+      return (cab?`<div class="fc-dx">${cab}</div>`:'')+`<ul>${itens.map(x=>`<li>${x}</li>`).join('')}</ul>`+peg;
+    }
+  }
+  if(/<ul>/i.test(s)){
+    s=s.replace(/^([\s\S]*?)<br>\s*(<ul>)/i,(_,cab,ul)=>{
+      const c=cab.replace(/(?:\s*<br>\s*)+$/gi,'').replace(/<\/b>\s*\.\s*$/i,'</b>').trim();
+      return (c?`<div class="fc-dx">${c}</div>`:'')+ul;
+    });
+    return s+peg;
+  }
+  return peg?(s?`<div>${s}</div>`:'')+peg:s;
+}
+function fcTxt(s){
+  s=String(s||'');
+  if(typeof isRt==='function'&&isRt(s))return rtTxt(s);
+  if(typeof document==='undefined'||typeof document.createElement!=='function')return s.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const d=document.createElement('div');d.innerHTML=fcSanitiza(s).replace(/<br>|<\/li>/gi,'$& ');
+  return (d.textContent||'').replace(/\s+/g,' ').trim();
+}
 function fcFace(c){
-  const clz=/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g,F=rtHtml(c.f),V=rtHtml(c.v||'');
+  const clz=/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g,F=fcFormataCard(fcSanitiza(c.f)),V=fcFormataCard(fcSanitiza(c.v||''));
   if(clz.test(F)){
     return {f:F.replace(clz,'<span class="cz">[...]</span>'),b:F.replace(clz,'<span class="cz on">$1</span>')+(V?'<br><br>'+V:'')};
   }
@@ -6594,6 +6711,7 @@ function vFcStudy(){
   const imgsF=fcImgsHtml(c.fi),imgsV=fcImgsHtml(c.vi);
   const rodInfo=[c.tg,meta.tema&&!String(c.tg||'').includes(meta.tema)?meta.tema:'',meta.fonte].filter(Boolean).join(' · ');
   const avHtml=`<div class="fcard-rod">${rodInfo?`<span class="mut" style="font-size:.78rem">${esc(rodInfo)}</span>`:'<span></span>'}<div class="fc-av"><button type="button" class="ok ${av?.voto===1?'on':''}" aria-label="Gostei do cartão" aria-pressed="${av?.voto===1}" title="Gostei" onclick="fcAvVota(1)">👍</button><button type="button" class="bad ${av?.voto===-1?'on':''}" aria-label="Não gostei do cartão" aria-pressed="${av?.voto===-1}" title="Não gostei" onclick="fcAvVota(-1)">👎</button></div></div>${av?.voto===-1&&!edAv?`<div class="fc-av-mot mut">${av.motivo?`Motivo: ${esc(av.motivo)}`:'Marcado como não gostei'} <button type="button" class="fc-av-ed" onclick="fcAvEditar()">Editar motivo</button></div>`:''}${edAv?`<div class="fc-av-box"><input id="fc_av_txt" placeholder="O que não gostou?" value="${esc(fcAvEdit.txt)}" oninput="fcAvEdit.txt=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();fcAvSalva()}else if(event.key==='Escape'){event.preventDefault();fcAvCancela()}"><div class="row" style="margin-top:6px"><button type="button" class="b" style="padding:5px 12px;font-size:.82rem" onclick="fcAvSalva()">Salvar</button><button type="button" class="b s" style="padding:5px 12px;font-size:.82rem" onclick="fcAvCancela()">Cancelar</button></div></div>`:''}`;
+  if(typeof setTimeout==='function'&&typeof document!=='undefined')setTimeout(()=>{const g=document.querySelector('.qnav .qgrid'),cur=g?.querySelector('.qn.cur');if(g&&cur)g.scrollTop=Math.max(0,cur.offsetTop-g.offsetTop-4)},0);
   return `${fcBarra()}<div class="fcbar"><div class="row"><button class="b s" onclick="go('fc','lista')">Sair (Esc)</button>${fq.titulo?`<span class="pill">${esc(fq.titulo)}</span>`:''}</div><button class="b s" onclick="fcEncerra()">Encerrar bloco</button></div>
   <div class="qlay"><div style="min-width:0">
   <div class="fcwrap"><button type="button" class="b s fcnav-bt fcprev" onclick="fcIr(${fq.i-1})" ${fq.i<=0?'disabled':''} aria-label="Cartão anterior" title="Anterior (←)">‹</button>
@@ -6627,7 +6745,7 @@ function fcImportar(){
     const c={id:'c'+Date.now().toString(36)+(n++).toString(36),f,v,tg:limpa(r[2]),u:Date.now()};cards.push(c);dirty.add('c:'+hk(c.id,32))});
   persist();render();toast(n+' cartões importados');
 }
-function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:rtHtml(c.f),v:rtHtml(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
+function fcEditAbre(id){const c=cardBy(id);if(!c)return;fcEdit={id,f:fcSanitiza(c.f),v:fcSanitiza(c.v),tg:c.tg||''};render();setTimeout(()=>{const e=$('#ed_f');if(e)e.scrollIntoView({block:'center'})},50)}
 function fcEditSalva(){const c=cardBy(fcEdit.id),f=rtVal(fcEdit.f),v=rtVal(fcEdit.v);if(!f){toast('A frente não pode ficar vazia.');return}
   Object.assign(c,{f,v,tg:fcEdit.tg.trim(),u:Date.now()});delete c._rs;persist('c:'+hk(c.id,32));fcEdit=null;render();toast('Flashcard salvo')}
 function fcSusp(id){const s=fst(id).slice();s[6]=s[6]?0:1;s[5]=Date.now();fcs[id]=s;persist('s:'+hk(id,8));render()}
@@ -6704,7 +6822,7 @@ function vFc(){
   const nTodos=baseTema.length,nCom=baseTema.filter(fcTemImagem).length,nSem=nTodos-nCom;
   const {ops:temaOps,areas,sem}=fcOpcoesTema(todos.filter(x=>cTagOk(x)&&fcImgOk(x)));
   const filtrados=todos.filter(fcFiltroOk);
-  const lista=filtrados.filter(x=>!q||norm(rtTxt(x.f)+' '+rtTxt(x.v)+' '+(x.tg||'')+' '+fcMeta(x).tema).includes(q)).slice(0,60);
+  const lista=filtrados.filter(x=>!q||norm(fcTxt(x.f)+' '+fcTxt(x.v)+' '+(x.tg||'')+' '+fcMeta(x).tema).includes(q)).slice(0,60);
   const TG={};todos.forEach(x=>cTags(x).forEach(t=>{const k=norm(t);(TG[k]??={t,n:0}).n++}));
   const nSel=fcAtivos().filter(fcFiltroOk).length,temFiltro=!!(fcTags.size||fcTema||fcImg!=='todos');
   const now=Date.now(),hFeitos=fcHojeEstado().feitos.length,hFila=fcHojeFila(),hRest=hFila.length;
@@ -6740,7 +6858,7 @@ function vFc(){
   <div class="card"><h3>Navegar (${filtrados.length}${temFiltro?` de ${todos.length}`:''})</h3><p class="row"><input id="fc_q" placeholder="Buscar nos cartões" value="${esc(fcBusca)}" onchange="fcBusca=this.value;render()" style="flex:1;min-width:200px"></p>
   ${lista.length?`<div class="tw"><table><tr><th>Frente</th><th>Estado</th><th></th></tr>${lista.map(x=>{const s=fcs[x.id];const st=s&&s[6]?'suspenso':!s||s[2]===0?'novo':s[3]<=now?'vencido':'em '+Math.max(1,Math.ceil((s[3]-now)/DAY))+' d';
    const m=fcMeta(x),p=fcChaveParts(m.chave),subInfo=[fcTemImagem(x)?'🖼':'',p?fcChaveLabel(p):m.tema||''].filter(Boolean).join(' ');
-   return `<tr><td>${esc(rtTxt(x.f).slice(0,90))}${subInfo?`<div class="mut" style="font-size:.76rem">${esc(subInfo)}</div>`:''}</td><td>${st}${s&&s[2]>0?` · ${fcFmt(s[1])}`:''}</td><td style="white-space:nowrap"><button class="b s" style="padding:4px 10px" onclick="fcEditAbre('${x.id}')">Editar</button> <button class="b s" style="padding:4px 10px" onclick="fcSusp('${x.id}')">${s&&s[6]?'Reativar':'Suspender'}</button> <button class="b s" style="padding:4px 10px" onclick="fcDel('${x.id}')">${fcDelId===x.id?'Confirmar':'Excluir'}</button></td></tr>${fcEdit&&fcEdit.id===x.id?`<tr><td colspan="3"><div class="iab"><div class="kick">Editar flashcard</div><div><b style="font-size:.85rem">Frente</b>${rtEd('ed_f',fcEdit.f,120,'fcEdit.f')}</div><div style="margin-top:8px"><b style="font-size:.85rem">Verso</b>${rtEd('ed_v',fcEdit.v,300,'fcEdit.v')}</div><label style="display:block;margin-top:6px">Tags (separadas por ;)<input style="width:100%" value="${esc(fcEdit.tg)}" oninput="fcEdit.tg=this.value"></label><div class="row" style="margin-top:8px"><button class="b" onclick="fcEditSalva()">Salvar</button><button class="b s" onclick="fcEdit=null;render()">Cancelar</button></div></div></td></tr>`:''}`}).join('')}</table></div>`:'<p class="mut">Nenhum cartão ainda. Importe ou adicione acima.</p>'}</div>`;
+   return `<tr><td>${esc(fcTxt(x.f).slice(0,90))}${subInfo?`<div class="mut" style="font-size:.76rem">${esc(subInfo)}</div>`:''}</td><td>${st}${s&&s[2]>0?` · ${fcFmt(s[1])}`:''}</td><td style="white-space:nowrap"><button class="b s" style="padding:4px 10px" onclick="fcEditAbre('${x.id}')">Editar</button> <button class="b s" style="padding:4px 10px" onclick="fcSusp('${x.id}')">${s&&s[6]?'Reativar':'Suspender'}</button> <button class="b s" style="padding:4px 10px" onclick="fcDel('${x.id}')">${fcDelId===x.id?'Confirmar':'Excluir'}</button></td></tr>${fcEdit&&fcEdit.id===x.id?`<tr><td colspan="3"><div class="iab"><div class="kick">Editar flashcard</div><div><b style="font-size:.85rem">Frente</b>${rtEd('ed_f',fcEdit.f,120,'fcEdit.f')}</div><div style="margin-top:8px"><b style="font-size:.85rem">Verso</b>${rtEd('ed_v',fcEdit.v,300,'fcEdit.v')}</div><label style="display:block;margin-top:6px">Tags (separadas por ;)<input style="width:100%" value="${esc(fcEdit.tg)}" oninput="fcEdit.tg=this.value"></label><div class="row" style="margin-top:8px"><button class="b" onclick="fcEditSalva()">Salvar</button><button class="b s" onclick="fcEdit=null;render()">Cancelar</button></div></div></td></tr>`:''}`}).join('')}</table></div>`:'<p class="mut">Nenhum cartão ainda. Importe ou adicione acima.</p>'}</div>`;
 }
 
 

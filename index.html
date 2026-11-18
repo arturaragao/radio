@@ -130,6 +130,22 @@ body.emquiz:is(.lay-ajustada,.lay-otimizado) .gal .galm{min-height:0}
 .pr-percentual{white-space:nowrap;margin-left:.4em;font-weight:600}
 .pr-aviso{color:var(--warn);display:inline-block;margin:6px 0}
 .pr-prova{margin-left:.5em}
+/* Flashcards 1.63: filtros por tema/imagem, grupos e bloco diário de 100 */
+.fc-filtros{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:8px 0 12px}
+.fc-fil-lbl{display:inline-flex;align-items:center;gap:6px;flex:1 1 220px;min-width:0}
+.fc-fil-lbl select{flex:1;min-width:0;max-width:100%}
+.fc-img-seg{flex-wrap:wrap;max-width:100%}
+.fc-img-seg button{padding:6px 11px;font-size:.82rem;white-space:nowrap}
+.fc-grp-det{margin:0 0 12px}
+.fc-grupos{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow-y:auto;padding:2px 0}
+.fc-grp{display:inline-flex;align-items:center;gap:8px;background:var(--card2);color:var(--tx);border:1px solid var(--bd);border-radius:10px;padding:5px 10px;font:500 .8rem var(--fb);cursor:pointer;text-align:left;max-width:100%}
+.fc-grp:hover{border-color:var(--pri-tx)}
+.fc-grp.on{background:var(--pri);color:var(--on-pri);border-color:var(--pri)}
+.fc-grp-nm{overflow-wrap:anywhere}
+.fc-grp-ct{font-size:.75rem;opacity:.8;white-space:nowrap}
+.fc-hoje-box{margin-top:14px;padding:12px 14px;border:1px solid var(--bd);border-radius:12px;background:var(--card2);display:flex;flex-direction:column;gap:8px}
+.fc-hcnt{font-weight:700;color:var(--pri-tx);font-variant-numeric:tabular-nums}
+@media(max-width:520px){.fc-img-seg button{padding:5px 8px;font-size:.78rem}}
 /* aba Semana (build/semana.js) */
 .sm{display:flex;flex-direction:column;gap:14px}
 .sm .card{margin:0}
@@ -1216,7 +1232,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.62.0</small></div>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.63.0</small></div>
 <div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local"><i></i><span>Só neste aparelho</span></span><button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline · calculando…" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav></header>
 <main id="app"></main>
@@ -1224,5 +1240,5 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.62.0"</script><script src="shim.js?v=1.62.0"></script>
+<script>window.BCBR_VERSAO="1.63.0"</script><script src="shim.js?v=1.63.0"></script>
 </body></html>

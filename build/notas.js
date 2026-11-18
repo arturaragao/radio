@@ -716,6 +716,31 @@ function ntAlca(c){
   });
 }
 
+// 1.63: após colar texto (Ctrl+V, simples ou rico, inclusive multi-bloco), garante o cursor no fim do conteúdo colado.
+function ntColaCursorExt(){
+  const {Plugin,PluginKey,Selection}=TT.pm.state;
+  return TT.Extension.create({name:'colaCursorFim',addProseMirrorPlugins(){
+    return [new Plugin({key:new PluginKey('colaCursorFim'),appendTransaction(trs,_,newState){
+      const pi=trs.findIndex(t=>t.getMeta('paste')&&t.docChanged);if(pi<0)return null;
+      const pt=trs[pi];let start=null,end=null;
+      for(let i=pt.steps.length-1;i>=0;i--){
+        let sf=null,st=null;
+        pt.mapping.maps[i].forEach((_f,_t,nf,nt)=>{if(sf==null)sf=nf;st=nt});
+        if(st!=null){start=pt.mapping.slice(i+1).map(sf,-1);end=pt.mapping.slice(i+1).map(st,1);break}
+      }
+      if(end==null)return null;
+      try{
+        const rp=pt.doc.resolve(end);
+        if(rp.parent.isTextblock&&rp.parentOffset===0&&rp.before()>start)end=rp.before();
+        for(let j=pi+1;j<trs.length;j++)end=trs[j].mapping.map(end,-1);
+        const sel=Selection.near(newState.doc.resolve(Math.max(0,Math.min(end,newState.doc.content.size))),-1);
+        if(sel&&!newState.selection.eq(sel))return newState.tr.setSelection(sel).scrollIntoView().setMeta('addToHistory',false);
+      }catch(e){}
+      return null;
+    }})];
+  }});
+}
+
 function ntExtensoes(c){
   const E=TT.ext;
   return [E.Document,E.Paragraph,E.Text,E.Heading.configure({levels:[1,2,3]}),E.Bold,E.Italic,E.Underline,E.Strike,
@@ -726,7 +751,7 @@ function ntExtensoes(c){
     E.TextStyle.extend({addAttributes(){return {...this.parent?.(),codigo:{default:null,parseHTML:el=>el.hasAttribute('data-codigo')?true:null,renderHTML:a=>a.codigo?{'data-codigo':'true',class:'nt-code'}:{}}}}}),E.Color,E.BackgroundColor,E.UndoRedo,E.Dropcursor.configure({color:'#5687be',width:2}),E.Gapcursor,E.TrailingNode,
     E.Placeholder.configure({placeholder:({node})=>node.type.name==='detailsSummary'?'Toggle':node.type.name==='heading'?'Título':"Digite '/' para ver os comandos"}),
     ntIds(),ntRecuoExt(),ntRegraToggle(),ntAtalhos(c),ntSlash(c),ntLembrete(),ntLembretePlugin(c),ntBuscaExt(),ntBselExt(c),
-    TT.Extension.create({name:'envioImagem',addProseMirrorPlugins(){return [ntPluginEnvio()]}})];
+    TT.Extension.create({name:'envioImagem',addProseMirrorPlugins(){return [ntPluginEnvio()]}}),ntColaCursorExt()];
 }
 // Separa os blocos que o editor aceita dos inválidos (plano corrompido): um bloco ruim não derruba a aba nem apaga as outras notas.
 function ntValidos(blocos){

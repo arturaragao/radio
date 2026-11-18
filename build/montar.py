@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.62.0"
+VERSAO = "1.63.0"
+# 1.63.0: Flashcards — atalhos (Espaço vira/volta, Enter próximo, G abre/fecha imagem), filtros/grupos por tema e com/sem imagem, flashcards/questoes.json, bloco diário de 100 ("Hoje: 100 cards"); Notas: cursor no fim do texto colado
 # 1.62.0: Notas rápidas (debounce 800 ms, abertura do cache IndexedDB, render progressivo, lazy images); botão "Baixar offline" ao lado de sincronizado; Preliminares com dias abertos por padrão (lembra fechados)
 # 1.61.0: Flashcards — bloco persistente (sincronizado), painel superior igual ao de Questões, setas ←/→ e retomada nos resumos
 # 1.60.0: aba Questões abre no tema escuro e demais abas no tema claro por padrão (escolha manual em Config segue valendo)
@@ -104,6 +105,21 @@ js = js.replace("Seu progresso é salvo automaticamente na sua conta e aparece i
 ini = js.index("let bq='';\nfunction vBanco(){")
 fim = js.index("let cfgTab='geral';")
 js = js[:ini] + open(f"{R}/build/banco.js", encoding="utf8").read() + "\n\n" + js[fim:]
+
+# 1.63.0: Flashcards — questoes.json + fcHoje no cfg + atalhos + aba/bloco 100/dia (build/flashcards.js)
+troca("  cards=cards.filter(c=>!c._rs||vistos.has(c.id))}\nrsSemeia();",
+      "  const fqL=Array.isArray(window.FC_QUESTOES)?window.FC_QUESTOES:(window.FC_QUESTOES&&Array.isArray(window.FC_QUESTOES.cards)?window.FC_QUESTOES.cards:[]);\n  fqL.forEach(k=>{if(!k||!k.id)return;vistos.add(k.id);const tg='Questões do banco;',ex=idx.get(k.id),fi=Array.isArray(k.fi)&&k.fi.length?k.fi:null,vi=Array.isArray(k.vi)&&k.vi.length?k.vi:null;if(!ex){const c={id:k.id,f:k.f,v:k.v,tg,u:0,_rs:1};if(fi)c.fi=fi;if(vi)c.vi=vi;cards.push(c);idx.set(c.id,c)}else if(ex._rs){Object.assign(ex,{f:k.f,v:k.v,tg});if(fi)ex.fi=fi;else delete ex.fi;if(vi)ex.vi=vi;else delete ex.vi}else{if(!ex.fi?.length&&fi)ex.fi=fi;if(!ex.vi?.length&&vi)ex.vi=vi}});\n  if(typeof fcMetaLimpa==='function')fcMetaLimpa();\n  cards=cards.filter(c=>!c._rs||vistos.has(c.id))}\nrsSemeia();")
+troca("c.fcMortos=c.fcMortos&&typeof c.fcMortos==='object'&&!Array.isArray(c.fcMortos)?c.fcMortos:{};",
+      "c.fcMortos=c.fcMortos&&typeof c.fcMortos==='object'&&!Array.isArray(c.fcMortos)?c.fcMortos:{};c.fcHoje=c.fcHoje&&typeof c.fcHoje==='object'&&typeof c.fcHoje.d==='string'&&Array.isArray(c.fcHoje.feitos)?c.fcHoje:null;")
+troca("const nova=normCfg(x.cfg),ri=riPreserva(cfg.ri,nova.ri),mor=fcOk?fcMortosUne(cfg.fcMortos,nova.fcMortos):nova.fcMortos,fcb=fcOk?fcBlocosPreserva(cfg.fcBlocos,nova.fcBlocos,mor):nova.fcBlocos,republica=JSON.stringify(ri)!==JSON.stringify(nova.ri)||JSON.stringify(fcb)!==JSON.stringify(nova.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(nova.fcMortos);\n      nova.ri=ri;nova.fcBlocos=fcb;nova.fcMortos=mor;",
+      "const nova=normCfg(x.cfg),ri=riPreserva(cfg.ri,nova.ri),mor=fcOk?fcMortosUne(cfg.fcMortos,nova.fcMortos):nova.fcMortos,fcb=fcOk?fcBlocosPreserva(cfg.fcBlocos,nova.fcBlocos,mor):nova.fcBlocos,fch=fcOk?fcHojeUne(cfg.fcHoje,nova.fcHoje):nova.fcHoje,republica=JSON.stringify(ri)!==JSON.stringify(nova.ri)||JSON.stringify(fcb)!==JSON.stringify(nova.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(nova.fcMortos)||JSON.stringify(fch)!==JSON.stringify(nova.fcHoje);\n      nova.ri=ri;nova.fcBlocos=fcb;nova.fcMortos=mor;nova.fcHoje=fch;")
+troca("const rc0=normCfg(x.cfg),mor=fcMortosUne(cfg.fcMortos,rc0.fcMortos),fcb=fcBlocosPreserva(cfg.fcBlocos,rc0.fcBlocos,mor);\n      if(JSON.stringify(fcb)!==JSON.stringify(cfg.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(cfg.fcMortos)){\n        cfg.fcBlocos=fcb;cfg.fcMortos=mor;if(!fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))cfg.fcAtivo=fcb.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;\n        saveL('cbr_cfg',cfg);changed=true;estDirty=true}",
+      "const rc0=normCfg(x.cfg),mor=fcMortosUne(cfg.fcMortos,rc0.fcMortos),fcb=fcBlocosPreserva(cfg.fcBlocos,rc0.fcBlocos,mor),fch=fcHojeUne(cfg.fcHoje,rc0.fcHoje);\n      if(JSON.stringify(fcb)!==JSON.stringify(cfg.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(cfg.fcMortos)||JSON.stringify(fch)!==JSON.stringify(cfg.fcHoje)){\n        cfg.fcBlocos=fcb;cfg.fcMortos=mor;cfg.fcHoje=fch;if(!fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))cfg.fcAtivo=fcb.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;\n        saveL('cbr_cfg',cfg);changed=true;estDirty=true}")
+troca("['fc','Flashcards',[['Atalhos dos flashcards','fc',[['← / →','Cartão anterior / próximo'],['Esc','Sair do bloco (salva para continuar depois)']]]]]",
+      "['fc','Flashcards',[['Atalhos dos flashcards','fc',[['Espaço','Virar o cartão (frente / verso)'],['Enter','Próximo cartão'],['G','Abrir / fechar imagem do cartão'],['← / →','Cartão anterior / próximo'],['Esc','Sair do bloco (salva para continuar depois)']]]]]")
+ini = js.index("const FC0=()=>")
+fim = js.index("// ---- painel ----")
+js = js[:ini] + open(f"{R}/build/flashcards.js", encoding="utf8").read() + "\n\n" + js[fim:]
 
 # Painel: célula "Foco até a prova (CBR)" em primeiro (build/foco.js), mesmo com pnOrd salvo e sem respostas (1.35.0)
 troca("const PN_BOXES=[['resumo',", "const PN_BOXES=[['foco','Foco até a prova (CBR)',()=>vFoco()],['resumo',")

@@ -1,4 +1,4 @@
-// Banco CBR app 1.61.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.62.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -50,6 +50,12 @@ function criarSyncNotas(o){
   }
   async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;return (await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)})).content.sha}
   const conflito=e=>e.status===409||e.status===422;
+  async function listarPaginasCache(){
+    if(indice.length)return clone(lista());
+    const c=await cacheLer('notas:indice');
+    if(Array.isArray(c)&&!indice.length){indice=c;indiceConhecido=true;mudou()}
+    return clone(lista());
+  }
   async function listarPaginas(){
     if(leitura)return leitura;
     leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
@@ -57,6 +63,13 @@ function criarSyncNotas(o){
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
+  async function abrirPaginaCache(id){
+    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    const atual=abertas.get(id);if(atual)return clone(atual);
+    const c=await cacheLer('notas:pagina:'+id);if(!c?.p)return null;
+    const p=e?{...c.p,...e.p}:c.p;if(p.origem===null)delete p.origem;
+    if(c.sha)shas.set(id,c.sha);tamanhos.set(id,textoDe(p.doc));abertas.set(id,clone(p));return clone(p);
+  }
   async function abrirPagina(id){
     chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
@@ -244,7 +257,26 @@ function criarSyncNotas(o){
       }
     }catch(e){erro=e.message}
   }
-  return {listarPaginas,abrirPagina,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
+  async function baixarTodas(aoAndar){
+    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))imgs.add(m[1])};
+    let n=0;
+    for(const m of pgs){
+      try{
+        let p=abertas.get(m.id);
+        if(!p||!m.sha||shas.get(m.id)!==m.sha){
+          const c=await cacheLer('notas:pagina:'+m.id);
+          if(c?.p&&m.sha&&c.sha===m.sha){p=c.p;if(!abertas.has(m.id)){shas.set(m.id,c.sha);abertas.set(m.id,clone(p))}}
+          else p=await abrirPagina(m.id);
+        }
+        if(p?.doc)colhe(p.doc);
+      }catch(e){}
+      n++;aoAndar&&aoAndar(n,pgs.length);
+    }
+    return {paginas:pgs.length,imagens:[...imgs]};
+  }
+  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
+    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido}),
+    paginasMeta:()=>clone(lista()),
     estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};
@@ -1824,9 +1856,11 @@ function ntDocumento(blocos){return {type:'doc',content:(blocos||[]).length?bloc
 
 const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
 const ntPaginas=()=>{const est=SyncNotas.estado(),ab=est.abertas||{};return est.paginas.map(p=>({...ab[p.id],...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}))};
+const ntPaginasMeta=()=>(SyncNotas.paginasMeta?SyncNotas.paginasMeta():ntPaginas()).map(p=>NT.pagina===p.id&&NT.paginaDados?{...p,titulo:NT.paginaDados.titulo,pasta:NT.paginaDados.pasta,ordem:NT.paginaDados.ordem,fixada:NT.paginaDados.fixada}:p);
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
+const pgAcharMeta=id=>ntPaginasMeta().find(p=>p.id===id);
 const ntPgOrdem=(a,b)=>(Number(a.ordem)||0)-(Number(b.ordem)||0)||String(a.id).localeCompare(String(b.id));
 
 // Texto antigo (1.37/1.38) -> blocos do editor: "- "/"• " listas, "> " toggles (recuo = dentro), "[img:arquivo]" imagem, resto parágrafos.
@@ -1862,10 +1896,13 @@ function ntNotaParaBloco(n){
     {type:'detailsContent',content:cont.length?cont:[ntPar('')]}]}};
 }
 function ntAntes(){if(NT.ed&&NT.sujo)ntSalvaDoc();ntTituloSalva()}
-function ntTemPendentes(){return SyncNotas.estado().pendentes>0}
+function ntTemPendentes(){return (SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado()).pendentes>0}
 function ntSync(){return SyncNotas.enviar()}
 function ntSalvaDoc(){
-  clearTimeout(NT.timer);if(!NT.ed||!NT.paginaDados)return;
+  clearTimeout(NT.timer);NT.timer=0;
+  if(NT.idleId&&typeof cancelIdleCallback==='function'){cancelIdleCallback(NT.idleId);NT.idleId=0}
+  if(!NT.ed||!NT.paginaDados)return;
+  if(NT._progFlush)NT._progFlush();
   const ant=NT.shown||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;
   if(ntIgual(blocos,ant))return;
   ntLembSincroniza(ant,blocos);
@@ -1878,8 +1915,10 @@ function ntTituloSalva(){
 }
 
 // ===== Estado aberto/fechado dos toggles: por aparelho (localStorage), fora do documento =====
-function ntAbertosLer(){try{return new Set(JSON.parse(localStorage.getItem(NT_ABERTOS)||'[]'))}catch(e){return new Set()}}
-function ntAbertosGrava(s){try{localStorage.setItem(NT_ABERTOS,JSON.stringify([...s]))}catch(e){}}
+let ntAbertosCache=null;
+function ntAbertosLer(){if(ntAbertosCache)return ntAbertosCache;try{return ntAbertosCache=new Set(JSON.parse(localStorage.getItem(NT_ABERTOS)||'[]'))}catch(e){return ntAbertosCache=new Set()}}
+function ntAbertosGrava(s){ntAbertosCache=s;try{localStorage.setItem(NT_ABERTOS,JSON.stringify([...s]))}catch(e){}}
+if(typeof window!=='undefined')window.addEventListener('storage',e=>{if(e.key===NT_ABERTOS)ntAbertosCache=null});
 function ntAberto(id){return !!id&&ntAbertosLer().has(id)}
 function ntAbertoSalva(id,aberto){if(!id)return;const s=ntAbertosLer();aberto?s.add(id):s.delete(id);ntAbertosGrava(s)}
 function ntPoeAberto(dom,aberto){dom.classList.toggle('is-open',aberto);dom.querySelector(':scope>button')?.setAttribute('aria-expanded',String(aberto))}
@@ -2071,7 +2110,7 @@ function ntTabelaBarra(c){
     const r=dom.getBoundingClientRect(),rc=c.el.getBoundingClientRect();
     b.hidden=false;b.style.top=Math.max(0,r.top-rc.top-b.offsetHeight-4)+'px';b.style.left=Math.max(0,Math.min(r.left-rc.left,rc.width-b.offsetWidth))+'px';
   }
-  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(pinta,ev==='blur'?150:0));
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>{clearTimeout(c._tabT);c._tabT=setTimeout(pinta,ev==='blur'?150:0)});
 }
 
 // ===== Envio de imagem: reduz (1600 px, JPEG 0,82), grava em imagens/nota-<id>.jpg no repositório privado =====
@@ -2172,7 +2211,7 @@ function ntImagem(){
     parseHTML(){return [{tag:'img[src^="./img/"]'},{tag:'img[data-nt-src^="./img/"]'}]},   // imagens de fora (Word, páginas) não entram; a cópia 1.56 traz data URL + data-nt-src
     addAttributes(){return {...this.parent?.(),src:{default:null,parseHTML:el=>el.getAttribute('data-nt-src')||el.getAttribute('src')},largura:{default:null,parseHTML:el=>el.getAttribute('data-largura')||null,renderHTML:a=>a.largura?{'data-largura':a.largura}:{}}}},
     addNodeView(){return ({node})=>{
-      const img=document.createElement('img');img.className='nt-img';img.alt='Imagem da nota';img.draggable=false;
+      const img=document.createElement('img');img.className='nt-img';img.alt='Imagem da nota';img.draggable=false;img.loading='lazy';img.decoding='async';
       const pinta=n=>{const nome=ntNomeImg(n.attrs.src);img.src=(nome&&window.BCBR?.imgPronta?.(nome))||n.attrs.src||'';img.style.width=n.attrs.largura?n.attrs.largura+'%':''};
       pinta(node);let atual=node;
       return {dom:img,ignoreMutation:()=>true,update(n){if(n.type!==atual.type)return false;if(n.attrs.src!==atual.attrs.src||n.attrs.largura!==atual.attrs.largura)pinta(n);atual=n;return true}};
@@ -2213,11 +2252,12 @@ function ntIds(){
       if(!trs.some(t=>t.docChanged))return null;
       const vistos=new Set(),tr=depois.tr;let mudou=false;
       depois.doc.descendants((n,pos,pai)=>{
-        if(!NT_COM_ID.includes(n.type.name))return;
+        if(!NT_COM_ID.includes(n.type.name))return !n.isTextblock&&n.type.name!=='table';
         const precisa=pai===depois.doc||n.type.name==='details';let id=n.attrs.id;
         if(id&&vistos.has(id))id=null;
         if(!id&&precisa){id=ntNovoId();tr.setNodeMarkup(pos,undefined,{...n.attrs,id});mudou=true;if(n.type.name==='details')ntAbertoSalva(id,true)}
         if(id)vistos.add(id);
+        if(n.isTextblock||n.type.name==='table')return false;
       });
       return mudou?tr.setMeta('addToHistory',false):null}})]},
   });
@@ -2230,13 +2270,15 @@ function ntRecuoExt(){
   return TT.Extension.create({name:'recuoBloco',
     addGlobalAttributes(){return [{types:NT_COM_ID,attributes:{indent:{default:null,keepOnSplit:true,parseHTML:el=>{const n=parseInt(el.getAttribute('data-indent'),10);return n>0?Math.min(n,8):null},renderHTML:a=>a.indent?{'data-indent':a.indent}:{}}}}]},
     addProseMirrorPlugins(){
-      const {Plugin,PluginKey}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view;
-      return [new Plugin({key:new PluginKey('recuoDeco'),props:{decorations(s){
-        const d=[];s.doc.descendants((n,pos,pai)=>{
-          if(n.isText)return false;
+      const {Plugin,PluginKey}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view,K=new PluginKey('recuoDeco');
+      const calc=doc=>{
+        const d=[];doc.descendants((n,pos,pai)=>{
+          if(n.isText||n.isTextblock||n.type.name==='table'){if(n.attrs?.indent>0&&pai&&NT_PAIS.has(pai.type.name))d.push(Decoration.node(pos,pos+n.nodeSize,{class:'nt-rec',style:'--rec:'+n.attrs.indent}));return false}
           if(n.attrs?.indent>0&&pai&&NT_PAIS.has(pai.type.name))d.push(Decoration.node(pos,pos+n.nodeSize,{class:'nt-rec',style:'--rec:'+n.attrs.indent}));
         });
-        return d.length?DecorationSet.create(s.doc,d):null}}}),
+        return d.length?DecorationSet.create(doc,d):DecorationSet.empty;
+      };
+      return [new Plugin({key:K,state:{init:(_,s)=>calc(s.doc),apply(tr,set,_,s){return tr.docChanged?calc(s.doc):set}},props:{decorations(s){return K.getState(s)}}}),
       new Plugin({key:new PluginKey('recuoNorm'),appendTransaction(trs,antes,depois){
         if(!trs.some(t=>t.docChanged))return null;
         const tr=depois.tr;let mudou=false;
@@ -2248,7 +2290,7 @@ function ntRecuoExt(){
           });
         };
         norm(depois.doc,0);
-        depois.doc.descendants((pai,pp)=>{if(NT_PAIS.has(pai.type.name))norm(pai,pp+1)});
+        depois.doc.descendants((pai,pp)=>{if(pai.isTextblock||pai.type.name==='table')return false;if(NT_PAIS.has(pai.type.name))norm(pai,pp+1)});
         return mudou?tr.setMeta('addToHistory',false):null}})];
     },
   });
@@ -2440,7 +2482,8 @@ function ntBarraPinta(c){
   for(const bt of b.querySelectorAll('.nt-barra-l [data-m]')){
     const m=bt.dataset.m;let on=false;
     try{on=m==='cor'?!!(e.getAttributes('textStyle').color||e.getAttributes('textStyle').backgroundColor):NT_BARRA_ATIVO[m]?e.isActive(NT_BARRA_ATIVO[m]):false}catch(x){}
-    bt.classList.toggle('on',on);if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist')bt.setAttribute('aria-pressed',String(on));
+    if(bt.classList.contains('on')!==on)bt.classList.toggle('on',on);
+    if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist'&&bt.getAttribute('aria-pressed')!==String(on))bt.setAttribute('aria-pressed',String(on));
   }
 }
 
@@ -2513,13 +2556,15 @@ function ntExtensoes(c){
 function ntValidos(blocos){
   const bons=[],ruins=[];
   if(!Array.isArray(blocos))return {bons,ruins,corrompido:true};
-  let t;
-  try{t=new TT.Editor({extensions:ntExtensoes(NT)});
-    for(const b of blocos){try{if(!b||typeof b.id!=='string')throw 0;t.schema.nodeFromJSON(b.conteudo).check();bons.push(b)}catch(e){ruins.push(b)}}
-  }catch(e){return {bons:[],ruins:blocos,corrompido:true}}finally{try{t?.destroy()}catch(e){}}
+  try{
+    let sch=NT.ed?.state?.schema||NT._schema;
+    if(!sch){const t=new TT.Editor({extensions:ntExtensoes(NT)});sch=NT._schema=t.schema;t.destroy()}
+    for(const b of blocos){try{if(!b||typeof b.id!=='string')throw 0;sch.nodeFromJSON(b.conteudo).check();bons.push(b)}catch(e){ruins.push(b)}}
+  }catch(e){return {bons:[],ruins:blocos,corrompido:true}}
   return {bons,ruins,corrompido:false};
 }
-// Cria o editor do contexto `c` (página principal ou painel) com os `blocos`; `aoMudar` roda ~1 s depois da última digitação.
+const NT_PROG_LIM=100,NT_PROG_LOTE=60;
+// Cria o editor do contexto `c` (página principal ou painel) com os `blocos`; `aoMudar` roda ~800 ms após parar de digitar (fora do caminho da tecla).
 function ntEditor(c,blocos,aoMudar){
   c.el=document.createElement('div');c.el.className='nt-ed';
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
@@ -2541,16 +2586,61 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;aoMudar()});
+  const agenda=()=>{
+    clearTimeout(c.timer);
+    if(c.idleId&&typeof cancelIdleCallback==='function')cancelIdleCallback(c.idleId);
+    c.idleId=0;
+    c.timer=setTimeout(()=>{
+      c.timer=0;
+      const roda=()=>{c.idleId=0;if(c.ed&&c.sujo)aoMudar()};
+      if(typeof requestIdleCallback==='function')c.idleId=requestIdleCallback(roda,{timeout:500});
+      else roda();
+    },800);
+  };
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;agenda()});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
-  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>{
+    clearTimeout(c._barraT);
+    c._barraT=setTimeout(()=>{if(!c.ed)return;ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0);
+  });
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
   ntAlca(c);ntTabelaBarra(c);
+}
+function ntProgramaResto(c,resto,ultIniId){
+  const pid=(c._progId=(c._progId||0)+1);
+  c._progResto=resto.slice();
+  let primeiro=true;
+  const insere=lote=>{
+    if(!c.ed||!lote.length)return;
+    const sch=c.ed.state.schema,nos=lote.map(b=>sch.nodeFromJSON(b.conteudo));
+    const tr=c.ed.state.tr,doc=tr.doc,fim=doc.content.size,ult=doc.lastChild;
+    if(primeiro&&ult&&ult.type.name==='paragraph'&&!ult.content.size&&ult.attrs?.id!==ultIniId)tr.replaceWith(fim-ult.nodeSize,fim,nos);
+    else tr.insert(fim,nos);
+    primeiro=false;
+    tr.setMeta('addToHistory',false).setMeta('ntRemoto',true);
+    c.ed.view.dispatch(tr);
+    c.shown=(c.shown||[]).concat(lote);
+  };
+  c._progFlush=()=>{
+    c._progId++;
+    if(c._progResto?.length)insere(c._progResto.splice(0));
+    c._progFlush=null;
+  };
+  const step=()=>{
+    if(!c.ed||c._progId!==pid||!c._progResto?.length){c._progFlush=null;return}
+    insere(c._progResto.splice(0,NT_PROG_LOTE));
+    if(c._progResto.length)(typeof requestAnimationFrame==='function'?requestAnimationFrame:setTimeout)(step,0);
+    else c._progFlush=null;
+  };
+  (typeof requestAnimationFrame==='function'?requestAnimationFrame:setTimeout)(step,0);
 }
 function ntCria(){
   const lista=NT.paginaDados?.doc?.blocos,v=ntValidos(lista);
   if(v.corrompido||v.ruins.length){ntFalha();return false}
-  NT.shown=lista;ntEditor(NT,v.bons,ntSalvaDoc);ntBarra(NT);ntBarraPinta(NT);return true;
+  const prog=v.bons.length>NT_PROG_LIM,ini=prog?v.bons.slice(0,NT_PROG_LOTE):v.bons;
+  NT.shown=ini.slice();ntEditor(NT,ini,ntSalvaDoc);ntBarra(NT);ntBarraPinta(NT);
+  if(prog)ntProgramaResto(NT,v.bons.slice(NT_PROG_LOTE),ini.at(-1)?.id);
+  return true;
 }
 function ntFalha(){
   const raiz=document.getElementById('nt_raiz');if(raiz)raiz.innerHTML='<p>Não foi possível abrir este documento. A versão salva foi preservada. Use Versões no menu da página para recuperar.</p>';
@@ -2580,6 +2670,7 @@ async function ntSincroniza(){
   const id=NT.pagina;
   try{const p=await SyncNotas.abrirPagina(id);if(NT.pagina!==id||NT.sujo)return;
     NT.paginaDados=p;
+    if(NT._progFlush)NT._progFlush();
     if(NT.ed&&!ntIgual(p.doc.blocos,NT.shown)){const v=ntValidos(p.doc.blocos);if(v.ruins.length||v.corrompido)return;ntAplicaNoEditor(NT,p.doc.blocos);NT.shown=p.doc.blocos}
     const titulo=document.getElementById('nt_titulo');if(titulo&&document.activeElement!==titulo)titulo.value=p.titulo||'';
   }catch(e){NT.erro=e.message}
@@ -2712,6 +2803,7 @@ function ntPaginaMove(id,ref,depois,pasta){
 const NT_PREL='preliminares';
 function ntPrelAbre(){
   if(!SM.d)return;ntAntes();NT.visita=(NT.visita||0)+1;
+  NT._progId=(NT._progId||0)+1;NT._progResto=null;NT._progFlush=null;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;NT.pagina=null;NT.paginaDados=null;NT.erro='';NT.carregando=false;NT.sujo=false;NT.latMov=false;NT.prel=true;
   document.title='Preliminares';
   try{localStorage.setItem('bcbr_ultima_pagina',NT_PREL)}catch(e){}
@@ -2723,13 +2815,26 @@ function ntPrelClique(e){if(e.ctrlKey||e.metaKey||e.shiftKey||e.button){ntAntes(
 async function ntPainelAbre(id){
   if(id===NT_PREL){ntPrelAbre();return}
   if(!SM.d)return;NT.prel=false;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
+  NT._progId=(NT._progId||0)+1;NT._progResto=null;NT._progFlush=null;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;
   NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;NT.latMov=false;
-  const conhecido=pgAchar(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
+  ntAbertosCache=null;
+  const conhecido=pgAcharMeta(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
   try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
   if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   if(typeof go==='function'&&tela!=='notas')go('notas');else if(typeof render==='function')render();
   try{
+    await SyncNotas.listarPaginasCache?.();
+    const doCache=await SyncNotas.abrirPaginaCache?.(id);
+    if(NT.visita!==visita)return;
+    if(doCache){
+      NT.paginaDados=doCache;NT.carregando=false;document.title=doCache.titulo||'Sem título';
+      try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
+      if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
+      render();await ntMonta();
+      (async()=>{try{await smCarga;await SyncNotas.listarPaginas();if(NT.visita!==visita||NT.pagina!==id)return;await ntSincroniza()}catch(e){}})();
+      return;
+    }
     await smCarga;
     await SyncNotas.listarPaginas();
     let p;
@@ -2747,7 +2852,7 @@ async function ntPainelAbre(id){
     try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
     if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   }catch(e){if(NT.visita===visita)NT.erro=e.message}
-  finally{if(NT.visita===visita){NT.carregando=false;render();await ntMonta()}}
+  finally{if(NT.visita===visita&&NT.carregando){NT.carregando=false;render();await ntMonta()}}
 }
 const NTA=(()=>{try{const q=new URLSearchParams(location.search);return q.get('pagina')||(q.get('aba')==='notas'?'notas':'')}catch(e){return ''}})();
 const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
@@ -2828,7 +2933,7 @@ document.addEventListener('contextmenu',e=>{const it=e.target.closest?.('#nt_lat
 document.addEventListener('click',e=>{const al=e.target.closest?.('.nt-pg-it .nt-pg-alca');if(!al||ntEngole)return;e.preventDefault();const r=al.getBoundingClientRect();ntPaginaMenu(al.closest('.nt-pg-it').dataset.pg,r.left,r.bottom)});
 document.addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key)||!e.target.matches?.('.nt-pg-it .nt-pg-alca'))return;e.preventDefault();e.target.click()});
 function ntLateralHtml(){
-  const l=ntPaginas().filter(p=>p.id!=='notas').sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
+  const l=ntPaginasMeta().filter(p=>p.id!=='notas').sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
   const item=p=>`<div class="nt-pg-it${NT.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" role="button" tabindex="0" title="Arrastar para mudar a ordem; clique para opções" aria-label="Opções da página">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(p.id))}" draggable="false" onclick="return ntPgClique(event,'${esc(p.id)}')">${esc(p.titulo||'Sem título')}</a><button type="button" class="nt-pg-mover" title="Mover para…" aria-label="Mover ${esc(p.titulo||'Sem título')} para…" onclick="ntPaginaMoverMenu('${esc(p.id)}')">↪</button><button type="button" class="nt-pg-aba" title="Abrir em nova aba" aria-label="Abrir ${esc(p.titulo||'Sem título')} em nova aba" onclick="ntAbaAbre('${esc(p.id)}')">↗</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
   const f=NT.pastaForm,form=id=>{
     if(!f||f.id!==id)return '';
@@ -2847,7 +2952,8 @@ function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
   const i=el.querySelector('.nt-pt-titulo'),foco=i&&document.activeElement===i,pos=foco?[i.selectionStart,i.selectionEnd]:null;
   if(i&&NT.pastaForm?.id===i.dataset.formPasta)NT.pastaForm.rascunho=i.value;
-  el.innerHTML=ntLateralHtml();if(foco){const novo=el.querySelector('.nt-pt-titulo');novo?.focus();novo?.setSelectionRange(...pos)}
+  const h=ntLateralHtml();if(!foco&&el._ultHtml===h)return;
+  el._ultHtml=h;el.innerHTML=h;if(foco){const novo=el.querySelector('.nt-pt-titulo');novo?.focus();novo?.setSelectionRange(...pos)}
 }
 // Arrastar (mouse: segurando o item e movendo; toque: pela alça ⋮⋮). O alvo é decidido pelo meio das linhas da mesma seção.
 let NTD=null,ntEngole=false;
@@ -3414,7 +3520,7 @@ function ntHistAbre(c=NT){
   const schema=ntSchema(),ser=schema&&TT.pm.model.DOMSerializer.fromSchema(schema);
   let fonte='pagina',pag=0,fim=false,ocupado=false,escolhida=null,visita=0;const itens=[];   // {sha,data,plano,p}
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
-  const atual=()=>NT.pagina===id&&NT.ed?ntBlocos(NT.ed.getJSON(),NT.shown||[]):(pgAchar(id)?.doc?.blocos||[]);
+  const atual=()=>{if(NT.pagina===id&&NT.ed){NT._progFlush?.();return ntBlocos(NT.ed.getJSON(),NT.shown||[])}return pgAchar(id)?.doc?.blocos||[]};
   const render=b=>{const el=document.createElement('div');el.className='nt-ed nt-hist-bloco-c';
     try{el.appendChild(ser.serializeNode(schema.nodeFromJSON(b.conteudo)))}catch(e){el.textContent=ntHistTexto(b)}return el};
   const copiar=async(el,t)=>{
@@ -4229,6 +4335,12 @@ async function prelLocalSet(on,aviso=true){
   if(aviso)prelCfgMsg(on?'Laudos serão guardados neste aparelho.':'Laudos apagados deste aparelho.');
 }
 // ---- tela ----
+const PRL_FECHADOS_LS='bcbr_prl_fechados';   // 1.62.0: dias fechados à mão pelo usuário (só datas, nunca texto de laudo)
+function prelDiasFechadosLer(){try{const l=JSON.parse(localStorage.getItem(PRL_FECHADOS_LS)||'[]');return new Set(Array.isArray(l)?l:[])}catch(e){return new Set()}}
+function prelDiaFechadoSalva(dia,fechado){
+  const s=prelDiasFechadosLer();if(fechado)s.add(dia);else s.delete(dia);
+  try{const l=[...s];if(l.length)localStorage.setItem(PRL_FECHADOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_FECHADOS_LS)}catch(e){}
+}
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
 const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2))};
 const prelAberto=(k,padrao)=>PRL.estado[k]!==undefined?PRL.estado[k]:padrao;
@@ -4237,6 +4349,7 @@ function prelTg(el){
   const k=el.dataset.k;
   if(el.dataset.def&&el.open&&PRL.estado[k]===undefined)return;   // abriu sozinho por causa do filtro: não vira escolha do usuário
   if(PRL.estado[k]===el.open)return;PRL.estado[k]=el.open;
+  if(k&&k.startsWith('d|'))prelDiaFechadoSalva(k.slice(2),!el.open);
   if(!el.open)return;
   if(el.dataset.ac)prelPar(el.dataset.ac);
   else{const d=el.querySelector(':scope>.prl-in');if(d&&!d.firstChild){d.innerHTML=prelFilhosHtml(k);prelPares()}}   // níveis 1 e 2 geram os filhos só quando abertos
@@ -4326,9 +4439,10 @@ function prelListaHtml(){
   const its=prelVis(),at=prelFiltroAtivo();
   if(!its.length)return `<p class="mut" role="status">${PRL.itens.length?'Nada encontrado com esse filtro.':'Ainda não há laudos preliminares gravados.'}</p>`;
   if(PRL.modo==='exame')return prelN1(prelAgrupa(its),'*',at,its.length);   // 1.54.0: Categoria > Exame > Acesso (a data aparece em cada acesso)
+  const fechados=prelDiasFechadosLer();
   return prelAgrupaDias(its).map(d=>{
-    const k0='d|'+d.dia,def=at&&PRL.estado[k0]===undefined,ab0=prelAberto(k0,def);
-    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${def?'data-def="1"':''} ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
+    const k0='d|'+d.dia,padrao=!fechados.has(d.dia),ab0=prelAberto(k0,padrao);
+    return `<details class="prl-n0" data-k="${prelEsc(k0)}" ${ab0?'open':''} ontoggle="prelTg(this)"><summary><span>${prelEsc(prelRotuloDia(d.dia))}</span>${prelPend(prelFalta2(d.itens))}<span class="prl-n">${d.total}</span></summary><div class="prl-in">${ab0?prelN1(prelAgrupa(d.itens),d.dia,at,its.length):''}</div></details>`;
   }).join('');
 }
 function prelFormChave(){
@@ -4415,7 +4529,7 @@ function rdGancho(acao,a){
   rdPinta();
 }
 function rdEstado(){
-  const s=SyncNotas.estado();
+  const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
   if(s.volatil)return 'Pendente — mantenha esta aba aberta';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Pendente — sem conexão';
   if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
@@ -4601,14 +4715,19 @@ document.addEventListener('keydown',e=>{
 },true);
 
 
-// Offline (1.42): indicador discreto "offline · N pendentes" e download único das imagens (questões e notas) para abrir tudo sem internet.
-// O resto já é local: o service worker serve o app e o vendor do cache (atualiza por trás), as questões vêm do IndexedDB (shim.js), o plano/notas/páginas/frases/agenda
-// do localStorage, e toda gravação fica na fila do aparelho (notas: NT_PEND; plano: SM.sujo + fusão; progresso: dirty/estDirty) até o GitHub confirmar, sem duplicar.
-const OF={prog:'',baixando:false},OF_FLAG='bcbr_baixou';
+// Offline (1.62.0): botão "Baixar offline" por aparelho (desligado por padrão, flag bcbr_offline='1').
+// Ligar registra o service worker (sw.js), baixa app + Notas (índice + páginas + imagens) + questões, e mantém atualizado em segundo plano.
+// Desligar pede confirmação, desregistra o SW e apaga os caches dele, preservando progresso, IndexedDB de dados e chaves.
+const OF={prog:'',baixando:false,tamEst:null,tamUso:null,ultFundo:0},OF_LS='bcbr_offline',OF_FLAG='bcbr_baixou';
+const ofAtivo=()=>{try{return localStorage.getItem(OF_LS)==='1'}catch(e){return false}};
+const ofMB=b=>(Math.max(0,b)/1048576).toFixed(1).replace('.',',')+' MB';
+const OF_ICO_DOWN='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+const OF_ICO_LOAD='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke-dasharray="40" stroke-dashoffset="12"/></svg>';
+const OF_ICO_OK='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>';
 function ofPendentes(){
   let n=0;
   try{if(typeof ntTemPendentes==='function'&&ntTemPendentes())n++;if(SM.sujo)n++}catch(e){}
-  try{n+=dirty.size+(estDirty?1:0)}catch(e){}   // progresso das questões (app): semanas e estado ainda não enviados
+  try{n+=dirty.size+(estDirty?1:0)}catch(e){}
   return n;
 }
 function ofTexto(){
@@ -4622,25 +4741,142 @@ function ofPinta(){
   if(!el){el=document.createElement('div');el.id='bcbr_off';el.className='bcbr-off';el.setAttribute('role','status');document.body.appendChild(el)}
   if(el.textContent!==t)el.textContent=t;
 }
-// Nomes das imagens das notas e páginas (./img/nota-….jpg) para entrarem no "baixar tudo".
+function ofPintaBtn(){
+  const b=document.getElementById('of_btn');if(!b)return;
+  const on=ofAtivo(),est=OF.baixando?'baixando':on?'baixado':'off';
+  b.dataset.estado=est;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));
+  b.setAttribute('aria-label',est==='baixado'?'Offline neste PC (clique para remover)':est==='baixando'?'Baixando para offline…':'Baixar offline');
+  const ico=est==='baixado'?OF_ICO_OK:est==='baixando'?OF_ICO_LOAD:OF_ICO_DOWN;
+  if(b.innerHTML!==ico)b.innerHTML=ico;
+  b.title=est==='baixando'?('Baixando offline'+(OF.prog?' · '+OF.prog:'…')):on?('Offline neste PC · '+(OF.tamUso!=null?ofMB(OF.tamUso):'calculando…')):('Baixar offline · '+(OF.tamEst!=null?'~'+ofMB(OF.tamEst):'calculando…'));
+}
+const ofPrazo=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>null),new Promise(r=>setTimeout(()=>r(null),ms))]);
+// Soma os bytes guardados nos caches do Service Worker.
+async function ofSomaCaches(){
+  if(typeof caches==='undefined')return 0;
+  let tot=0;
+  try{
+    for(const k of await ofPrazo(caches.keys(),2000)||[]){
+      const c=await ofPrazo(caches.open(k),1500);if(!c)continue;
+      const reqs=await ofPrazo(c.keys(),1500)||[];
+      for(const req of reqs){
+        try{const r=await c.match(req);if(!r)continue;const cl=+r.headers.get('content-length');tot+=Number.isFinite(cl)&&cl>0?cl:(await r.clone().arrayBuffer()).byteLength}catch(e){}
+      }
+    }
+  }catch(e){}
+  return tot;
+}
+async function ofCalculaTamanho(){
+  if(ofAtivo()){
+    let est=0;
+    try{if(navigator.storage?.estimate){const e=await ofPrazo(navigator.storage.estimate(),2000);if(e&&Number.isFinite(e.usage))est=e.usage}}catch(e){}
+    const cs=await ofPrazo(ofSomaCaches(),3000)||0;
+    OF.tamUso=Math.max(est,cs);
+    ofPintaBtn();return OF.tamUso;
+  }
+  if(typeof QUESTOES==='undefined'){OF.tamEst=null;ofPintaBtn();return null}
+  let appBytes=1500000;
+  try{
+    const ent=performance.getEntriesByType?.('resource')||[];
+    const soma=ent.reduce((a,r)=>a+(r.decodedBodySize||r.encodedBodySize||0),0);
+    if(soma>100000)appBytes=soma+(document.documentElement?.outerHTML?.length||0);
+  }catch(e){}
+  let qBytes=(QUESTOES?.length||0)*1800;
+  try{const q=await window.BCBR?.kvGet?.('f:questoes.json');if(q?.txt?.length)qBytes=q.txt.length}catch(e){}
+  const imgsQ=new Set((QUESTOES||[]).flatMap(q=>[...(q.imgs||[]),...(q.imgsCom||[])])).size;
+  let ntPagBytes=0,ntImgs=new Set();
+  try{
+    const metas=typeof SyncNotas?.paginasMeta==='function'?SyncNotas.paginasMeta():[];
+    const ab=typeof SyncNotas?.estado==='function'?(SyncNotas.estado().abertas||{}):{};
+    for(const m of metas){
+      const p=ab[m.id];
+      if(p?.doc){const s=JSON.stringify(p.doc);ntPagBytes+=s.length;for(const x of s.matchAll(/\.\/img\/([\w.-]+)/g))ntImgs.add(x[1])}
+      else ntPagBytes+=8000;
+    }
+  }catch(e){}
+  OF.tamEst=appBytes+qBytes+ntPagBytes+(imgsQ+ntImgs.size)*45000;
+  ofPintaBtn();return OF.tamEst;
+}
 function ofImagensNotas(){
   const s=JSON.stringify(SyncNotas.estado().abertas),out=new Set();
   for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))out.add(m[1]);
   return [...out];
 }
-async function ofBaixaTudo(){
+async function ofBaixaTudo(silencioso=false){
   if(OF.baixando||!window.BCBR?.baixarTudo||navigator.onLine===false)return;
-  OF.baixando=true;
-  try{await BCBR.baixarTudo((i,t)=>{OF.prog=`${i}/${t}`;ofPinta()},ofImagensNotas());try{localStorage.setItem(OF_FLAG,'1')}catch(e){}}
-  catch(e){}finally{OF.baixando=false;OF.prog='';ofPinta()}
+  OF.baixando=true;if(!silencioso)ofPintaBtn();
+  try{
+    await ofPrazo(BCBR.carregarDados?.(true),5000);
+    let imgsNotas=[];
+    if(typeof SyncNotas?.baixarTodas==='function'){
+      const r=await ofPrazo(SyncNotas.baixarTodas((i,t)=>{if(!silencioso){OF.prog=`notas ${i}/${t}`;ofPinta();ofPintaBtn()}}),15000);
+      imgsNotas=r?.imagens||[];
+    }else imgsNotas=ofImagensNotas();
+    await ofPrazo(BCBR.baixarTudo((i,t)=>{if(!silencioso&&t){OF.prog=`${i}/${t}`;ofPinta();ofPintaBtn()}},imgsNotas),20000);
+    try{localStorage.setItem(OF_FLAG,'1')}catch(e){}
+  }catch(e){}finally{OF.baixando=false;OF.prog='';ofPinta();await ofCalculaTamanho()}
 }
+async function ofLigar(){
+  if(OF.baixando)return;
+  OF.baixando=true;OF.prog='';ofPintaBtn();ofPinta();
+  try{
+    try{localStorage.setItem(OF_LS,'1')}catch(e){}
+    if('serviceWorker' in navigator){
+      let reg=await ofPrazo(navigator.serviceWorker.getRegistration(),2000);
+      if(!reg)reg=await ofPrazo(navigator.serviceWorker.register('./sw.js'),4000);
+      await ofPrazo(BCBR?.passarChaveSW?.(),2000);
+      await ofPrazo(navigator.serviceWorker.ready,4000);
+      try{
+        const v='bcbr-'+(window.BCBR_VERSAO||'1'),c=await ofPrazo(caches.open(v),2000);
+        if(c){
+          const urls=['./','./index.html','./shim.js','./app.js','./vendor/tiptap.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png','./icon-mask.png','./apple-touch-icon.png'];
+          await ofPrazo(Promise.all(urls.map(async u=>{if(!(await c.match(u)))try{const r=await fetch(u,{cache:'no-cache',signal:AbortSignal.timeout?.(4000)});if(r.ok)await c.put(u,r)}catch(e){}})),5000);
+        }
+      }catch(e){}
+    }
+    OF.baixando=false;
+    await ofBaixaTudo(false);
+  }finally{
+    OF.baixando=false;OF.prog='';ofPintaBtn();ofPinta();
+  }
+}
+async function ofDesligar(){
+  if(OF.baixando)return;
+  if(!confirm('Remover a cópia offline deste computador?'))return;
+  try{localStorage.removeItem(OF_LS);localStorage.removeItem(OF_FLAG)}catch(e){}
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+  }catch(e){}
+  try{
+    if(typeof caches!=='undefined'){
+      const ks=await caches.keys();
+      await Promise.all(ks.filter(k=>k.startsWith('bcbr-')).map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  OF.tamUso=null;await ofCalculaTamanho();ofPintaBtn();ofPinta();
+}
+function ofAlterna(){return ofAtivo()?ofDesligar():ofLigar()}
+async function ofAtualizaFundo(){
+  if(!ofAtivo()||OF.baixando||navigator.onLine===false)return;
+  const ag=Date.now();if(ag-OF.ultFundo<120000)return;OF.ultFundo=ag;
+  try{
+    if('serviceWorker' in navigator){const reg=await navigator.serviceWorker.getRegistration();await reg?.update?.().catch(()=>{})}
+    await ofBaixaTudo(true);
+  }catch(e){}
+}
+window.bcbrOfflineAtualiza=ofAtualizaFundo;
 window.addEventListener('online',ofPinta);window.addEventListener('offline',ofPinta);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&ofAtivo())ofAtualizaFundo()});
 setInterval(ofPinta,2000);
-// Primeira abertura neste aparelho: baixa tudo de uma vez (em segundo plano, fora de dados móveis/economia de dados); depois o service worker só busca o que for novo.
 setTimeout(()=>{
-  let c=null;try{c=navigator.connection}catch(e){}
-  if(!localStorage.getItem(OF_FLAG)&&!(c&&(c.saveData||c.type==='cellular')))ofBaixaTudo();
-},4000);
+  ofPintaBtn();ofCalculaTamanho();
+  const bt=document.getElementById('of_btn');
+  if(bt){bt.addEventListener('mouseenter',()=>ofCalculaTamanho());bt.addEventListener('focus',()=>ofCalculaTamanho())}
+  if(ofAtivo())ofAtualizaFundo();
+},1000);
 
 
 // Tags PersonalRad: bloco rotulado por nível (quiz após responder; Banco com a questão aberta); nunca entram na classificação ou nas contagens.

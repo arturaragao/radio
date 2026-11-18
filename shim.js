@@ -5,8 +5,9 @@
 // - Imagens: o service worker (sw.js) serve ./img/<arquivo> lendo do repo com a chave.
 (function () {
   const REPO = "arturaragao/banco-cbr-app", API = "https://api.github.com";
-  const LS = { tk: "bcbr_gh_token", gm: "bcbr_gemini_key", gmModelo: "bcbr_gemini_modelo" };
+  const LS = { tk: "bcbr_gh_token", gm: "bcbr_gemini_key", gmModelo: "bcbr_gemini_modelo", off: "bcbr_offline" };
   const tok = () => localStorage.getItem(LS.tk) || "";
+  const offlineAtivo = () => { try { return localStorage.getItem(LS.off) === "1"; } catch (e) { return false; } };
   window.BCBR = { REPO };
   let configAberta = false, carregamentoPendente = false, recusada = "", aguardando401 = "";
   const aba = Math.random().toString(36).slice(2);
@@ -233,7 +234,12 @@
     const fs = [...new Set([...(window.QUESTOES || []).flatMap((q) => [...q.imgs, ...q.imgsCom]).map((u) => u.slice(3)), ...extras])];
     let n = 0;
     for (let i = 0; i < fs.length; i += 6) {
-      await Promise.all(fs.slice(i, i + 6).map((f) => fetch("./img/" + encodeURIComponent(f)).catch(() => {})));
+      await Promise.all(fs.slice(i, i + 6).map(async (f) => {
+        try {
+          const r = await fetch("./img/" + encodeURIComponent(f));
+          if (!r.ok) await imgDireto(f);
+        } catch (e) { await imgDireto(f).catch(() => {}); }
+      }));
       n = Math.min(fs.length, i + 6); aoAndar && aoAndar(n, fs.length);
     }
     return fs.length;
@@ -249,7 +255,9 @@
       const r = await api(`/repos/${REPO}/contents/imagens/${encodeURIComponent(nome)}`, { accept: "raw" });
       if (!r.ok) throw new Error("img " + r.status);
       const b = await r.blob();
-      try { const c = await caches.open("bcbr-img"); await c.put("./img/" + encodeURIComponent(nome), new Response(b.slice(0), { headers: { "Content-Type": b.type || "image/jpeg" } })); } catch (e) {}
+      if (offlineAtivo()) {
+        try { const c = await caches.open("bcbr-img"); await c.put("./img/" + encodeURIComponent(nome), new Response(b.slice(0), { headers: { "Content-Type": b.type || "image/jpeg" } })); } catch (e) {}
+      }
       return URL.createObjectURL(b);
     })();
     imgCache.set(nome, p); p.then((u) => imgOk.set(nome, u)).catch(() => imgCache.delete(nome)); return p;
@@ -267,7 +275,7 @@
     const m = String(el.getAttribute("src") || "").match(/(?:^|\/)img\/([^/?#]+)$/);
     if (m && !imgOk.has(decodeURIComponent(m[1]))) imgDireto(decodeURIComponent(m[1])).catch(() => {});
   }, true);
-  window.BCBR.imgDireto = imgDireto;
+  Object.assign(window.BCBR, { imgDireto, passarChaveSW, carregarDados, kvGet });
 
   // ---------- aviso "versão nova / questões novas" (o app abre na hora com a cópia do aparelho e se atualiza por trás) ----------
   function aviso(txt) {
@@ -324,7 +332,7 @@
   // ---------- início ----------
   async function iniciar() {
     await recuperarChave();
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").then(passarChaveSW).catch(() => {});   // não espera
+    if (offlineAtivo() && "serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").then(passarChaveSW).catch(() => {});   // só registra quando o modo offline está ligado neste aparelho
     if (!tok()) return telaConfig();
     document.getElementById("app").innerHTML = `<div class="card"><p class="mut">Carregando o banco…</p></div>`;
     let ok = false;

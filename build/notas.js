@@ -32,9 +32,11 @@ function ntDocumento(blocos){return {type:'doc',content:(blocos||[]).length?bloc
 
 const ntLsLista=k=>{try{const b=JSON.parse(localStorage.getItem(k)||'null');return Array.isArray(b)?b:null}catch(e){return null}};
 const ntPaginas=()=>{const est=SyncNotas.estado(),ab=est.abertas||{};return est.paginas.map(p=>({...ab[p.id],...p,...(NT.pagina===p.id&&NT.paginaDados?NT.paginaDados:{})}))};
+const ntPaginasMeta=()=>(SyncNotas.paginasMeta?SyncNotas.paginasMeta():ntPaginas()).map(p=>NT.pagina===p.id&&NT.paginaDados?{...p,titulo:NT.paginaDados.titulo,pasta:NT.paginaDados.pasta,ordem:NT.paginaDados.ordem,fixada:NT.paginaDados.fixada}:p);
 const ntPastas=()=>Array.isArray(SM.d?.notasPaginas?.pastas)?SM.d.notasPaginas.pastas:[];
 const ntPastaDa=p=>ntPastas().some(f=>f.id===p.pasta)?p.pasta:'';
 const pgAchar=id=>ntPaginas().find(p=>p.id===id);
+const pgAcharMeta=id=>ntPaginasMeta().find(p=>p.id===id);
 const ntPgOrdem=(a,b)=>(Number(a.ordem)||0)-(Number(b.ordem)||0)||String(a.id).localeCompare(String(b.id));
 
 // Texto antigo (1.37/1.38) -> blocos do editor: "- "/"• " listas, "> " toggles (recuo = dentro), "[img:arquivo]" imagem, resto parágrafos.
@@ -70,10 +72,13 @@ function ntNotaParaBloco(n){
     {type:'detailsContent',content:cont.length?cont:[ntPar('')]}]}};
 }
 function ntAntes(){if(NT.ed&&NT.sujo)ntSalvaDoc();ntTituloSalva()}
-function ntTemPendentes(){return SyncNotas.estado().pendentes>0}
+function ntTemPendentes(){return (SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado()).pendentes>0}
 function ntSync(){return SyncNotas.enviar()}
 function ntSalvaDoc(){
-  clearTimeout(NT.timer);if(!NT.ed||!NT.paginaDados)return;
+  clearTimeout(NT.timer);NT.timer=0;
+  if(NT.idleId&&typeof cancelIdleCallback==='function'){cancelIdleCallback(NT.idleId);NT.idleId=0}
+  if(!NT.ed||!NT.paginaDados)return;
+  if(NT._progFlush)NT._progFlush();
   const ant=NT.shown||[],blocos=ntBlocos(NT.ed.getJSON(),ant);NT.sujo=false;
   if(ntIgual(blocos,ant))return;
   ntLembSincroniza(ant,blocos);
@@ -86,8 +91,10 @@ function ntTituloSalva(){
 }
 
 // ===== Estado aberto/fechado dos toggles: por aparelho (localStorage), fora do documento =====
-function ntAbertosLer(){try{return new Set(JSON.parse(localStorage.getItem(NT_ABERTOS)||'[]'))}catch(e){return new Set()}}
-function ntAbertosGrava(s){try{localStorage.setItem(NT_ABERTOS,JSON.stringify([...s]))}catch(e){}}
+let ntAbertosCache=null;
+function ntAbertosLer(){if(ntAbertosCache)return ntAbertosCache;try{return ntAbertosCache=new Set(JSON.parse(localStorage.getItem(NT_ABERTOS)||'[]'))}catch(e){return ntAbertosCache=new Set()}}
+function ntAbertosGrava(s){ntAbertosCache=s;try{localStorage.setItem(NT_ABERTOS,JSON.stringify([...s]))}catch(e){}}
+if(typeof window!=='undefined')window.addEventListener('storage',e=>{if(e.key===NT_ABERTOS)ntAbertosCache=null});
 function ntAberto(id){return !!id&&ntAbertosLer().has(id)}
 function ntAbertoSalva(id,aberto){if(!id)return;const s=ntAbertosLer();aberto?s.add(id):s.delete(id);ntAbertosGrava(s)}
 function ntPoeAberto(dom,aberto){dom.classList.toggle('is-open',aberto);dom.querySelector(':scope>button')?.setAttribute('aria-expanded',String(aberto))}
@@ -279,7 +286,7 @@ function ntTabelaBarra(c){
     const r=dom.getBoundingClientRect(),rc=c.el.getBoundingClientRect();
     b.hidden=false;b.style.top=Math.max(0,r.top-rc.top-b.offsetHeight-4)+'px';b.style.left=Math.max(0,Math.min(r.left-rc.left,rc.width-b.offsetWidth))+'px';
   }
-  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(pinta,ev==='blur'?150:0));
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>{clearTimeout(c._tabT);c._tabT=setTimeout(pinta,ev==='blur'?150:0)});
 }
 
 // ===== Envio de imagem: reduz (1600 px, JPEG 0,82), grava em imagens/nota-<id>.jpg no repositório privado =====
@@ -380,7 +387,7 @@ function ntImagem(){
     parseHTML(){return [{tag:'img[src^="./img/"]'},{tag:'img[data-nt-src^="./img/"]'}]},   // imagens de fora (Word, páginas) não entram; a cópia 1.56 traz data URL + data-nt-src
     addAttributes(){return {...this.parent?.(),src:{default:null,parseHTML:el=>el.getAttribute('data-nt-src')||el.getAttribute('src')},largura:{default:null,parseHTML:el=>el.getAttribute('data-largura')||null,renderHTML:a=>a.largura?{'data-largura':a.largura}:{}}}},
     addNodeView(){return ({node})=>{
-      const img=document.createElement('img');img.className='nt-img';img.alt='Imagem da nota';img.draggable=false;
+      const img=document.createElement('img');img.className='nt-img';img.alt='Imagem da nota';img.draggable=false;img.loading='lazy';img.decoding='async';
       const pinta=n=>{const nome=ntNomeImg(n.attrs.src);img.src=(nome&&window.BCBR?.imgPronta?.(nome))||n.attrs.src||'';img.style.width=n.attrs.largura?n.attrs.largura+'%':''};
       pinta(node);let atual=node;
       return {dom:img,ignoreMutation:()=>true,update(n){if(n.type!==atual.type)return false;if(n.attrs.src!==atual.attrs.src||n.attrs.largura!==atual.attrs.largura)pinta(n);atual=n;return true}};
@@ -421,11 +428,12 @@ function ntIds(){
       if(!trs.some(t=>t.docChanged))return null;
       const vistos=new Set(),tr=depois.tr;let mudou=false;
       depois.doc.descendants((n,pos,pai)=>{
-        if(!NT_COM_ID.includes(n.type.name))return;
+        if(!NT_COM_ID.includes(n.type.name))return !n.isTextblock&&n.type.name!=='table';
         const precisa=pai===depois.doc||n.type.name==='details';let id=n.attrs.id;
         if(id&&vistos.has(id))id=null;
         if(!id&&precisa){id=ntNovoId();tr.setNodeMarkup(pos,undefined,{...n.attrs,id});mudou=true;if(n.type.name==='details')ntAbertoSalva(id,true)}
         if(id)vistos.add(id);
+        if(n.isTextblock||n.type.name==='table')return false;
       });
       return mudou?tr.setMeta('addToHistory',false):null}})]},
   });
@@ -438,13 +446,15 @@ function ntRecuoExt(){
   return TT.Extension.create({name:'recuoBloco',
     addGlobalAttributes(){return [{types:NT_COM_ID,attributes:{indent:{default:null,keepOnSplit:true,parseHTML:el=>{const n=parseInt(el.getAttribute('data-indent'),10);return n>0?Math.min(n,8):null},renderHTML:a=>a.indent?{'data-indent':a.indent}:{}}}}]},
     addProseMirrorPlugins(){
-      const {Plugin,PluginKey}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view;
-      return [new Plugin({key:new PluginKey('recuoDeco'),props:{decorations(s){
-        const d=[];s.doc.descendants((n,pos,pai)=>{
-          if(n.isText)return false;
+      const {Plugin,PluginKey}=TT.pm.state,{Decoration,DecorationSet}=TT.pm.view,K=new PluginKey('recuoDeco');
+      const calc=doc=>{
+        const d=[];doc.descendants((n,pos,pai)=>{
+          if(n.isText||n.isTextblock||n.type.name==='table'){if(n.attrs?.indent>0&&pai&&NT_PAIS.has(pai.type.name))d.push(Decoration.node(pos,pos+n.nodeSize,{class:'nt-rec',style:'--rec:'+n.attrs.indent}));return false}
           if(n.attrs?.indent>0&&pai&&NT_PAIS.has(pai.type.name))d.push(Decoration.node(pos,pos+n.nodeSize,{class:'nt-rec',style:'--rec:'+n.attrs.indent}));
         });
-        return d.length?DecorationSet.create(s.doc,d):null}}}),
+        return d.length?DecorationSet.create(doc,d):DecorationSet.empty;
+      };
+      return [new Plugin({key:K,state:{init:(_,s)=>calc(s.doc),apply(tr,set,_,s){return tr.docChanged?calc(s.doc):set}},props:{decorations(s){return K.getState(s)}}}),
       new Plugin({key:new PluginKey('recuoNorm'),appendTransaction(trs,antes,depois){
         if(!trs.some(t=>t.docChanged))return null;
         const tr=depois.tr;let mudou=false;
@@ -456,7 +466,7 @@ function ntRecuoExt(){
           });
         };
         norm(depois.doc,0);
-        depois.doc.descendants((pai,pp)=>{if(NT_PAIS.has(pai.type.name))norm(pai,pp+1)});
+        depois.doc.descendants((pai,pp)=>{if(pai.isTextblock||pai.type.name==='table')return false;if(NT_PAIS.has(pai.type.name))norm(pai,pp+1)});
         return mudou?tr.setMeta('addToHistory',false):null}})];
     },
   });
@@ -648,7 +658,8 @@ function ntBarraPinta(c){
   for(const bt of b.querySelectorAll('.nt-barra-l [data-m]')){
     const m=bt.dataset.m;let on=false;
     try{on=m==='cor'?!!(e.getAttributes('textStyle').color||e.getAttributes('textStyle').backgroundColor):NT_BARRA_ATIVO[m]?e.isActive(NT_BARRA_ATIVO[m]):false}catch(x){}
-    bt.classList.toggle('on',on);if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist')bt.setAttribute('aria-pressed',String(on));
+    if(bt.classList.contains('on')!==on)bt.classList.toggle('on',on);
+    if(m!=='atalhos'&&m!=='frase'&&m!=='frases'&&m!=='hist'&&bt.getAttribute('aria-pressed')!==String(on))bt.setAttribute('aria-pressed',String(on));
   }
 }
 
@@ -721,13 +732,15 @@ function ntExtensoes(c){
 function ntValidos(blocos){
   const bons=[],ruins=[];
   if(!Array.isArray(blocos))return {bons,ruins,corrompido:true};
-  let t;
-  try{t=new TT.Editor({extensions:ntExtensoes(NT)});
-    for(const b of blocos){try{if(!b||typeof b.id!=='string')throw 0;t.schema.nodeFromJSON(b.conteudo).check();bons.push(b)}catch(e){ruins.push(b)}}
-  }catch(e){return {bons:[],ruins:blocos,corrompido:true}}finally{try{t?.destroy()}catch(e){}}
+  try{
+    let sch=NT.ed?.state?.schema||NT._schema;
+    if(!sch){const t=new TT.Editor({extensions:ntExtensoes(NT)});sch=NT._schema=t.schema;t.destroy()}
+    for(const b of blocos){try{if(!b||typeof b.id!=='string')throw 0;sch.nodeFromJSON(b.conteudo).check();bons.push(b)}catch(e){ruins.push(b)}}
+  }catch(e){return {bons:[],ruins:blocos,corrompido:true}}
   return {bons,ruins,corrompido:false};
 }
-// Cria o editor do contexto `c` (página principal ou painel) com os `blocos`; `aoMudar` roda ~1 s depois da última digitação.
+const NT_PROG_LIM=100,NT_PROG_LOTE=60;
+// Cria o editor do contexto `c` (página principal ou painel) com os `blocos`; `aoMudar` roda ~800 ms após parar de digitar (fora do caminho da tecla).
 function ntEditor(c,blocos,aoMudar){
   c.el=document.createElement('div');c.el.className='nt-ed';
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
@@ -749,16 +762,61 @@ function ntEditor(c,blocos,aoMudar){
         const arq=!moved&&[...(e.dataTransfer?.files||[])].find(f=>/^image\//.test(f.type));if(!arq)return false;
         e.preventDefault();ntInsereImagem(arq,v.posAtCoords({left:e.clientX,top:e.clientY})?.pos,c);return true},
       handleClick:(v,pos,e)=>{const lb=e.target.closest?.('.nt-lemb');if(lb){ntLembreteEdita(c,lb,v.posAtDOM(lb,0));return true}if((e.ctrlKey||e.metaKey)&&e.target.closest?.('a[href]')){window.open(e.target.closest('a').href,'_blank','noopener');return true}return false}}});
-  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;aoMudar()});
+  const agenda=()=>{
+    clearTimeout(c.timer);
+    if(c.idleId&&typeof cancelIdleCallback==='function')cancelIdleCallback(c.idleId);
+    c.idleId=0;
+    c.timer=setTimeout(()=>{
+      c.timer=0;
+      const roda=()=>{c.idleId=0;if(c.ed&&c.sujo)aoMudar()};
+      if(typeof requestIdleCallback==='function')c.idleId=requestIdleCallback(roda,{timeout:500});
+      else roda();
+    },800);
+  };
+  c.ed.on('update',({transaction:t})=>{if(t.getMeta('ntRemoto'))return;ntSoltaAltura(c);c.sujo=true;agenda()});
   c.ed.on('transaction',({transaction:t})=>{if(c.posImg!=null)c.posImg=t.mapping.map(c.posImg);if(c.buscaEl)ntBuscaPinta(c)});
-  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>setTimeout(()=>{if(!c.ed)return;ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0));
+  for(const ev of ['selectionUpdate','update','focus','blur'])c.ed.on(ev,()=>{
+    clearTimeout(c._barraT);
+    c._barraT=setTimeout(()=>{if(!c.ed)return;ntBarraPinta(c);if(ev==='selectionUpdate'&&matchMedia('(pointer:coarse)').matches)c.alcaMostra?.(ntBlocoEm(c.ed.state.doc,c.ed.state.selection.from))},ev==='blur'?150:0);
+  });
   c.el.addEventListener('keydown',e=>{if(e.key==='Tab')e.stopPropagation()});   // depois do ProseMirror: Tab não troca de aba
   ntAlca(c);ntTabelaBarra(c);
+}
+function ntProgramaResto(c,resto,ultIniId){
+  const pid=(c._progId=(c._progId||0)+1);
+  c._progResto=resto.slice();
+  let primeiro=true;
+  const insere=lote=>{
+    if(!c.ed||!lote.length)return;
+    const sch=c.ed.state.schema,nos=lote.map(b=>sch.nodeFromJSON(b.conteudo));
+    const tr=c.ed.state.tr,doc=tr.doc,fim=doc.content.size,ult=doc.lastChild;
+    if(primeiro&&ult&&ult.type.name==='paragraph'&&!ult.content.size&&ult.attrs?.id!==ultIniId)tr.replaceWith(fim-ult.nodeSize,fim,nos);
+    else tr.insert(fim,nos);
+    primeiro=false;
+    tr.setMeta('addToHistory',false).setMeta('ntRemoto',true);
+    c.ed.view.dispatch(tr);
+    c.shown=(c.shown||[]).concat(lote);
+  };
+  c._progFlush=()=>{
+    c._progId++;
+    if(c._progResto?.length)insere(c._progResto.splice(0));
+    c._progFlush=null;
+  };
+  const step=()=>{
+    if(!c.ed||c._progId!==pid||!c._progResto?.length){c._progFlush=null;return}
+    insere(c._progResto.splice(0,NT_PROG_LOTE));
+    if(c._progResto.length)(typeof requestAnimationFrame==='function'?requestAnimationFrame:setTimeout)(step,0);
+    else c._progFlush=null;
+  };
+  (typeof requestAnimationFrame==='function'?requestAnimationFrame:setTimeout)(step,0);
 }
 function ntCria(){
   const lista=NT.paginaDados?.doc?.blocos,v=ntValidos(lista);
   if(v.corrompido||v.ruins.length){ntFalha();return false}
-  NT.shown=lista;ntEditor(NT,v.bons,ntSalvaDoc);ntBarra(NT);ntBarraPinta(NT);return true;
+  const prog=v.bons.length>NT_PROG_LIM,ini=prog?v.bons.slice(0,NT_PROG_LOTE):v.bons;
+  NT.shown=ini.slice();ntEditor(NT,ini,ntSalvaDoc);ntBarra(NT);ntBarraPinta(NT);
+  if(prog)ntProgramaResto(NT,v.bons.slice(NT_PROG_LOTE),ini.at(-1)?.id);
+  return true;
 }
 function ntFalha(){
   const raiz=document.getElementById('nt_raiz');if(raiz)raiz.innerHTML='<p>Não foi possível abrir este documento. A versão salva foi preservada. Use Versões no menu da página para recuperar.</p>';
@@ -788,6 +846,7 @@ async function ntSincroniza(){
   const id=NT.pagina;
   try{const p=await SyncNotas.abrirPagina(id);if(NT.pagina!==id||NT.sujo)return;
     NT.paginaDados=p;
+    if(NT._progFlush)NT._progFlush();
     if(NT.ed&&!ntIgual(p.doc.blocos,NT.shown)){const v=ntValidos(p.doc.blocos);if(v.ruins.length||v.corrompido)return;ntAplicaNoEditor(NT,p.doc.blocos);NT.shown=p.doc.blocos}
     const titulo=document.getElementById('nt_titulo');if(titulo&&document.activeElement!==titulo)titulo.value=p.titulo||'';
   }catch(e){NT.erro=e.message}
@@ -920,6 +979,7 @@ function ntPaginaMove(id,ref,depois,pasta){
 const NT_PREL='preliminares';
 function ntPrelAbre(){
   if(!SM.d)return;ntAntes();NT.visita=(NT.visita||0)+1;
+  NT._progId=(NT._progId||0)+1;NT._progResto=null;NT._progFlush=null;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;NT.pagina=null;NT.paginaDados=null;NT.erro='';NT.carregando=false;NT.sujo=false;NT.latMov=false;NT.prel=true;
   document.title='Preliminares';
   try{localStorage.setItem('bcbr_ultima_pagina',NT_PREL)}catch(e){}
@@ -931,13 +991,26 @@ function ntPrelClique(e){if(e.ctrlKey||e.metaKey||e.shiftKey||e.button){ntAntes(
 async function ntPainelAbre(id){
   if(id===NT_PREL){ntPrelAbre();return}
   if(!SM.d)return;NT.prel=false;ntAntes();const visita=(NT.visita||0)+1;NT.visita=visita;
+  NT._progId=(NT._progId||0)+1;NT._progResto=null;NT._progFlush=null;
   NT.ed?.destroy();NT.ed=null;NT.el=null;NT.barra=null;NT.shown=null;
   NT.pagina=id;NT.paginaDados=null;NT.erro='';NT.carregando=true;NT.sujo=false;NT.latMov=false;
-  const conhecido=pgAchar(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
+  ntAbertosCache=null;
+  const conhecido=pgAcharMeta(id);if(conhecido)document.title=conhecido.titulo||'Sem título';
   try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
   if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   if(typeof go==='function'&&tela!=='notas')go('notas');else if(typeof render==='function')render();
   try{
+    await SyncNotas.listarPaginasCache?.();
+    const doCache=await SyncNotas.abrirPaginaCache?.(id);
+    if(NT.visita!==visita)return;
+    if(doCache){
+      NT.paginaDados=doCache;NT.carregando=false;document.title=doCache.titulo||'Sem título';
+      try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
+      if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
+      render();await ntMonta();
+      (async()=>{try{await smCarga;await SyncNotas.listarPaginas();if(NT.visita!==visita||NT.pagina!==id)return;await ntSincroniza()}catch(e){}})();
+      return;
+    }
     await smCarga;
     await SyncNotas.listarPaginas();
     let p;
@@ -955,7 +1028,7 @@ async function ntPainelAbre(id){
     try{localStorage.setItem('bcbr_ultima_pagina',id)}catch(e){}
     if(typeof history!=='undefined')history.replaceState(null,'',ntAbaUrl(id));
   }catch(e){if(NT.visita===visita)NT.erro=e.message}
-  finally{if(NT.visita===visita){NT.carregando=false;render();await ntMonta()}}
+  finally{if(NT.visita===visita&&NT.carregando){NT.carregando=false;render();await ntMonta()}}
 }
 const NTA=(()=>{try{const q=new URLSearchParams(location.search);return q.get('pagina')||(q.get('aba')==='notas'?'notas':'')}catch(e){return ''}})();
 const ntAbaUrl=id=>new URL('./?pagina='+encodeURIComponent(id),location.href).href;
@@ -1036,7 +1109,7 @@ document.addEventListener('contextmenu',e=>{const it=e.target.closest?.('#nt_lat
 document.addEventListener('click',e=>{const al=e.target.closest?.('.nt-pg-it .nt-pg-alca');if(!al||ntEngole)return;e.preventDefault();const r=al.getBoundingClientRect();ntPaginaMenu(al.closest('.nt-pg-it').dataset.pg,r.left,r.bottom)});
 document.addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key)||!e.target.matches?.('.nt-pg-it .nt-pg-alca'))return;e.preventDefault();e.target.click()});
 function ntLateralHtml(){
-  const l=ntPaginas().filter(p=>p.id!=='notas').sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
+  const l=ntPaginasMeta().filter(p=>p.id!=='notas').sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
   const item=p=>`<div class="nt-pg-it${NT.pagina===p.id?' on':''}" data-pg="${esc(p.id)}"><span class="nt-pg-alca" role="button" tabindex="0" title="Arrastar para mudar a ordem; clique para opções" aria-label="Opções da página">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(p.id))}" draggable="false" onclick="return ntPgClique(event,'${esc(p.id)}')">${esc(p.titulo||'Sem título')}</a><button type="button" class="nt-pg-mover" title="Mover para…" aria-label="Mover ${esc(p.titulo||'Sem título')} para…" onclick="ntPaginaMoverMenu('${esc(p.id)}')">↪</button><button type="button" class="nt-pg-aba" title="Abrir em nova aba" aria-label="Abrir ${esc(p.titulo||'Sem título')} em nova aba" onclick="ntAbaAbre('${esc(p.id)}')">↗</button><button type="button" class="nt-pg-pin${p.fixada?' on':''}" title="${p.fixada?'Desafixar':'Fixar'}" aria-label="${p.fixada?'Desafixar':'Fixar'} ${esc(p.titulo||'Sem título')}" onclick="ntPaginaFixa('${esc(p.id)}')">📌</button></div>`;
   const f=NT.pastaForm,form=id=>{
     if(!f||f.id!==id)return '';
@@ -1055,7 +1128,8 @@ function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
   const i=el.querySelector('.nt-pt-titulo'),foco=i&&document.activeElement===i,pos=foco?[i.selectionStart,i.selectionEnd]:null;
   if(i&&NT.pastaForm?.id===i.dataset.formPasta)NT.pastaForm.rascunho=i.value;
-  el.innerHTML=ntLateralHtml();if(foco){const novo=el.querySelector('.nt-pt-titulo');novo?.focus();novo?.setSelectionRange(...pos)}
+  const h=ntLateralHtml();if(!foco&&el._ultHtml===h)return;
+  el._ultHtml=h;el.innerHTML=h;if(foco){const novo=el.querySelector('.nt-pt-titulo');novo?.focus();novo?.setSelectionRange(...pos)}
 }
 // Arrastar (mouse: segurando o item e movendo; toque: pela alça ⋮⋮). O alvo é decidido pelo meio das linhas da mesma seção.
 let NTD=null,ntEngole=false;

@@ -49,6 +49,12 @@ function criarSyncNotas(o){
   }
   async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;return (await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)})).content.sha}
   const conflito=e=>e.status===409||e.status===422;
+  async function listarPaginasCache(){
+    if(indice.length)return clone(lista());
+    const c=await cacheLer('notas:indice');
+    if(Array.isArray(c)&&!indice.length){indice=c;indiceConhecido=true;mudou()}
+    return clone(lista());
+  }
   async function listarPaginas(){
     if(leitura)return leitura;
     leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
@@ -56,6 +62,13 @@ function criarSyncNotas(o){
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
+  async function abrirPaginaCache(id){
+    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    const atual=abertas.get(id);if(atual)return clone(atual);
+    const c=await cacheLer('notas:pagina:'+id);if(!c?.p)return null;
+    const p=e?{...c.p,...e.p}:c.p;if(p.origem===null)delete p.origem;
+    if(c.sha)shas.set(id,c.sha);tamanhos.set(id,textoDe(p.doc));abertas.set(id,clone(p));return clone(p);
+  }
   async function abrirPagina(id){
     chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
@@ -243,7 +256,26 @@ function criarSyncNotas(o){
       }
     }catch(e){erro=e.message}
   }
-  return {listarPaginas,abrirPagina,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
+  async function baixarTodas(aoAndar){
+    const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([\w.-]+)/g))imgs.add(m[1])};
+    let n=0;
+    for(const m of pgs){
+      try{
+        let p=abertas.get(m.id);
+        if(!p||!m.sha||shas.get(m.id)!==m.sha){
+          const c=await cacheLer('notas:pagina:'+m.id);
+          if(c?.p&&m.sha&&c.sha===m.sha){p=c.p;if(!abertas.has(m.id)){shas.set(m.id,c.sha);abertas.set(m.id,clone(p))}}
+          else p=await abrirPagina(m.id);
+        }
+        if(p?.doc)colhe(p.doc);
+      }catch(e){}
+      n++;aoAndar&&aoAndar(n,pgs.length);
+    }
+    return {paginas:pgs.length,imagens:[...imgs]};
+  }
+  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
+    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido}),
+    paginasMeta:()=>clone(lista()),
     estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};

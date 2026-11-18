@@ -55,12 +55,16 @@ test('corrigido: texto igual não ganha marcas; remoção no fim; escapa HTML da
   assert.equal(c('<p>Rim normal. Cisto</p>','<p>Rim normal.</p>'),'<p>Rim normal. <del>Cisto</del></p>');
   const x=c('<p>a &lt;b&gt; c</p>','<p>a c</p>');assert.match(x,/<del>&lt;b&gt;<\/del>/);assert.ok(!/<b>/.test(x));
 });
-test('lista: dia > categoria > exame > acesso, contagens, pendentes, ✓ nos lidos e acesso como título; par só entra no DOM quando carregado',()=>{
-  const c=ctx(),P=c.PRL;P.itens=IT;P.lidos={1001:'2026-11-10T10:00:00'};
+test('lista: dia > categoria > exame > acesso, contagens, pendentes, ✓ nos lidos e acesso como título; dias abertos por padrão e fechados lembrados',()=>{
+  const ls={};
+  const c=ctx({localStorage:{getItem:k=>ls[k]??null,setItem:(k,v)=>{ls[k]=String(v)},removeItem:k=>{delete ls[k]}}}),P=c.PRL;P.itens=IT;P.lidos={1001:'2026-11-10T10:00:00'};
   const h=c.prelListaHtml();
-  assert.match(h,/<summary><span>[^<]*11\/2026<\/span><span class="prl-pend">1 falta conferir<\/span><span class="prl-n">1<\/span>/);   // dias fechados: só o cabeçalho
-  assert.ok(!/1001/.test(h)&&!/Tomografia/.test(h));
-  P.estado['d|2026-11-10']=true;P.estado['c1|2026-11-10|Ultrassom']=true;P.estado['c2|2026-11-10|Ultrassom|Doppler arterial de MMII']=true;
+  assert.match(h,/<summary><span>[^<]*11\/2026<\/span><span class="prl-pend">1 falta conferir<\/span><span class="prl-n">1<\/span>/);   // dias abertos por padrão: categorias aparecem, exames/acessos não
+  assert.match(h,/Tomografia/);assert.ok(!/1001/.test(h)&&!/Doppler arterial/.test(h));
+  ls.bcbr_prl_fechados=JSON.stringify(['2026-11-11']);
+  const hFechado=c.prelListaHtml();
+  assert.ok(!/c1\|2026-11-11\|Tomografia/.test(hFechado));   // dia fechado manualmente continua fechado
+  P.estado['c1|2026-11-10|Ultrassom']=true;P.estado['c2|2026-11-10|Ultrassom|Doppler arterial de MMII']=true;
   const h2=c.prelListaHtml();
   assert.match(h2,/<span class="prl-ac"[^>]*>1001<\/span><span class="prl-meta">10\/11\/2026 · Chefe A\.<\/span><span class="prl-ok"/);
   assert.match(h2,/<input type="checkbox"[^>]*data-ac="1001"/);assert.ok(!/checked/.test(h2));
@@ -188,7 +192,7 @@ test('privacidade: o índice dos laudos não toca localStorage/IndexedDB (só o 
   const src=fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8');
   const i0=src.indexOf('function prelIndexa'),i1=src.indexOf('// ---- leitura no GitHub'),trecho=src.slice(i0,i1);
   assert.ok(!/localStorage|indexedDB|caches\.|sessionStorage/.test(trecho));
-  assert.deepEqual([...src.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m=>m[1]).sort(),["'bcbr_prl_modo'","PRL_LS","PRL_LS","PRL_LOCAL_LS"].sort());
+  assert.deepEqual([...src.matchAll(/localStorage\.setItem\(([^,]+),/g)].map(m=>m[1]).sort(),["'bcbr_prl_modo'","PRL_FECHADOS_LS","PRL_LS","PRL_LS","PRL_LOCAL_LS"].sort());
   // 1.55.0: o IndexedDB só existe na seção opt-in ("radio-laudos") e só grava com o interruptor ligado; nunca no cache do SW
   assert.ok(!/caches\.|sessionStorage/.test(src));
   const j0=src.indexOf('// ---- 1.55.0'),j1=src.indexOf('// ---- tela ----');

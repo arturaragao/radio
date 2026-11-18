@@ -472,7 +472,7 @@ function ntHistAbre(c=NT){
   const schema=ntSchema(),ser=schema&&TT.pm.model.DOMSerializer.fromSchema(schema);
   let fonte='pagina',pag=0,fim=false,ocupado=false,escolhida=null,visita=0;const itens=[];   // {sha,data,plano,p}
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);
-  const atual=()=>NT.pagina===id&&NT.ed?ntBlocos(NT.ed.getJSON(),NT.shown||[]):(pgAchar(id)?.doc?.blocos||[]);
+  const atual=()=>{if(NT.pagina===id&&NT.ed){NT._progFlush?.();return ntBlocos(NT.ed.getJSON(),NT.shown||[])}return pgAchar(id)?.doc?.blocos||[]};
   const render=b=>{const el=document.createElement('div');el.className='nt-ed nt-hist-bloco-c';
     try{el.appendChild(ser.serializeNode(schema.nodeFromJSON(b.conteudo)))}catch(e){el.textContent=ntHistTexto(b)}return el};
   const copiar=async(el,t)=>{

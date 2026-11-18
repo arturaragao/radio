@@ -13,6 +13,9 @@ const rdInline='<button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-l
 head=head.replace('<div class="hr">','<div class="hr">'+rdInline);
 head=head.replace('<div class="rd-topo">'+rdInline+'<button','<div class="rd-topo"><button');
 assert.equal((head.match(/id="rd_sync"/g)||[]).length,1);
+const ofBtn='<button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline \u00b7 calculando\u2026" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button>';
+head=head.replace('<button class="tg" id="tg"',ofBtn+'<button class="tg" id="tg"');
+assert.equal((head.match(/id="of_btn"/g)||[]).length,1);
 const troca=(a,b,n=1)=>{assert.equal(js.split(a).length-1,n,'troca: '+a.slice(0,80));js=js.split(a).join(b)};
 const expr=s=>{
   s=lerExpr(s);

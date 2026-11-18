@@ -2,7 +2,8 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.61.0"
+VERSAO = "1.62.0"
+# 1.62.0: Notas rápidas (debounce 800 ms, abertura do cache IndexedDB, render progressivo, lazy images); botão "Baixar offline" ao lado de sincronizado; Preliminares com dias abertos por padrão (lembra fechados)
 # 1.61.0: Flashcards — bloco persistente (sincronizado), painel superior igual ao de Questões, setas ←/→ e retomada nos resumos
 # 1.60.0: aba Questões abre no tema escuro e demais abas no tema claro por padrão (escolha manual em Config segue valendo)
 # 1.59.0: Notas — imagem sem barra flutuante; clique direito preserva a seleção e oferece copiar/recortar blocos
@@ -27,6 +28,10 @@ rd_inline = '<button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live
 head = head.replace('<div class="hr">', '<div class="hr">' + rd_inline, 1)
 head = head.replace('<div class="rd-topo">' + rd_inline + '<button', '<div class="rd-topo"><button', 1)
 assert head.count('id="rd_sync"') == 1
+# 1.62.0: botão "Baixar offline" ao lado do indicador "sincronizado"
+of_btn = '<button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline \u00b7 calculando\u2026" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button>'
+head = head.replace('<button class="tg" id="tg"', of_btn + '<button class="tg" id="tg"', 1)
+assert head.count('id="of_btn"') == 1
 
 def troca(a, b, n=1):
     global js

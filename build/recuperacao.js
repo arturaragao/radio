@@ -8,7 +8,7 @@ function rdGancho(acao,a){
   rdPinta();
 }
 function rdEstado(){
-  const s=SyncNotas.estado();
+  const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
   if(s.volatil)return 'Pendente — mantenha esta aba aberta';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Pendente — sem conexão';
   if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;

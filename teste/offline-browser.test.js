@@ -10,6 +10,8 @@ test('Offline 1.42: app abre do aparelho sem internet, enfileira e envia ao volt
   const {ev,call,ate,abre,reset,par,confirmado}=C;
   await call('Page.addScriptToEvaluateOnNewDocument',{source:"window.__tt=null;new MutationObserver(()=>{if(window.__tt===null&&document.querySelector('.sm-row[data-tid]'))window.__tt=performance.now()}).observe(document,{childList:true,subtree:true});"});
   await abre('tarefas');
+  await click('#of_btn');
+  await ate("localStorage.getItem('bcbr_offline')==='1'&&!OF.baixando",15000);
   await ate("!!navigator.serviceWorker.controller||false",1000).catch(()=>{});
   await ev("navigator.serviceWorker.ready.then(()=>1)");await espera(2500);   // instala e guarda o app
   const tempos=[];

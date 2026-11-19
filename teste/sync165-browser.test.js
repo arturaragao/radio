@@ -108,7 +108,7 @@ test('Radio 1.65.0: sincronização que nunca perde nada (navegador, GitHub simu
     })()`);
     assert.equal(stOff.cont, 2);
     assert.equal(stOff.syncCls, 'pend');
-    assert.match(stOff.syncTxt, /^2 alterações pendentes — salvas neste PC/);
+    assert.equal(stOff.syncTxt, '2 pendentes');
     assert.ok(stOff.idbIds.some((x) => x.startsWith('prog:')), 'questão salva no IndexedDB');
     assert.ok(stOff.notasIdb.length >= 1, 'nota salva no IndexedDB');
     assert.equal(stOff.beforeUnloadAvisou, true, 'beforeunload avisa quando há pendência');
@@ -125,7 +125,7 @@ test('Radio 1.65.0: sincronização que nunca perde nada (navegador, GitHub simu
       temResp:all.some(l=>l.q===Q[0].id&&!l.x)
     })`);
     assert.equal(aposReload.cont, 2, 'fila sobrevive ao recarregar');
-    assert.match(aposReload.syncTxt, /^2 alterações pendentes — salvas neste PC/);
+    assert.equal(aposReload.syncTxt, '2 pendentes');
     assert.match(aposReload.notaTxt, /Editado offline 165/, 'texto editado aparece após recarregar');
     assert.equal(aposReload.temResp, true, 'questão respondida persiste após recarregar');
 
@@ -153,20 +153,22 @@ test('Radio 1.65.0: sincronização que nunca perde nada (navegador, GitHub simu
     await ev("NT.ed.commands.setContent({type:'doc',content:[{type:'paragraph',attrs:{id:'b1'},content:[{type:'text',text:'Edit 401'}]}]},{emitUpdate:true});ntAntes();RadioFila.tentarAgora('manual');0");
     await ate("document.getElementById('sync').classList.contains('err')&&!document.getElementById('rd_faixa').hidden", 8000);
 
-    const ui401 = await ev("({sync:document.querySelector('#sync span').textContent,faixa:document.getElementById('rd_faixa').textContent,appVivo:!!document.querySelector('#app .nt')})");
-    assert.equal(ui401.sync, 'Chave do GitHub inválida ou vencida → Config › Sincronização');
+    const ui401 = await ev("({sync:document.querySelector('#sync span').textContent,syncTitle:document.getElementById('sync').title,faixa:document.getElementById('rd_faixa').textContent,appVivo:!!document.querySelector('#app .nt')})");
+    assert.equal(ui401.sync, 'Chave inválida');
+    assert.equal(ui401.syncTitle, 'Chave do GitHub inválida ou vencida → Config › Sincronização');
     assert.match(ui401.faixa, /Config › Sincronização/);
     assert.equal(ui401.appVivo, true, '401 com app ativo não destrói a tela');
 
     await ev("localStorage.setItem('__mode165','403_key');RadioFila.tentarAgora('manual');0");
     await ate("BCBR.chaveErroStatus===403", 5000);
-    assert.equal(await ev("document.querySelector('#sync span').textContent"), 'Chave do GitHub inválida ou vencida → Config › Sincronização');
+    assert.equal(await ev("document.querySelector('#sync span').textContent"), 'Chave inválida');
 
     // 403 rate limit
     await ev("localStorage.setItem('__mode165','403_rl');BCBR.limpaChaveErro();BCBR.pausaAte=0;BCBR.limiteMsg='';window.__rlHits165=0;RadioFila.tentarAgora('manual');0");
     await ate("(window.BCBR.pausaAte||0)>Date.now()", 5000);
-    const uiRl = await ev("document.querySelector('#sync span').textContent");
-    assert.match(uiRl, /^Limite do GitHub, tenta às \d\d:\d\d$/);
+    const uiRl = await ev("({txt:document.querySelector('#sync span').textContent,title:document.getElementById('sync').title})");
+    assert.equal(uiRl.txt, 'Limite GitHub');
+    assert.match(uiRl.title, /^Limite do GitHub, tenta às \d\d:\d\d$/);
 
     const hitsAntes = await ev("window.__rlHits165");
     await ev("RadioFila.tentarAgora('timer30s');smPuxar().catch(()=>{});SyncNotas.enviar().catch(()=>{});0");
@@ -362,7 +364,7 @@ test('Radio 1.65.0 regressão: resumos/fundidos.json na abertura migra fcs/fcAv/
     blocoIds:cfg.fcBlocos?.[0]?.ids||[]
   })`);
   assert.equal(res.carregando, false, 'saiu de Carregando o banco…');
-  assert.notEqual(res.rdSync, 'Aguardando sincronização', 'topo saiu de Aguardando sincronização');
+  assert.notEqual(res.rdSync, 'Aguardando', 'topo saiu de Aguardando');
   assert.equal(res.hasOldFcs, false, 'ID antigo migrado de fcs');
   assert.equal(res.hasNewFcs, true, 'ID novo presente em fcs');
   assert.equal(res.hasNewAv, true, 'ID novo presente em fcAv');
@@ -428,7 +430,7 @@ test('Radio 1.65.0 regressão: IndexedDB bloqueado/sem resposta + fila 1.64 no l
     idbIndisp:RadioFila.estadoResumo().idbIndisponivel
   })`);
   assert.equal(stHang.carregando, false, 'não ficou preso em Carregando o banco…');
-  assert.notEqual(stHang.rdSync, 'Aguardando sincronização', 'topo saiu de Aguardando sincronização');
+  assert.notEqual(stHang.rdSync, 'Aguardando', 'topo saiu de Aguardando');
   assert.equal(stHang.idbIndisp, true, 'sinalizou modo seguro sem IndexedDB');
   assert.equal(stHang.faixaHidden, false, 'mostrou faixa de aviso do modo seguro');
   assert.match(stHang.faixaTxt, /IndexedDB|modo seguro/i);

@@ -8,19 +8,20 @@ function rdGancho(acao,a){
   if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();else rdPinta();
 }
 function rdEstado(){
-  if(typeof RadioFila!=='undefined')return RadioFila.estadoResumo().texto;
+  if(typeof RadioFila!=='undefined')return RadioFila.estadoResumo().curto||RadioFila.estadoResumo().texto;
   const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
-  if(s.volatil)return 'Pendente — mantenha esta aba aberta';
+  if(s.volatil)return 'Pendente';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Sem internet';
-  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return window.BCBR.limiteMsg;
-  if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
+  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return 'Limite GitHub';
+  if(s.erro||SM.erro||RD.erro)return 'Erro';
   if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Salvando…';
-  return s.ultima||RD.ultima?'Sincronizado':'Aguardando sincronização';
+  return s.ultima||RD.ultima?'Sincronizado':'Aguardando';
 }
 function rdPinta(est){
   const e=document.getElementById('rd_sync');if(!e)return;
-  const r=est||(typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),cls:''});
-  if(e.textContent!==r.texto)e.textContent=r.texto;
+  const r=est||(typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),curto:rdEstado(),cls:''});
+  const lbl=r.curto||r.texto;
+  if(e.textContent!==lbl)e.textContent=lbl;
   if(e.title!==r.texto)e.title=r.texto;
   e.classList.toggle('rd-erro',r.cls==='err');
   e.classList.toggle('rd-pend',r.cls==='pend'||r.cls==='saving');

@@ -507,6 +507,7 @@ function ntAtalhos(c){
       return false;
     },
     'Backspace':()=>ntApagaToggleVazio(this.editor),
+    'Enter':()=>ntDivideToggle(this.editor),
     'Mod-Alt-t':()=>ntTodosNo(c),'Mod-Enter':()=>ntToggleCursor(c),
     'Tab':()=>ntTab(this.editor,false),'Shift-Tab':()=>ntTab(this.editor,true)}}});
 }
@@ -521,6 +522,22 @@ function ntApagaToggleVazio(ed){
   const ini=$.before($.depth-1),tr=state.tr;
   if($.node($.depth-2).childCount===1)tr.replaceWith(ini,ini+det.nodeSize,state.schema.nodes.paragraph.create());else tr.delete(ini,ini+det.nodeSize);
   try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(Math.min(ini,tr.doc.content.size)),-1))}catch(e){}
+  view.dispatch(tr.scrollIntoView());return true;
+}
+function ntDivideToggle(ed){
+  if(document.querySelector('.nt-slash'))return false;
+  const {state,view}=ed,s=state.selection,$=s.$from;
+  if($.parent.type.name!=='detailsSummary'||!$.sameParent(s.$to))return false;
+  if(s.empty&&$.parentOffset===$.parent.content.size)return false;
+  const tr=state.tr;
+  if(!s.empty)tr.delete(s.from,s.to);
+  const pos=tr.selection.from,$p=tr.doc.resolve(pos),sum=$p.parent,det=$p.node($p.depth-1);
+  if(sum.type.name!=='detailsSummary'||det.type.name!=='details')return false;
+  const depois=sum.content.cut($p.parentOffset),sumFim=$p.end(),detFim=$p.after($p.depth-1),N=state.schema.nodes,passos=tr.steps.length;
+  if(pos<sumFim)tr.delete(pos,sumFim);
+  const ins=tr.mapping.slice(passos).map(detFim),novo=N.details.create({...det.attrs,id:null},[N.detailsSummary.create(null,depois),N.detailsContent.create(null,[N.paragraph.create()])]);
+  tr.insert(ins,novo);
+  try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ins+2))}catch(e){}
   view.dispatch(tr.scrollIntoView());return true;
 }
 // Link (Ctrl+K ou botão da barra): campo ao lado do botão (prompt() não existe no WebView do APK).

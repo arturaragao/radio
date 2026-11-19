@@ -315,14 +315,16 @@
     const basePend = n === 1 ? '1 alteração pendente — salva neste PC' : `${n} alterações pendentes — salvas neste PC`;
     const erroRaw = ntResumo?.erro || (typeof SM !== 'undefined' && SM.erro) || (typeof RD !== 'undefined' && RD.erro) || ultimoErro || '';
 
-    let cls = 'local', texto = 'Só neste aparelho', faixaTexto = '', mostrarFaixa = false;
+    let cls = 'local', texto = 'Só neste aparelho', curto = 'Local', faixaTexto = '', mostrarFaixa = false;
     if (chaveErro) {
       cls = 'err';
+      curto = 'Chave inválida';
       texto = 'Chave do GitHub inválida ou vencida → Config › Sincronização';
       mostrarFaixa = true;
       faixaTexto = texto + (n ? ` (${n} ${n === 1 ? 'pendente — salva neste PC' : 'pendentes — salvas neste PC'})` : '');
     } else if (limite) {
       cls = 'err';
+      curto = 'Limite GitHub';
       texto = b.limiteMsg || ('Limite do GitHub, tenta às ' + fmtHora(b.pausaAte));
       if (n > 0 && idade >= DEZ_MIN) {
         mostrarFaixa = true;
@@ -330,12 +332,14 @@
       }
     } else if (volatil) {
       cls = 'err';
+      curto = 'Pendente';
       texto = 'Pendente — mantenha esta aba aberta';
       mostrarFaixa = true;
       faixaTexto = texto;
     } else if (n > 0) {
       cls = offline ? 'pend' : enviando ? 'saving' : 'pend';
       const semRedeErr = erroRaw && /^Sem internet/i.test(erroRaw);
+      curto = enviando ? 'Salvando…' : (n === 1 ? '1 pendente' : `${n} pendentes`);
       texto = offline ? `${basePend} · Sem internet` : enviando ? 'Salvando…' : (erroRaw && !semRedeErr ? `${basePend} · ${erroRaw}` : basePend);
       if (idade >= DEZ_MIN) {
         mostrarFaixa = true;
@@ -344,12 +348,15 @@
       }
     } else if (offline) {
       cls = 'pend';
+      curto = 'Sem internet';
       texto = 'Sem internet';
     } else if (conflitoAte > agora) {
       cls = 'ok';
+      curto = 'Mesclado';
       texto = 'Conflito resolvido';
     } else if (conectado) {
       cls = 'ok';
+      curto = 'Sincronizado';
       texto = 'Sincronizado';
     }
     if (idbIndisponivel && !mostrarFaixa) {
@@ -360,7 +367,7 @@
     }
 
     return {
-      cls, texto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
+      cls, texto, curto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
       conflito: conflitoAte > agora, conflitoDesc, pendentes: n, idadeMaxMs: idade,
       mostrarFaixa, faixaTexto, erro: erroRaw,
     };
@@ -391,7 +398,8 @@
       el.className = est.cls;
       el.title = est.texto;
       const sp = el.querySelector('span');
-      if (sp && sp.textContent !== est.texto) sp.textContent = est.texto;
+      const lbl = est.curto || est.texto;
+      if (sp && sp.textContent !== lbl) sp.textContent = lbl;
     }
     if (typeof rdPinta === 'function') rdPinta(est);
     pintaFaixa(est);
@@ -3228,6 +3236,7 @@ function ntAtalhos(c){
       return false;
     },
     'Backspace':()=>ntApagaToggleVazio(this.editor),
+    'Enter':()=>ntDivideToggle(this.editor),
     'Mod-Alt-t':()=>ntTodosNo(c),'Mod-Enter':()=>ntToggleCursor(c),
     'Tab':()=>ntTab(this.editor,false),'Shift-Tab':()=>ntTab(this.editor,true)}}});
 }
@@ -3242,6 +3251,22 @@ function ntApagaToggleVazio(ed){
   const ini=$.before($.depth-1),tr=state.tr;
   if($.node($.depth-2).childCount===1)tr.replaceWith(ini,ini+det.nodeSize,state.schema.nodes.paragraph.create());else tr.delete(ini,ini+det.nodeSize);
   try{tr.setSelection(TT.pm.state.Selection.near(tr.doc.resolve(Math.min(ini,tr.doc.content.size)),-1))}catch(e){}
+  view.dispatch(tr.scrollIntoView());return true;
+}
+function ntDivideToggle(ed){
+  if(document.querySelector('.nt-slash'))return false;
+  const {state,view}=ed,s=state.selection,$=s.$from;
+  if($.parent.type.name!=='detailsSummary'||!$.sameParent(s.$to))return false;
+  if(s.empty&&$.parentOffset===$.parent.content.size)return false;
+  const tr=state.tr;
+  if(!s.empty)tr.delete(s.from,s.to);
+  const pos=tr.selection.from,$p=tr.doc.resolve(pos),sum=$p.parent,det=$p.node($p.depth-1);
+  if(sum.type.name!=='detailsSummary'||det.type.name!=='details')return false;
+  const depois=sum.content.cut($p.parentOffset),sumFim=$p.end(),detFim=$p.after($p.depth-1),N=state.schema.nodes,passos=tr.steps.length;
+  if(pos<sumFim)tr.delete(pos,sumFim);
+  const ins=tr.mapping.slice(passos).map(detFim),novo=N.details.create({...det.attrs,id:null},[N.detailsSummary.create(null,depois),N.detailsContent.create(null,[N.paragraph.create()])]);
+  tr.insert(ins,novo);
+  try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ins+2))}catch(e){}
   view.dispatch(tr.scrollIntoView());return true;
 }
 // Link (Ctrl+K ou botão da barra): campo ao lado do botão (prompt() não existe no WebView do APK).
@@ -5451,19 +5476,20 @@ function rdGancho(acao,a){
   if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();else rdPinta();
 }
 function rdEstado(){
-  if(typeof RadioFila!=='undefined')return RadioFila.estadoResumo().texto;
+  if(typeof RadioFila!=='undefined')return RadioFila.estadoResumo().curto||RadioFila.estadoResumo().texto;
   const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
-  if(s.volatil)return 'Pendente — mantenha esta aba aberta';
+  if(s.volatil)return 'Pendente';
   if(navigator.onLine===false||window.BCBR?.semRede)return 'Sem internet';
-  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return window.BCBR.limiteMsg;
-  if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
+  if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return 'Limite GitHub';
+  if(s.erro||SM.erro||RD.erro)return 'Erro';
   if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Salvando…';
-  return s.ultima||RD.ultima?'Sincronizado':'Aguardando sincronização';
+  return s.ultima||RD.ultima?'Sincronizado':'Aguardando';
 }
 function rdPinta(est){
   const e=document.getElementById('rd_sync');if(!e)return;
-  const r=est||(typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),cls:''});
-  if(e.textContent!==r.texto)e.textContent=r.texto;
+  const r=est||(typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),curto:rdEstado(),cls:''});
+  const lbl=r.curto||r.texto;
+  if(e.textContent!==lbl)e.textContent=lbl;
   if(e.title!==r.texto)e.title=r.texto;
   e.classList.toggle('rd-erro',r.cls==='err');
   e.classList.toggle('rd-pend',r.cls==='pend'||r.cls==='saving');
@@ -6350,7 +6376,7 @@ function persist(wk){
   clearTimeout(flushT);flushT=setTimeout(flush,700);
 }
 function syncErroTxt(e){return typeof RadioFila!=='undefined'?RadioFila.descreveErro(e):(window.BCBR?.limiteMsg||'Sem internet')}
-function setSync(s,e){syncSt=s;if(typeof RD!=='undefined'){if(e)RD.erro=syncErroTxt(e);else if(s==='ok')RD.erro=''}if(typeof RadioFila!=='undefined'){RadioFila.atualizaUI();return}const el=$('#sync');if(!el)return;el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:syncErroTxt(e),local:'Só neste aparelho'}[s]||s}
+function setSync(s,e){syncSt=s;if(typeof RD!=='undefined'){if(e)RD.erro=syncErroTxt(e);else if(s==='ok')RD.erro=''}if(typeof RadioFila!=='undefined'){RadioFila.atualizaUI();return}const el=$('#sync');if(!el)return;el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:'Sem internet',local:'Local'}[s]||s}
 async function flush(){
   if(!DB)return false;
   if((window.BCBR?.pausaAte||0)>Date.now()){setSync('err',{limite:true,ate:BCBR.pausaAte});if(typeof RadioFila!=='undefined')RadioFila.aoFalhar?.({limite:true,ate:BCBR.pausaAte});return false;}

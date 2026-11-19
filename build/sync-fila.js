@@ -314,14 +314,16 @@
     const basePend = n === 1 ? '1 alteração pendente — salva neste PC' : `${n} alterações pendentes — salvas neste PC`;
     const erroRaw = ntResumo?.erro || (typeof SM !== 'undefined' && SM.erro) || (typeof RD !== 'undefined' && RD.erro) || ultimoErro || '';
 
-    let cls = 'local', texto = 'Só neste aparelho', faixaTexto = '', mostrarFaixa = false;
+    let cls = 'local', texto = 'Só neste aparelho', curto = 'Local', faixaTexto = '', mostrarFaixa = false;
     if (chaveErro) {
       cls = 'err';
+      curto = 'Chave inválida';
       texto = 'Chave do GitHub inválida ou vencida → Config › Sincronização';
       mostrarFaixa = true;
       faixaTexto = texto + (n ? ` (${n} ${n === 1 ? 'pendente — salva neste PC' : 'pendentes — salvas neste PC'})` : '');
     } else if (limite) {
       cls = 'err';
+      curto = 'Limite GitHub';
       texto = b.limiteMsg || ('Limite do GitHub, tenta às ' + fmtHora(b.pausaAte));
       if (n > 0 && idade >= DEZ_MIN) {
         mostrarFaixa = true;
@@ -329,12 +331,14 @@
       }
     } else if (volatil) {
       cls = 'err';
+      curto = 'Pendente';
       texto = 'Pendente — mantenha esta aba aberta';
       mostrarFaixa = true;
       faixaTexto = texto;
     } else if (n > 0) {
       cls = offline ? 'pend' : enviando ? 'saving' : 'pend';
       const semRedeErr = erroRaw && /^Sem internet/i.test(erroRaw);
+      curto = enviando ? 'Salvando…' : (n === 1 ? '1 pendente' : `${n} pendentes`);
       texto = offline ? `${basePend} · Sem internet` : enviando ? 'Salvando…' : (erroRaw && !semRedeErr ? `${basePend} · ${erroRaw}` : basePend);
       if (idade >= DEZ_MIN) {
         mostrarFaixa = true;
@@ -343,12 +347,15 @@
       }
     } else if (offline) {
       cls = 'pend';
+      curto = 'Sem internet';
       texto = 'Sem internet';
     } else if (conflitoAte > agora) {
       cls = 'ok';
+      curto = 'Mesclado';
       texto = 'Conflito resolvido';
     } else if (conectado) {
       cls = 'ok';
+      curto = 'Sincronizado';
       texto = 'Sincronizado';
     }
     if (idbIndisponivel && !mostrarFaixa) {
@@ -359,7 +366,7 @@
     }
 
     return {
-      cls, texto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
+      cls, texto, curto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
       conflito: conflitoAte > agora, conflitoDesc, pendentes: n, idadeMaxMs: idade,
       mostrarFaixa, faixaTexto, erro: erroRaw,
     };
@@ -390,7 +397,8 @@
       el.className = est.cls;
       el.title = est.texto;
       const sp = el.querySelector('span');
-      if (sp && sp.textContent !== est.texto) sp.textContent = est.texto;
+      const lbl = est.curto || est.texto;
+      if (sp && sp.textContent !== lbl) sp.textContent = lbl;
     }
     if (typeof rdPinta === 'function') rdPinta(est);
     pintaFaixa(est);

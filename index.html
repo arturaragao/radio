@@ -1,6 +1,6 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}html{background:var(--bg)}/* 1.49: faixas das áreas seguras com o mesmo fundo do tema */
 .versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
-.hr #rd_sync{background:transparent;color:inherit;border:0;padding:0;font:inherit;font-size:.74rem;opacity:.85;display:flex;align-items:center;white-space:nowrap;cursor:pointer;max-width:100%}
+.hr #rd_sync{display:none;white-space:nowrap}
 .hr #rd_sync.rd-erro{color:#fecdd3;opacity:1}.hr #rd_sync.rd-pend{color:#fde68a;opacity:1}.hr #rd_sync.rd-ok{color:#bbf7d0}
 #sync{cursor:pointer}#sync.pend{color:#fde68a;opacity:1}#sync.pend i{background:#fbbf24}#sync.err{color:#fecdd3;opacity:1}
 .rd-faixa{max-width:960px;margin:6px auto 0;padding:7px 12px;border-radius:10px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;font-size:.84rem;font-weight:600;line-height:1.35}
@@ -15,8 +15,9 @@
 .rd-tag{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 7px;border-radius:99px;border:1px solid var(--bd);background:var(--card);margin-right:4px}
 .rd-it-t{font-weight:600}.rd-it-d{font-size:.82rem;margin-top:2px}.rd-it-e{font-size:.82rem;color:var(--bad);margin-top:2px}
 .rd-det-st{margin:4px 0 8px}
-.rd-topo{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;font-size:.75rem}
-.rd-topo button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:3px 7px;font:inherit;cursor:pointer;max-width:100%;text-align:left}
+.rd-topo{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0;font-size:.7rem}
+.rd-topo:not(:has(button:not([hidden]))){display:none;padding:0}
+.rd-topo button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:4px;padding:1px 6px;font:inherit;line-height:1.25;cursor:pointer;max-width:100%;text-align:left}
 .rd-topo .rd-erro{color:var(--bad,#ff7272)}
 .rd-modal .nt-modal-c{max-width:720px;max-height:85vh;overflow:auto}
 .rd-modal section{border-top:1px solid var(--bd);padding:12px 0}
@@ -1070,9 +1071,10 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var
 .brand{font:700 1.15rem var(--fd);letter-spacing:.01em;display:flex;align-items:center;gap:8px;white-space:nowrap}
 .brand svg{flex:none}
 .hr{display:flex;align-items:center;gap:8px}
-#sync{font-size:.74rem;opacity:.85;display:flex;align-items:center;gap:6px;white-space:nowrap}
-#sync i{width:8px;height:8px;border-radius:50%;background:#9aa7c7;display:inline-block}
-#sync.ok i{background:#4ade80}#sync.saving i{background:#fbbf24}#sync.err i{background:#fb7185}
+#sync{font-size:.68rem;opacity:.82;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;min-width:0;max-width:112px}
+#sync i{width:6px;height:6px;border-radius:50%;background:#9aa7c7;display:inline-block;flex:none}
+#sync span{overflow:hidden;text-overflow:ellipsis}
+#sync.ok i{background:#4ade80}#sync.saving i,#sync.pend i{background:#fbbf24}#sync.err i{background:#fb7185}
 .tg{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:99px;padding:6px 12px;font:600 .78rem var(--fb);cursor:pointer}
 nav{max-width:960px;margin:8px auto 0;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 nav{-webkit-user-select:none;user-select:none}
@@ -1262,7 +1264,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
 <header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.65.0</small></div>
-<div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando sincronização</button><span id="sync" class="local" onclick="rdSyncAbre()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rdSyncAbre()}" role="button" tabindex="0"><i></i><span>Só neste aparelho</span></span><button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline · calculando…" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
+<div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando</button><span id="sync" class="local" onclick="rdSyncAbre()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rdSyncAbre()}" role="button" tabindex="0"><i></i><span>Local</span></span><button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline · calculando…" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav><div id="rd_faixa" class="rd-faixa" role="alert" hidden></div></header>
 <main id="app"></main>
 <div id="toast"></div>

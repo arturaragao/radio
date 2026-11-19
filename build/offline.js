@@ -11,6 +11,7 @@ function ofIcoLoad(pct){
   return `<svg class="of-ring" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle class="of-trk" cx="12" cy="12" r="9"/><circle class="of-arc" cx="12" cy="12" r="9" stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg><span class="of-pct">${p}%</span><span class="of-bar" aria-hidden="true"><i style="width:${p}%"></i></span>`;
 }
 function ofPendentes(){
+  if(typeof RadioFila!=='undefined')return RadioFila.contar();
   let n=0;
   try{if(typeof ntTemPendentes==='function'&&ntTemPendentes())n++;if(SM.sujo)n++}catch(e){}
   try{n+=dirty.size+(estDirty?1:0)}catch(e){}

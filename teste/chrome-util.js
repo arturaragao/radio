@@ -21,13 +21,15 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
     await espera(300);const pc=fs.readFileSync(pa,'utf8').split('\n')[0];
     const alvo=await(await fetch(`http://127.0.0.1:${pc}/json/new?about:blank`,{method:'PUT'})).json();
     ws=new WebSocket(alvo.webSocketDebuggerUrl);await new Promise((a,b)=>{ws.onopen=a;ws.onerror=b});
-    let seq=0;const pend=new Map(),erros=[],consoleErros=[];
+    let seq=0;const pend=new Map(),erros=[],consoleErros=[],ouvintes=new Map();
+    const on=(m,f)=>{if(!ouvintes.has(m))ouvintes.set(m,[]);ouvintes.get(m).push(f)};
     const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pend.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}))});
     const local=u=>u.startsWith(`http://127.0.0.1:${porta}/`);
     ws.onmessage=e=>{const r=JSON.parse(e.data);if(r.id){const p=pend.get(r.id);pend.delete(r.id);if(p)r.error?p.reject(Error(JSON.stringify(r.error))):p.resolve(r.result)}
       if(r.method==='Runtime.exceptionThrown')erros.push(r.params.exceptionDetails.exception?.description||r.params.exceptionDetails.text);
       if(r.method==='Runtime.consoleAPICalled'&&r.params.type==='error')consoleErros.push(r.params.args.map(x=>x.value||x.description).join(' '));
-      if(r.method==='Fetch.requestPaused'){const p=r.params;call(local(p.request.url)?'Fetch.continueRequest':'Fetch.failRequest',{requestId:p.requestId,...(local(p.request.url)?{}:{errorReason:'BlockedByClient'})}).catch(()=>{})}};
+      if(r.method==='Fetch.requestPaused'){const p=r.params;call(local(p.request.url)?'Fetch.continueRequest':'Fetch.failRequest',{requestId:p.requestId,...(local(p.request.url)?{}:{errorReason:'BlockedByClient'})}).catch(()=>{})}
+      if(r.method&&ouvintes.has(r.method))for(const f of ouvintes.get(r.method))f(r.params)};
     const ev=async expression=>{const r=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value};
     await call('Page.enable');await call('Runtime.enable');await call('Fetch.enable',{patterns:[{urlPattern:'*'}]});
     await call('Emulation.setDeviceMetricsOverride',{width:largura,height:altura,deviceScaleFactor:1,mobile:false});
@@ -71,7 +73,7 @@ async function iniciar({porta,env={},largura=1000,altura=900,sw=false,tema=null}
     const fechaTodos=()=>ev("document.querySelectorAll('.nt-seta').forEach(b=>b.getAttribute('aria-expanded')==='true'&&b.click())");
     const confirmado=async()=>{for(let i=0;i<100;i++){if(await ev("!ntTemPendentes()&&!NT.sync&&!NT.sujo&&!SM.sujo"))return true;await espera(100)}return false};
     const abertos=()=>ev("[...document.querySelectorAll('.nt-pm [data-type=details]')].map(d=>d.classList.contains('is-open'))");
-    return {call,ev,espera,esperaApp,abre,tecla,digita,especial,ctrl,click,mouse,arrasta,shot,ate,par,tg,reset,fechaTodos,confirmado,abertos,erros,consoleErros,URL_,S,porta,env:E,fim,novaAba,
+    return {call,on,ev,espera,esperaApp,abre,tecla,digita,especial,ctrl,click,mouse,arrasta,shot,ate,par,tg,reset,fechaTodos,confirmado,abertos,erros,consoleErros,URL_,S,porta,env:E,fim,novaAba,
       sobeServidor:()=>{S.proc=sobeServidor(porta,E)},paraServidor:async()=>{S.proc.kill();await espera(500)}};
   }catch(e){await fim();throw e}
 }

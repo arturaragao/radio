@@ -26,51 +26,111 @@ function criarSyncNotas(o){
   try{aparelho||=o.storage?.getItem('bcbr_aparelhoId')}catch(e){}
   aparelho||='a'+Date.now().toString(36)+Math.random().toString(36).slice(2);
   try{o.storage?.setItem('bcbr_aparelhoId',aparelho)}catch(e){}
-  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
+  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0,hidratado=null,filaWrites=Promise.resolve();
   const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map(),legadoPreservado=[];
-  const mudou=()=>o.alterou?.();
+  const mudou=()=>{o.alterou?.()};
+  const msgErro=e=>o.descreveErro?o.descreveErro(e):(e?.message||'Erro de sincronização');
   const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{}),...(p.copiaDe?{copiaDe:p.copiaDe}:{}),...(p.origem?{origem:clone(p.origem)}:{})});
   const lista=()=>{const m=new Map(indice.map(p=>[p.id,p]));for(const {p} of pend.values()){if(p.excluida)m.delete(p.id);else m.set(p.id,metadados({...m.get(p.id),...p}))}return [...m.values()]};
   function cache(k,v){try{Promise.resolve(o.cache?.set(k,clone(v))).catch(()=>{})}catch(e){}}
   async function cacheLer(k){try{return await o.cache?.get(k)}catch(e){return null}}
-  function persistir(e){try{o.storage.setItem(e.k,JSON.stringify(e));e.volatil=false;return true}catch(x){e.volatil=true;return false}}
+  function gravaFilaIdb(e,localFalhou){
+    if(!o.cache?.set)return false;
+    const snap=clone({k:e.k,p:e.p,em:e.em,criadoEm:e.criadoEm||e.em,rev:e.rev});
+    try{
+      const p1=Promise.resolve(o.cache.set('notas:fila:'+e.k,snap));
+      const p2=Promise.resolve(o.cache.set('notas:fila:idx',[...pend.keys()]));
+      const ambos=Promise.all([p1,p2]);
+      ambos.catch(()=>{});
+      filaWrites=filaWrites.then(()=>ambos).catch(()=>{e.idb=false;if(localFalhou){e.volatil=true;clearTimeout(timer);timer=setTimeout(()=>enviar(),0);mudou()}});
+      return true;
+    }catch(err){
+      return false;
+    }
+  }
+  function removeFilaIdb(k){
+    if(!o.cache?.set)return;
+    filaWrites=filaWrites.then(async()=>{
+      await o.cache.set('notas:fila:'+k,null);
+      await o.cache.set('notas:fila:idx',[...pend.keys()]);
+    }).catch(()=>{});
+  }
+  function persistir(e){
+    let localOk=false;
+    try{o.storage.setItem(e.k,JSON.stringify(e));localOk=true}catch(x){localOk=false}
+    const idbOk=gravaFilaIdb(e,!localOk);
+    if(!localOk&&idbOk){try{o.storage?.removeItem(e.k)}catch(x){}}
+    e.idb=idbOk;
+    e.volatil=!(localOk||idbOk);
+    return !e.volatil;
+  }
   function carregarFila(){
-    try{for(const [k,e] of pend)if(!e.volatil&&!o.storage.getItem(k))pend.delete(k);
-      for(let i=0;i<o.storage.length;i++){const k=o.storage.key(i);if(!k?.startsWith(prefixo))continue;
-      try{const e=JSON.parse(o.storage.getItem(k));if(e?.p?.id&&e.rev&&!pend.get(k)?.volatil){chaveId(e.p.id);e.k=k;pend.set(k,e)}}catch(e){erro='Uma página pendente não pôde ser lida; a cópia local foi preservada.'}
+    try{for(const [k,e] of pend)if(!e.volatil&&!e.idb&&!o.storage?.getItem(k))pend.delete(k);
+      for(let i=0;i<(o.storage?.length||0);i++){const k=o.storage.key(i);if(!k?.startsWith(prefixo))continue;
+      try{const e=JSON.parse(o.storage.getItem(k));if(e?.p?.id&&e.rev){const cur=pend.get(k);if(!cur||(!cur.volatil&&((e.em||0)>(cur.em||0)||((e.em||0)===(cur.em||0)&&String(e.rev)>String(cur.rev))))){chaveId(e.p.id);e.k=k;e.criadoEm=cur?.criadoEm||e.criadoEm||e.em;pend.set(k,e)}}}catch(e){erro='Uma página pendente não pôde ser lida; a cópia local foi preservada.'}
     }}catch(e){}
   }
+  function hidratarFila(){
+    if(hidratado)return hidratado;
+    hidratado=(async()=>{
+      if(!o.cache?.get)return false;
+      let mudouAlgo=false;
+      try{
+        const idx=await o.cache.get('notas:fila:idx');
+        if(Array.isArray(idx)){
+          for(const k of idx){
+            if(typeof k!=='string'||!k.startsWith(prefixo))continue;
+            const e=await o.cache.get('notas:fila:'+k);
+            if(!e?.p?.id||!e.rev)continue;
+            try{chaveId(e.p.id)}catch(x){continue}
+            const cur=pend.get(k);
+            if(!cur||(e.em>(cur.em||0))||(e.em===cur.em&&String(e.rev)>String(cur.rev))){
+              e.k=k;e.criadoEm=cur?.criadoEm||e.criadoEm||e.em;e.volatil=false;e.idb=true;
+              pend.set(k,e);mudouAlgo=true;
+              if(e.p.doc)abertas.set(e.p.id,clone(e.p));
+            }
+          }
+        }
+      }catch(e){}
+      if(mudouAlgo)mudou();
+      return mudouAlgo;
+    })();
+    return hidratado;
+  }
   carregarFila();
+  hidratarFila();
   async function ler(path,opt={}){
     try{let f=await api('contents/'+path,opt);if(f.naoMudou)return f;
       if(f.encoding==='none'||(!f.content&&f.size>0)){const b=await api('git/blobs/'+encodeURIComponent(f.sha));f={...f,content:b.content}}
       return {...f,d:dec(f.content)};
     }catch(e){if(e.status===404)return {d:null,sha:null};throw e}
   }
-  async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;return (await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)})).content.sha}
+  async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;const r=await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)});if(!r?.content?.sha)throw Error('GitHub não confirmou sha');return r.content.sha}
   const conflito=e=>e.status===409||e.status===422;
   async function listarPaginasCache(){
+    await hidratarFila();
     if(indice.length)return clone(lista());
     const c=await cacheLer('notas:indice');
     if(Array.isArray(c)&&!indice.length){indice=c;indiceConhecido=true;mudou()}
     return clone(lista());
   }
   async function listarPaginas(){
+    await hidratarFila();
     if(leitura)return leitura;
     leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
-      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=e.message;mudou();return clone(lista())}
+      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=msgErro(e);mudou();return clone(lista())}
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
   async function abrirPaginaCache(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);await hidratarFila();const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const atual=abertas.get(id);if(atual)return clone(atual);
     const c=await cacheLer('notas:pagina:'+id);if(!c?.p)return null;
     const p=e?{...c.p,...e.p}:c.p;if(p.origem===null)delete p.origem;
     if(c.sha)shas.set(id,c.sha);tamanhos.set(id,textoDe(p.doc));abertas.set(id,clone(p));return clone(p);
   }
   async function abrirPagina(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);await hidratarFila();const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
     if(atual&&meta?.sha&&shas.get(id)===meta.sha&&!e)return clone(atual);
     let p,f=null;
@@ -88,14 +148,14 @@ function criarSyncNotas(o){
     abertas.set(id,clone(p));return clone(p);
   }
   function salvarPagina(p){
-    chaveId(p.id);const anterior=pendente(p.id)?.p||abertas.get(p.id)||{},em=Date.now(),
+    chaveId(p.id);const antPend=pendente(p.id),anterior=antPend?.p||abertas.get(p.id)||{},em=Date.now(),
       novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho};
     if(novo.origem===null)delete novo.origem;
-    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
+    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,criadoEm:antPend?.criadoEm||em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
     if(p.doc&&anterior.doc&&textoDe(p.doc)<textoDe(anterior.doc))apagou.add(p.id);
     pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);
     if(novo.excluida)abertas.delete(p.id);else if(abertas.has(p.id)||novo.doc)abertas.set(p.id,clone(novo));
-    const duravel=persistir(e);clearTimeout(timer);timer=setTimeout(()=>enviar(),duravel?(o.atraso??1500):0);mudou();return true;
+    const duravel=persistir(e),ms=duravel?(o.atraso??1500):0;clearTimeout(timer);timer=setTimeout(()=>enviar(),ms);if(ms>=10000&&typeof timer?.unref==='function')timer.unref();mudou();return true;
   }
   async function atualizarIndice(id){
     for(let t=0;t<8;t++){
@@ -136,7 +196,8 @@ function criarSyncNotas(o){
     await gravar({id:'notas-recuperadas',titulo:'Notas — cópias recuperadas',pasta:'',ordem:0,atualizado:new Date().toISOString(),doc:{v:1,blocos},aparelhoId:aparelho},true);
   }
   async function gravar(p,uniao=false){
-    let f=null,sha=shas.get(p.id);if(uniao||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+    let f=null,sha=shas.get(p.id),teveConflito=false;if(uniao||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+    if(f&&!f.d&&p.excluida){await atualizarIndice(p.id).catch(()=>{});return {d:{...p,excluida:true},sha:null}}
     let unir=uniao||(!!f&&shas.get(p.id)!==f.sha);   // base desconhecida/diferente do remoto
     for(let t=0;t<8;t++){
       let completo={...(f?.d||{}),...p};
@@ -144,14 +205,17 @@ function criarSyncNotas(o){
       delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)&&!(uniao&&completo===f?.d)))delete completo.origem;
       if(p.doc&&f?.d?.doc&&unir)completo.doc={...p.doc,blocos:unirBlocos(blocosDe(p.doc),blocosDe(f.d.doc))};
       if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
-      if(f?.d&&!f.d.excluida&&(uniao||docVazio(completo.doc))&&JSON.stringify(completo.doc)===JSON.stringify(f.d.doc))return atualizarIndice(p.id);   // nada a acrescentar
+      if(f?.d&&!f.d.excluida&&(uniao||docVazio(completo.doc))&&JSON.stringify(completo.doc)===JSON.stringify(f.d.doc)){const r=await atualizarIndice(p.id);if(teveConflito)o.aoResolverConflito?.(p.id);return r}   // nada a acrescentar
       if(f?.d&&!f.d.excluida&&docVazio(completo.doc)&&!docVazio(f.d.doc))completo.doc=clone(f.d.doc);   // página vazia nunca apaga remoto com conteúdo
       try{
         if(!f&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&textoDe(completo.doc)<(tamanhos.get(p.id)||0)*0.5){f=await ler(caminho(p.id));if(f.sha!==sha){unir=true;continue}}
         const antes=f?.d?.doc?textoDe(f.d.doc):0;
         if(antes>0&&textoDe(completo.doc)<antes*0.5&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&!f.d.excluida)await guardarCopia(p.id,f);
-        sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);tamanhos.set(p.id,textoDe(completo.doc));return await atualizarIndice(p.id);
-      }catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha;unir=true}
+        sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);tamanhos.set(p.id,textoDe(completo.doc));
+        const resInd=await atualizarIndice(p.id);
+        if(teveConflito)o.aoResolverConflito?.(p.id);
+        return resInd;
+      }catch(e){if(!conflito(e))throw e;teveConflito=true;f=await ler(caminho(p.id));sha=f.sha;unir=true}
     }throw Error('Página ocupada; alteração permanece na fila.');
   }
   // Remove legado só depois de reler cada arquivo e achar todos os ids de bloco.
@@ -159,16 +223,17 @@ function criarSyncNotas(o){
     if(!blocosDe(p.doc).every(b=>docVazio({blocos:[b]})||ids.has(chaveB(b))))throw Error('Migração incompleta; plano preservado.')}
   async function enviar(){
     clearTimeout(timer);if(voo)return voo;
-    const executar=async()=>{carregarFila();try{
+    const executar=async()=>{await hidratarFila();await filaWrites;carregarFila();if(!pend.size)return true;if(o.podeEnviar&&!o.podeEnviar())return false;try{
       // Snapshot: edição durante PUT tem outro rev e nunca é retirada por esta confirmação.
       for(const e of [...pend.values()].sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev))){
         const confirmado=await gravar(clone(e.p));ultima=Date.now();erro='';
-        if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
+        if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage?.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
+          removeFilaIdb(e.k);
           if(e.p.excluida)abertas.delete(e.p.id);else if((abertas.has(e.p.id)||e.p.doc)&&confirmado?.d)abertas.set(e.p.id,clone(confirmado.d));
           if(confirmado?.d)cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
       }return true;
-    }catch(e){erro=e.message;return false}};
-    voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
+    }catch(e){erro=msgErro(e);o.aoFalhar?.(e);return false}};
+    voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro&&(!o.podeEnviar||o.podeEnviar())){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
   }
   // Versões: commits do arquivo da página; {plano:true} lê o histórico anterior à 1.48 (notasDoc / notasPaginas em semana/plano.json).
   async function versoes(id,opt={}){
@@ -254,7 +319,7 @@ function criarSyncNotas(o){
         await aplicarLegadoPlano(x,emIso);
         try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
       }
-    }catch(e){erro=e.message}
+    }catch(e){erro=msgErro(e)}
   }
   async function baixarTodas(aoAndar){
     const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let nm=m[1];try{nm=decodeURIComponent(nm)}catch(e){}imgs.add(nm)}};
@@ -273,8 +338,16 @@ function criarSyncNotas(o){
     }
     return {paginas:pgs.length,imagens:[...imgs]};
   }
-  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
-    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido}),
+  const criadoEmMin=()=>[...pend.values()].reduce((m,e)=>Math.min(m,e.criadoEm||e.em||Date.now()),Infinity);
+  const pendentesDetalhe=(comPayload=false)=>[...pend.values()].sort((a,b)=>(a.criadoEm||a.em)-(b.criadoEm||b.em)).map(e=>({
+    id:'nota:'+e.p.id,pageId:e.p.id,tipo:'nota',
+    titulo:(e.p.excluida?'Excluir nota: ':'Nota: ')+(e.p.titulo||e.p.id),
+    detalhe:e.p.excluida?'Exclusão pendente':'Alteração pendente',
+    criadoEm:e.criadoEm||e.em,atualizadoEm:e.em,rev:e.rev,erro:erro||'',
+    ...(comPayload?{payload:clone(e.p)}:{})
+  }));
+  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,pendentesDetalhe,pronto:hidratarFila(),
+    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,criadoEmMin:pend.size?criadoEmMin():0}),
     paginasMeta:()=>clone(lista()),
     estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
@@ -299,9 +372,13 @@ const SyncNotas=typeof BCBR==='undefined'?null:criarSyncNotas({
     return {get:k=>op(k,null,false),set:(k,v)=>op(k,v,true)};
   })(),
   converterAntigas:notas=>{const blocos=ntOrdenadas(notas).map(ntNotaParaBloco);return {id:'notas',titulo:'Notas',doc:{v:1,blocos},atualizado:blocos.reduce((s,b)=>b.atualizado>s?b.atualizado:s,'')}},
-  alterou:()=>{if(typeof rdPinta==='function')rdPinta();if(typeof ntLateralPinta==='function')ntLateralPinta()}
+  aoResolverConflito:id=>{try{window.RadioFila?.marcaConflitoResolvido?.('Nota: '+id)}catch(e){}},
+  aoFalhar:e=>{try{window.RadioFila?.aoFalhar?.(e)}catch(x){}},
+  descreveErro:e=>typeof window!=='undefined'&&window.RadioFila?.descreveErro?window.RadioFila.descreveErro(e):(e?.message||'Erro de sincronização'),
+  podeEnviar:()=>{const b=typeof window!=='undefined'&&window.BCBR;if(!b)return true;if((b.pausaAte||0)>Date.now())return false;let tk='';try{tk=localStorage.getItem('bcbr_gh_token')||''}catch(e){}return !(b.chaveErro&&(!b.chaveErroToken||b.chaveErroToken===tk))},
+  alterou:()=>{if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();else if(typeof rdPinta==='function')rdPinta();if(typeof ntLateralPinta==='function')ntLateralPinta()}
 });
 if(typeof window!=='undefined'){
-  window.addEventListener('online',()=>{SyncNotas?.enviar().then(()=>smPuxar())});
-  window.addEventListener('storage',e=>{if(e.key?.startsWith('bcbr_paginas_pendentes_v2:'))SyncNotas?.enviar().then(()=>smPuxar())});
+  window.addEventListener('online',()=>{if(typeof RadioFila==='undefined')SyncNotas?.enviar().then(()=>smPuxar())});
+  window.addEventListener('storage',e=>{if(e.key?.startsWith('bcbr_paginas_pendentes_v2:')){if(typeof RadioFila!=='undefined')RadioFila.tentarAgora('storage');else SyncNotas?.enviar().then(()=>smPuxar())}});
 }

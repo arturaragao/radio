@@ -1,4 +1,676 @@
-// Banco CBR app 1.64.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.65.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Radio 1.65.0: fila durável unificada em IndexedDB (Notas, Progresso, Semana), reenvio automático,
+// backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
+(function (root) {
+  const DB_NOME = 'bcbr-fila', STORE = 'fila', LS_META = 'bcbr_fila_meta', LS_PROG = 'bcbr_fila_prog';
+  const DEZ_MIN = 10 * 60 * 1000;
+  const clone = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
+  const fmtHora = (ms) => {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+  const tokAtual = () => { try { return localStorage.getItem('bcbr_gh_token') || ''; } catch (e) { return ''; } };
+
+  let dbRef = null, dbAbrindo = null, hidratando = null, drenando = null;
+  let writesEmCurso = Promise.resolve();
+  let conflitoAte = 0, conflitoDesc = '', ultimoErro = '', uiTimer = null, retryTimer = null;
+  let falhasSeguidas = 0, backoffAte = 0, hidratouDb = false;
+  const memMap = new Map();
+  const hidratadores = { progresso: null, semana: null };
+  const hidratadosTipos = { progresso: false, semana: false };
+  const drenadores = [];
+
+  function abrirDb() {
+    if (dbRef) return Promise.resolve(dbRef);
+    if (dbAbrindo) return dbAbrindo;
+    if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    dbAbrindo = new Promise((ok) => {
+      try {
+        const req = indexedDB.open(DB_NOME, 1);
+        req.onupgradeneeded = () => {
+          const d = req.result;
+          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'id' });
+        };
+        req.onsuccess = () => { dbRef = req.result; ok(dbRef); };
+        req.onerror = () => ok(null);
+        req.onblocked = () => ok(null);
+      } catch (e) { ok(null); }
+    });
+    return dbAbrindo;
+  }
+
+  function idbOp(modo, fn) {
+    if (dbRef) {
+      return new Promise((ok) => {
+        try {
+          const tx = dbRef.transaction(STORE, modo);
+          const st = tx.objectStore(STORE);
+          const r = fn(st);
+          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
+          tx.onerror = tx.onabort = () => ok(null);
+        } catch (e) { ok(null); }
+      });
+    }
+    return abrirDb().then((d) => {
+      if (!d) return null;
+      return new Promise((ok) => {
+        try {
+          const tx = d.transaction(STORE, modo);
+          const st = tx.objectStore(STORE);
+          const r = fn(st);
+          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
+          tx.onerror = tx.onabort = () => ok(null);
+        } catch (e) { ok(null); }
+      });
+    });
+  }
+
+  function espelhaMetaLS() {
+    try {
+      const lista = [...memMap.values()].map((r) => ({
+        id: r.id, tipo: r.tipo, titulo: r.titulo, detalhe: r.detalhe || '',
+        criadoEm: r.criadoEm, atualizadoEm: r.atualizadoEm, rev: r.rev, erro: r.erro || ''
+      }));
+      if (lista.length) localStorage.setItem(LS_META, JSON.stringify(lista));
+      else localStorage.removeItem(LS_META);
+    } catch (e) {}
+  }
+
+  // Hidratação síncrona mínima do localStorage antes do primeiro render.
+  try {
+    const rawMeta = localStorage.getItem(LS_META);
+    if (rawMeta) {
+      const l = JSON.parse(rawMeta);
+      if (Array.isArray(l)) l.forEach((r) => { if (r && r.id) memMap.set(r.id, r); });
+    }
+  } catch (e) {}
+
+  function gravaItem(rec) {
+    if (!rec || !rec.id) return Promise.resolve(false);
+    const ant = memMap.get(rec.id);
+    const agora = Date.now();
+    const item = {
+      id: rec.id,
+      tipo: rec.tipo || 'outro',
+      titulo: rec.titulo || rec.id,
+      detalhe: rec.detalhe || '',
+      criadoEm: ant?.criadoEm || rec.criadoEm || agora,
+      atualizadoEm: rec.atualizadoEm || agora,
+      rev: rec.rev != null ? rec.rev : agora,
+      payload: rec.payload !== undefined ? clone(rec.payload) : ant?.payload,
+      erro: rec.erro != null ? rec.erro : (ant?.erro || ''),
+    };
+    memMap.set(item.id, item);
+    espelhaMetaLS();
+    const p = idbOp('readwrite', (st) => st.put(item)).then((ok) => !!ok);
+    writesEmCurso = writesEmCurso.then(() => p).catch(() => {});
+    atualizaUI();
+    return p;
+  }
+
+  function confirmaItem(id, rev) {
+    const cur = memMap.get(id);
+    if (!cur) return Promise.resolve(true);
+    if (rev != null && cur.rev != null && cur.rev !== rev) return Promise.resolve(false);
+    memMap.delete(id);
+    espelhaMetaLS();
+    if (!contar()) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      backoffAte = 0;
+    }
+    const p = idbOp('readwrite', (st) => st.delete(id)).then(() => true);
+    writesEmCurso = writesEmCurso.then(() => p).catch(() => {});
+    atualizaUI();
+    return p;
+  }
+
+  function salvaSnapshotProgLS(snap) {
+    try {
+      if (!snap || (!snap.dirty?.length && !snap.estDirty)) localStorage.removeItem(LS_PROG);
+      else localStorage.setItem(LS_PROG, JSON.stringify(snap));
+    } catch (e) {}
+  }
+
+  function leSnapshotProgLS() {
+    try {
+      const raw = localStorage.getItem(LS_PROG);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function aplicaHidratador(tipo) {
+    if (!hidratouDb || hidratadosTipos[tipo] || typeof hidratadores[tipo] !== 'function') return;
+    hidratadosTipos[tipo] = true;
+    if (tipo === 'semana') {
+      try { hidratadores.semana(memMap.get('semana:plano') || null); } catch (e) {}
+    } else if (tipo === 'progresso') {
+      const progs = [...memMap.values()].filter((r) => r.tipo === 'progresso');
+      try { hidratadores.progresso(progs, leSnapshotProgLS()); } catch (e) {}
+    }
+  }
+
+  function hidrata() {
+    if (hidratando) return hidratando;
+    hidratando = (async () => {
+      try { await abrirDb(); } catch (e) {}
+      const todos = await idbOp('readonly', (st) => st.getAll());
+      if (Array.isArray(todos)) {
+        for (const r of todos) {
+          if (!r || !r.id) continue;
+          const cur = memMap.get(r.id);
+          if (!cur || !cur.payload || (r.atualizadoEm || 0) >= (cur.atualizadoEm || 0)) {
+            memMap.set(r.id, r);
+          }
+        }
+        espelhaMetaLS();
+      }
+      if (typeof SyncNotas !== 'undefined' && SyncNotas.pronto) {
+        await SyncNotas.pronto.catch(() => {});
+      }
+      hidratouDb = true;
+      aplicaHidratador('semana');
+      aplicaHidratador('progresso');
+      atualizaUI();
+      if (typeof window !== 'undefined' && contar() > 0 && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        setTimeout(() => { if (contar() > 0) tentarAgora('abertura'); }, 0);
+      }
+      return true;
+    })();
+    return hidratando;
+  }
+
+  function listar(comPayload = false) {
+    const mapa = new Map();
+    const poe = (r) => {
+      if (!r || !r.id) return;
+      const ant = mapa.get(r.id);
+      if (!ant) { mapa.set(r.id, { ...r }); return; }
+      mapa.set(r.id, {
+        ...ant,
+        ...r,
+        criadoEm: Math.min(ant.criadoEm || r.criadoEm || Date.now(), r.criadoEm || ant.criadoEm || Date.now()),
+        atualizadoEm: Math.max(ant.atualizadoEm || 0, r.atualizadoEm || 0),
+        payload: r.payload !== undefined ? r.payload : ant.payload,
+      });
+    };
+
+    for (const r of memMap.values()) {
+      if (r.tipo === 'nota' && typeof SyncNotas !== 'undefined') continue;
+      if (r.tipo === 'progresso' && typeof dirty !== 'undefined') {
+        const k = r.id.slice(5);
+        if (k === 'estado' && typeof estDirty !== 'undefined' && !estDirty) continue;
+        if (k !== 'estado' && !dirty.has(k)) continue;
+      }
+      if (r.tipo === 'semana' && typeof SM !== 'undefined' && !SM.sujo) continue;
+      poe(comPayload ? r : { id: r.id, tipo: r.tipo, titulo: r.titulo, detalhe: r.detalhe, criadoEm: r.criadoEm, atualizadoEm: r.atualizadoEm, erro: r.erro });
+    }
+
+    if (typeof SyncNotas !== 'undefined' && typeof SyncNotas.pendentesDetalhe === 'function') {
+      for (const n of SyncNotas.pendentesDetalhe(comPayload)) poe(n);
+    }
+    if (typeof SM !== 'undefined' && SM.sujo) {
+      const m = memMap.get('semana:plano');
+      const msgs = Array.isArray(SM.pendMsgs) && SM.pendMsgs.length ? SM.pendMsgs.join(', ') : (m?.detalhe || 'Alterações no plano');
+      poe({
+        id: 'semana:plano', tipo: 'semana', titulo: 'Semana / Tarefas', detalhe: msgs,
+        criadoEm: SM.sujoDesde || m?.criadoEm || Date.now(),
+        atualizadoEm: m?.atualizadoEm || Date.now(),
+        erro: SM.erro || '',
+        ...(comPayload ? { payload: { d: SM.d, base: SM.base } } : {}),
+      });
+    }
+    if (typeof dirty !== 'undefined') {
+      const addProg = (k, titulo, payload) => {
+        const id = 'prog:' + k, m = memMap.get(id);
+        poe({
+          id, tipo: 'progresso', titulo: m?.titulo || titulo, detalhe: m?.detalhe || '',
+          criadoEm: m?.criadoEm || Date.now(), atualizadoEm: m?.atualizadoEm || Date.now(),
+          erro: m?.erro || '', ...(comPayload ? { payload: payload !== undefined ? payload : m?.payload } : {}),
+        });
+      };
+      if (typeof estDirty !== 'undefined' && estDirty) addProg('estado', 'Configurações e blocos', typeof cfg !== 'undefined' ? { over, cfg, u: estU, resetAt } : undefined);
+      for (const k of dirty) {
+        let tit = 'Progresso (' + k + ')';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(k)) tit = 'Questões respondidas (' + k + ')';
+        else if (k.startsWith('s:')) tit = 'Revisões de flashcards';
+        else if (k.startsWith('c:')) tit = 'Cartões de flashcards';
+        else if (k === 'av:0') tit = 'Avaliações de flashcards';
+        else if (k.startsWith('p:')) tit = 'Edições / pontos de ensino';
+        else if (k.startsWith('i:')) tit = 'Comentários de IA';
+        else if (k.startsWith('m:')) tit = 'Manual metodológico';
+        else if (k.startsWith('g:')) tit = 'Imagens do usuário';
+        addProg(k, tit, comPayload && progBridge ? docPayload(k, progBridge.get()) : undefined);
+      }
+    }
+    return [...mapa.values()].sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
+  }
+
+  function contar() { return listar(false).length; }
+  function temPendencia() {
+    if (typeof NT !== 'undefined' && NT.sujo) return true;
+    return contar() > 0;
+  }
+  function idadeMaxMs(agora = Date.now()) {
+    const l = listar(false);
+    if (!l.length) return 0;
+    let min = Infinity;
+    for (const x of l) min = Math.min(min, x.criadoEm || agora);
+    return Math.max(0, agora - min);
+  }
+
+  function descreveErro(e) {
+    if (!e) return '';
+    if (e.chave || e.status === 401 || (e.status === 403 && !e.limite)) return 'Chave do GitHub inválida ou vencida → Config › Sincronização';
+    if (e.limite || e.status === 429) return e.ate ? ('Limite do GitHub, tenta às ' + fmtHora(e.ate)) : 'Limite do GitHub';
+    if ((typeof navigator !== 'undefined' && navigator.onLine === false) || (!e.status && (e.name === 'TypeError' || /fetch|network|offline|conex/i.test(e.message || '')))) return 'Sem internet';
+    return String(e.message || 'Erro de sincronização');
+  }
+
+  function estadoResumo(agora = Date.now()) {
+    const b = (typeof window !== 'undefined' && window.BCBR) || {};
+    const l = listar(false), n = l.length;
+    const idade = l.reduce((mx, x) => Math.max(mx, Math.max(0, agora - (x.criadoEm || agora))), 0);
+    const offline = (typeof navigator !== 'undefined' && navigator.onLine === false) || !!b.semRede;
+    const chaveErro = !!(b.chaveErro && (!b.chaveErroToken || b.chaveErroToken === tokAtual()));
+    const limite = (b.pausaAte || 0) > agora;
+    const ntResumo = typeof SyncNotas !== 'undefined' && SyncNotas.resumo ? SyncNotas.resumo() : null;
+    const enviando = !!drenando || !!ntResumo?.enviando || (typeof syncSt !== 'undefined' && syncSt === 'saving') || (typeof RD !== 'undefined' && RD.enviando > 0);
+    const conectado = typeof DB !== 'undefined' && !!DB;
+    const volatil = !!ntResumo?.volatil;
+    const basePend = n === 1 ? '1 alteração pendente — salva neste PC' : `${n} alterações pendentes — salvas neste PC`;
+    const erroRaw = ntResumo?.erro || (typeof SM !== 'undefined' && SM.erro) || (typeof RD !== 'undefined' && RD.erro) || ultimoErro || '';
+
+    let cls = 'local', texto = 'Só neste aparelho', faixaTexto = '', mostrarFaixa = false;
+    if (chaveErro) {
+      cls = 'err';
+      texto = 'Chave do GitHub inválida ou vencida → Config › Sincronização';
+      mostrarFaixa = true;
+      faixaTexto = texto + (n ? ` (${n} ${n === 1 ? 'pendente — salva neste PC' : 'pendentes — salvas neste PC'})` : '');
+    } else if (limite) {
+      cls = 'err';
+      texto = b.limiteMsg || ('Limite do GitHub, tenta às ' + fmtHora(b.pausaAte));
+      if (n > 0 && idade >= DEZ_MIN) {
+        mostrarFaixa = true;
+        faixaTexto = `${basePend} · ${texto}`;
+      }
+    } else if (volatil) {
+      cls = 'err';
+      texto = 'Pendente — mantenha esta aba aberta';
+      mostrarFaixa = true;
+      faixaTexto = texto;
+    } else if (n > 0) {
+      cls = offline ? 'pend' : enviando ? 'saving' : 'pend';
+      const semRedeErr = erroRaw && /^Sem internet/i.test(erroRaw);
+      texto = offline ? `${basePend} · Sem internet` : enviando ? 'Salvando…' : (erroRaw && !semRedeErr ? `${basePend} · ${erroRaw}` : basePend);
+      if (idade >= DEZ_MIN) {
+        mostrarFaixa = true;
+        const mins = Math.max(10, Math.floor(idade / 60000));
+        faixaTexto = `${basePend} (há ${mins} min)` + (offline ? ' · Sem internet' : erroRaw ? ' · ' + erroRaw : '');
+      }
+    } else if (offline) {
+      cls = 'pend';
+      texto = 'Sem internet';
+    } else if (conflitoAte > agora) {
+      cls = 'ok';
+      texto = 'Conflito resolvido';
+    } else if (conectado) {
+      cls = 'ok';
+      texto = 'Sincronizado';
+    }
+
+    return {
+      cls, texto, chaveErro, limite, offline, enviando, conectado,
+      conflito: conflitoAte > agora, conflitoDesc, pendentes: n, idadeMaxMs: idade,
+      mostrarFaixa, faixaTexto, erro: erroRaw,
+    };
+  }
+
+  function pintaFaixa(est) {
+    if (typeof document === 'undefined') return;
+    const fx = document.getElementById('rd_faixa');
+    if (!fx) return;
+    if (!est.mostrarFaixa) {
+      fx.hidden = true;
+      return;
+    }
+    fx.hidden = false;
+    fx.className = 'rd-faixa ' + (est.chaveErro ? 'rd-fx-erro' : 'rd-fx-aviso');
+    const escFn = typeof esc === 'function' ? esc : (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const msg = est.faixaTexto || est.texto;
+    const chaveHtml = est.chaveErro ? '<button type="button" class="b s rd-fx-bt" onclick="rdIrConfigSync()">Config › Sincronização</button>' : '';
+    const html = `<span class="rd-fx-txt">${escFn(msg)}</span><span class="rd-fx-bts">${chaveHtml}<button type="button" class="b s rd-fx-bt" onclick="rdTentarAgora()">Tentar agora</button><button type="button" class="b s rd-fx-bt" onclick="rdSyncAbre()">Ver detalhes</button></span>`;
+    if (fx.innerHTML !== html) fx.innerHTML = html;
+  }
+
+  function atualizaUI() {
+    if (typeof document === 'undefined') return;
+    const est = estadoResumo();
+    const el = document.getElementById('sync');
+    if (el) {
+      el.className = est.cls;
+      el.title = est.texto;
+      const sp = el.querySelector('span');
+      if (sp && sp.textContent !== est.texto) sp.textContent = est.texto;
+    }
+    if (typeof rdPinta === 'function') rdPinta(est);
+    pintaFaixa(est);
+    if (typeof ofPinta === 'function') ofPinta();
+  }
+
+  function marcaConflitoResolvido(desc = '') {
+    conflitoAte = Date.now() + 8000;
+    conflitoDesc = desc;
+    atualizaUI();
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(atualizaUI, 8200);
+    if (typeof uiTimer?.unref === 'function') uiTimer.unref();
+  }
+
+  function agendaRetry(atrasoMs) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      if (contar() > 0) tentarAgora('backoff');
+    }, Math.max(500, atrasoMs));
+    if (typeof retryTimer?.unref === 'function') retryTimer.unref();
+  }
+
+  function aoFalhar(e) {
+    ultimoErro = descreveErro(e);
+    falhasSeguidas++;
+    const b = (typeof window !== 'undefined' && window.BCBR) || {};
+    if (e?.limite || e?.status === 429 || (b.pausaAte || 0) > Date.now()) {
+      const espera = Math.max(1000, (b.pausaAte || Date.now() + 60000) - Date.now() + 500);
+      agendaRetry(espera);
+    } else if (!(e?.chave || e?.status === 401 || e?.status === 403)) {
+      const espera = e?.status >= 500 ? Math.min(300000, 30000 * Math.pow(2, Math.min(3, falhasSeguidas - 1))) : 30000;
+      if (e?.status >= 500) backoffAte = Date.now() + espera;
+      agendaRetry(espera);
+    }
+    atualizaUI();
+  }
+
+  async function tentarAgora(motivo = 'manual') {
+    await hidrata();
+    await writesEmCurso;
+    const b = (typeof window !== 'undefined' && window.BCBR) || {};
+    if ((b.pausaAte || 0) > Date.now()) {
+      atualizaUI();
+      agendaRetry(b.pausaAte - Date.now() + 500);
+      return false;
+    }
+    if (motivo === 'manual' || motivo === 'online' || motivo === 'chave') {
+      backoffAte = 0;
+      falhasSeguidas = 0;
+    }
+    if (motivo === 'manual') {
+      b.limpaChaveErro?.();
+      b.semRede = false;
+      ultimoErro = '';
+    } else {
+      if (b.chaveErro && (!b.chaveErroToken || b.chaveErroToken === tokAtual())) { atualizaUI(); return false; }
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) { atualizaUI(); return false; }
+      if (motivo === 'timer30s' && backoffAte > Date.now()) { atualizaUI(); return false; }
+    }
+    if (drenando) return drenando;
+    drenando = (async () => {
+      let tudoOk = true;
+      atualizaUI();
+      try {
+        const podeSeguir = () => !((b.pausaAte || 0) > Date.now()) && !(b.chaveErro && (!b.chaveErroToken || b.chaveErroToken === tokAtual())) && !b.semRede;
+        if (typeof SyncNotas !== 'undefined') {
+          const okN = await SyncNotas.enviar();
+          if (okN === false) tudoOk = false;
+        }
+        if (podeSeguir() && typeof flush === 'function' && ((typeof dirty !== 'undefined' && dirty.size) || (typeof estDirty !== 'undefined' && estDirty))) {
+          const okF = await flush();
+          if (okF === false) tudoOk = false;
+        }
+        if (podeSeguir() && typeof SM !== 'undefined' && SM.sujo && typeof smEnviaSujoSync === 'function') {
+          const okS = await smEnviaSujoSync();
+          if (okS === false) tudoOk = false;
+        }
+        for (const fn of drenadores) {
+          try { if ((await fn()) === false) tudoOk = false; } catch (e) { tudoOk = false; }
+        }
+        if (tudoOk && !contar()) {
+          backoffAte = 0;
+          falhasSeguidas = 0;
+          ultimoErro = '';
+          if (typeof SM !== 'undefined') SM.erro = '';
+          if (typeof RD !== 'undefined') RD.erro = '';
+        }
+        return tudoOk;
+      } finally {
+        drenando = null;
+        atualizaUI();
+      }
+    })();
+    return drenando;
+  }
+
+  function registraHidratador(tipo, fn) {
+    hidratadores[tipo] = fn;
+    hidratadosTipos[tipo] = false;
+    if (hidratouDb) aplicaHidratador(tipo);
+  }
+  function registraDrenador(fn) { drenadores.push(fn); }
+
+  let progBridge = null, ultEstSnap = '';
+  const progRevs = Object.create(null);
+  function estadoSnap(over, cfg, resetAt) {
+    try { return JSON.stringify({ over, cfg, resetAt }); } catch (e) { return ''; }
+  }
+  function revProgresso(k) { return progRevs[k] || 0; }
+  function docPayload(k, st) {
+    if (k === 'estado') return { over: st.over, cfg: st.cfg, u: st.estU, resetAt: st.resetAt };
+    if (k.startsWith('c:')) { const n = +k.slice(2); return { items: st.cards.filter((c) => !c._rs && st.hk(c.id, 32) === n).map((c) => [c.id, c.f, c.v, c.tg || '', c.u || 0, c.x ? 1 : 0]) }; }
+    if (k.startsWith('g:')) { const id = k.slice(2); return st.uimg[id] ? { d: st.uimg[id] } : null; }
+    if (k.startsWith('m:')) return { t: st.metodo, u: st.metoU };
+    if (k.startsWith('p:')) { const n = +k.slice(2), o = {}; Object.keys(st.pon).forEach((id) => { if (st.hk(id, 8) === n) o[id] = st.pon[id]; }); return { m: o }; }
+    if (k.startsWith('i:')) { const n = +k.slice(2), o = {}; Object.keys(st.ia).forEach((id) => { if (st.hk(id, 8) === n) o[id] = st.ia[id]; }); return { m: o }; }
+    if (k.startsWith('s:')) { const n = +k.slice(2), o = {}; Object.keys(st.fcs).forEach((id) => { if (st.hk(id, 8) === n) o[id] = st.fcs[id]; }); return { s: o }; }
+    if (k === 'av:0') return { items: st.fcAv || {} };
+    return { items: st.all.filter((l) => st.wkKey(l.t) === k).map(st.packLog) };
+  }
+  function docTitulo(k) {
+    if (k === 'estado') return 'Configurações e blocos';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(k)) return 'Questões respondidas (' + k + ')';
+    if (k.startsWith('s:')) return 'Revisões de flashcards';
+    if (k.startsWith('c:')) return 'Cartões de flashcards';
+    if (k === 'av:0') return 'Avaliações de flashcards';
+    if (k.startsWith('p:')) return 'Edições / pontos de ensino';
+    if (k.startsWith('i:')) return 'Comentários de IA';
+    if (k.startsWith('m:')) return 'Manual metodológico';
+    if (k.startsWith('g:')) return 'Imagens do usuário';
+    return 'Progresso (' + k + ')';
+  }
+  function conectaProgresso(bridge) {
+    progBridge = bridge;
+    const st = bridge.get();
+    ultEstSnap = estadoSnap(st.over, st.cfg, st.resetAt);
+    const snapLS = leSnapshotProgLS();
+    if (snapLS) {
+      (snapLS.dirty || []).forEach((k) => { if (!st.dirty.has(k)) st.dirty.add(k); });
+      if (snapLS.estDirty && !st.estDirty) st.setEstDirty(true);
+      if (snapLS.estDirty) ultEstSnap = '';
+    }
+    registraHidratador('progresso', (itens, lsSnap) => {
+      if (!progBridge) return;
+      const cur = progBridge.get();
+      let hidratou = false;
+      if (lsSnap) {
+        (lsSnap.dirty || []).forEach((k) => cur.dirty.add(k));
+        if (lsSnap.estDirty) cur.setEstDirty(true);
+      }
+      if (Array.isArray(itens) && itens.length) {
+        for (const r of itens) {
+          const k = r.id.slice(5);
+          if (r.rev != null) progRevs[k] = Math.max(progRevs[k] || 0, Number(r.rev) || 0);
+          if (k === 'estado') { cur.setEstDirty(true); ultEstSnap = ''; }
+          else cur.dirty.add(k);
+          if (r.payload) {
+            const p = r.payload;
+            if (k === 'estado') {
+              if ((p.u || 0) >= (cur.estU || 0)) {
+                cur.applyEstado(p);
+                hidratou = true;
+              }
+            } else if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Array.isArray(p.items)) {
+              if (cur.mergeLogItems(p.items)) hidratou = true;
+            } else if (k.startsWith('fcs_') || k.startsWith('s:')) {
+              if (p.s && cur.mergeFcs(p.s)) hidratou = true;
+            } else if (k.startsWith('c:') && Array.isArray(p.items)) {
+              if (cur.mergeCards(p.items)) hidratou = true;
+            } else if (k === 'av:0' && p.items) {
+              if (cur.mergeAv(p.items)) hidratou = true;
+            } else if (k.startsWith('p:') && p.m) {
+              if (cur.mergePon(p.m)) hidratou = true;
+            } else if (k.startsWith('i:') && p.m) {
+              if (cur.mergeIa(p.m)) hidratou = true;
+            } else if (k.startsWith('m:') && p.t != null) {
+              if ((p.u || 0) >= (cur.metoU || 0)) { cur.applyMetodo(p); hidratou = true; }
+            } else if (k.startsWith('g:') && p.d) {
+              if (cur.mergeUimg(k.slice(2), p.d)) hidratou = true;
+            }
+          }
+        }
+      }
+      if (hidratou) cur.onHidratou();
+    });
+  }
+  function persisteProgresso(wk) {
+    if (!progBridge) return;
+    const st = progBridge.get();
+    const chaves = new Set(st.dirty);
+    if (wk && wk !== '_est') chaves.add(wk);
+    if (st.estDirty) chaves.add('estado');
+    ultEstSnap = estadoSnap(st.over, st.cfg, st.resetAt);
+    salvaSnapshotProgLS({ dirty: [...st.dirty], estDirty: !!st.estDirty, t: Date.now() });
+    const agora = Date.now();
+    for (const k of chaves) {
+      const payload = docPayload(k, st);
+      if (!payload) continue;
+      const ex = memMap.get('prog:' + k);
+      if (!wk && ex && ex.payload !== undefined && JSON.stringify(ex.payload) === JSON.stringify(payload)) continue;
+      progRevs[k] = (progRevs[k] || 0) + 1;
+      gravaItem({ id: 'prog:' + k, tipo: 'progresso', titulo: docTitulo(k), rev: progRevs[k], atualizadoEm: agora, payload });
+    }
+  }
+  function confirmaProgresso(k, rev) {
+    if (progBridge) {
+      const st = progBridge.get();
+      salvaSnapshotProgLS({ dirty: [...st.dirty], estDirty: !!st.estDirty, t: Date.now() });
+    }
+    confirmaItem('prog:' + k, rev);
+  }
+  function estadoMudou(over, cfg, resetAt) {
+    return estadoSnap(over, cfg, resetAt) !== ultEstSnap;
+  }
+  function marcaEstadoLimpo(over, cfg, resetAt) {
+    ultEstSnap = estadoSnap(over, cfg, resetAt);
+  }
+  function reconciliaRemoto(docs, st) {
+    const remById = new Map(docs.map((d) => [d.id, d.data() || {}]));
+    // log_<wk>: detecta itens faltando OU anulados localmente (l.x)
+    const weeks = new Set(st.all.map((l) => st.wkKey(l.t)));
+    for (const w of weeks) {
+      const rem = remById.get('log_' + w)?.items || [];
+      const rm = new Map(rem.map((a) => [a[0] + '|' + a[1], a]));
+      for (const l of st.all) {
+        if (st.wkKey(l.t) !== w) continue;
+        const r = rm.get(l.q + '|' + l.t);
+        if (!r || ((l.x ? 1 : 0) !== (r[6] ? 1 : 0))) { st.dirty.add(w); break; }
+      }
+    }
+    // cards_<k>: compara u por id
+    const cBuckets = new Set(st.cards.filter((c) => !c._rs).map((c) => st.hk(c.id, 32)));
+    for (const k of cBuckets) {
+      const rm = new Map((remById.get('cards_' + k)?.items || []).map((a) => [a[0], a]));
+      for (const c of st.cards) {
+        if (c._rs || st.hk(c.id, 32) !== k) continue;
+        const r = rm.get(c.id);
+        if (!r || (c.u || 0) > (r[4] || 0)) { st.dirty.add('c:' + k); break; }
+      }
+    }
+    // fcs_<k>: compara s[5] por id
+    for (const id of Object.keys(st.fcs)) {
+      const k = st.hk(id, 8), rs = remById.get('fcs_' + k)?.s || {};
+      const r = rs[id];
+      if (!r || (st.fcs[id][5] || 0) > (r[5] || 0)) st.dirty.add('s:' + k);
+    }
+    // pon_<k>: compara .u por id
+    for (const id of Object.keys(st.pon)) {
+      const k = st.hk(id, 8), rm = remById.get('pon_' + k)?.m || {};
+      const r = rm[id];
+      if (!r || (st.pon[id].u || 0) > (r.u || 0)) st.dirty.add('p:' + k);
+    }
+    // ia_<k>: faltando no remoto
+    for (const id of Object.keys(st.ia)) {
+      const k = st.hk(id, 8), rm = remById.get('ia_' + k)?.m || {};
+      if (!rm[id]) st.dirty.add('i:' + k);
+    }
+  }
+
+  function exportarObjeto() {
+    return {
+      geradoEm: new Date().toISOString(),
+      versao: (typeof window !== 'undefined' && window.BCBR_VERSAO) || '',
+      estado: estadoResumo(),
+      pendentes: listar(true),
+    };
+  }
+
+  const api = {
+    abrirDb, gravaItem, confirmaItem, salvaSnapshotProgLS, leSnapshotProgLS,
+    hidrata, pronto: () => hidrata(),
+    listar, contar, temPendencia, idadeMaxMs, estadoResumo, atualizaUI,
+    marcaConflitoResolvido, aoFalhar, tentarAgora, descreveErro,
+    registraHidratador, registraDrenador, exportarObjeto,
+    conectaProgresso, persisteProgresso, confirmaProgresso, revProgresso,
+    estadoSnap, estadoMudou, marcaEstadoLimpo, reconciliaRemoto,
+    _mem: memMap,
+  };
+
+  if (typeof window !== 'undefined') {
+    window.RadioFila = api;
+    window.addEventListener('bcbr-sync-estado', atualizaUI);
+    window.addEventListener('online', () => {
+      if (window.BCBR) window.BCBR.semRede = false;
+      falhasSeguidas = 0;
+      tentarAgora('online');
+    });
+    window.addEventListener('offline', atualizaUI);
+    window.addEventListener('pageshow', () => { if (contar()) tentarAgora('pageshow'); });
+    window.addEventListener('beforeunload', (e) => {
+      if (typeof ntAntes === 'function') ntAntes();
+      if (temPendencia()) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    });
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (contar()) tentarAgora('visivel');
+          atualizaUI();
+        }
+      });
+    }
+    setInterval(() => {
+      if (contar() > 0) tentarAgora('timer30s');
+      else if (conflitoAte > 0 || (window.BCBR?.pausaAte || 0) > 0) atualizaUI();
+    }, 30000);
+    setInterval(() => {
+      if (contar() > 0 || conflitoAte > 0) atualizaUI();
+    }, 5000);
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.RadioFila = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+
 /* Radio 1.48 — sincronização de páginas; sem dependência do editor/layout.
  * criarSyncNotas({api, repo, storage?, cache?, alterou?, aparelhoId?, atraso?})
  * listarPaginas(): Promise<metadados[]> — GET condicional do índice, nunca documentos.
@@ -27,51 +699,111 @@ function criarSyncNotas(o){
   try{aparelho||=o.storage?.getItem('bcbr_aparelhoId')}catch(e){}
   aparelho||='a'+Date.now().toString(36)+Math.random().toString(36).slice(2);
   try{o.storage?.setItem('bcbr_aparelhoId',aparelho)}catch(e){}
-  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0;
+  let indice=[],etag='',indiceSha=null,indiceConhecido=false,timer=null,voo=null,leitura=null,migrando=null,erro='',ultima=0,seq=0,hidratado=null,filaWrites=Promise.resolve();
   const pend=new Map(),abertas=new Map(),shas=new Map(),revisoes=new Map(),legadoPreservado=[];
-  const mudou=()=>o.alterou?.();
+  const mudou=()=>{o.alterou?.()};
+  const msgErro=e=>o.descreveErro?o.descreveErro(e):(e?.message||'Erro de sincronização');
   const metadados=p=>({id:p.id,titulo:p.titulo||'',pasta:p.pasta||'',ordem:p.ordem||0,atualizado:p.atualizado||'',sha:p.sha,...(p.fixada?{fixada:true}:{}),...(p.copiaDe?{copiaDe:p.copiaDe}:{}),...(p.origem?{origem:clone(p.origem)}:{})});
   const lista=()=>{const m=new Map(indice.map(p=>[p.id,p]));for(const {p} of pend.values()){if(p.excluida)m.delete(p.id);else m.set(p.id,metadados({...m.get(p.id),...p}))}return [...m.values()]};
   function cache(k,v){try{Promise.resolve(o.cache?.set(k,clone(v))).catch(()=>{})}catch(e){}}
   async function cacheLer(k){try{return await o.cache?.get(k)}catch(e){return null}}
-  function persistir(e){try{o.storage.setItem(e.k,JSON.stringify(e));e.volatil=false;return true}catch(x){e.volatil=true;return false}}
+  function gravaFilaIdb(e,localFalhou){
+    if(!o.cache?.set)return false;
+    const snap=clone({k:e.k,p:e.p,em:e.em,criadoEm:e.criadoEm||e.em,rev:e.rev});
+    try{
+      const p1=Promise.resolve(o.cache.set('notas:fila:'+e.k,snap));
+      const p2=Promise.resolve(o.cache.set('notas:fila:idx',[...pend.keys()]));
+      const ambos=Promise.all([p1,p2]);
+      ambos.catch(()=>{});
+      filaWrites=filaWrites.then(()=>ambos).catch(()=>{e.idb=false;if(localFalhou){e.volatil=true;clearTimeout(timer);timer=setTimeout(()=>enviar(),0);mudou()}});
+      return true;
+    }catch(err){
+      return false;
+    }
+  }
+  function removeFilaIdb(k){
+    if(!o.cache?.set)return;
+    filaWrites=filaWrites.then(async()=>{
+      await o.cache.set('notas:fila:'+k,null);
+      await o.cache.set('notas:fila:idx',[...pend.keys()]);
+    }).catch(()=>{});
+  }
+  function persistir(e){
+    let localOk=false;
+    try{o.storage.setItem(e.k,JSON.stringify(e));localOk=true}catch(x){localOk=false}
+    const idbOk=gravaFilaIdb(e,!localOk);
+    if(!localOk&&idbOk){try{o.storage?.removeItem(e.k)}catch(x){}}
+    e.idb=idbOk;
+    e.volatil=!(localOk||idbOk);
+    return !e.volatil;
+  }
   function carregarFila(){
-    try{for(const [k,e] of pend)if(!e.volatil&&!o.storage.getItem(k))pend.delete(k);
-      for(let i=0;i<o.storage.length;i++){const k=o.storage.key(i);if(!k?.startsWith(prefixo))continue;
-      try{const e=JSON.parse(o.storage.getItem(k));if(e?.p?.id&&e.rev&&!pend.get(k)?.volatil){chaveId(e.p.id);e.k=k;pend.set(k,e)}}catch(e){erro='Uma página pendente não pôde ser lida; a cópia local foi preservada.'}
+    try{for(const [k,e] of pend)if(!e.volatil&&!e.idb&&!o.storage?.getItem(k))pend.delete(k);
+      for(let i=0;i<(o.storage?.length||0);i++){const k=o.storage.key(i);if(!k?.startsWith(prefixo))continue;
+      try{const e=JSON.parse(o.storage.getItem(k));if(e?.p?.id&&e.rev){const cur=pend.get(k);if(!cur||(!cur.volatil&&((e.em||0)>(cur.em||0)||((e.em||0)===(cur.em||0)&&String(e.rev)>String(cur.rev))))){chaveId(e.p.id);e.k=k;e.criadoEm=cur?.criadoEm||e.criadoEm||e.em;pend.set(k,e)}}}catch(e){erro='Uma página pendente não pôde ser lida; a cópia local foi preservada.'}
     }}catch(e){}
   }
+  function hidratarFila(){
+    if(hidratado)return hidratado;
+    hidratado=(async()=>{
+      if(!o.cache?.get)return false;
+      let mudouAlgo=false;
+      try{
+        const idx=await o.cache.get('notas:fila:idx');
+        if(Array.isArray(idx)){
+          for(const k of idx){
+            if(typeof k!=='string'||!k.startsWith(prefixo))continue;
+            const e=await o.cache.get('notas:fila:'+k);
+            if(!e?.p?.id||!e.rev)continue;
+            try{chaveId(e.p.id)}catch(x){continue}
+            const cur=pend.get(k);
+            if(!cur||(e.em>(cur.em||0))||(e.em===cur.em&&String(e.rev)>String(cur.rev))){
+              e.k=k;e.criadoEm=cur?.criadoEm||e.criadoEm||e.em;e.volatil=false;e.idb=true;
+              pend.set(k,e);mudouAlgo=true;
+              if(e.p.doc)abertas.set(e.p.id,clone(e.p));
+            }
+          }
+        }
+      }catch(e){}
+      if(mudouAlgo)mudou();
+      return mudouAlgo;
+    })();
+    return hidratado;
+  }
   carregarFila();
+  hidratarFila();
   async function ler(path,opt={}){
     try{let f=await api('contents/'+path,opt);if(f.naoMudou)return f;
       if(f.encoding==='none'||(!f.content&&f.size>0)){const b=await api('git/blobs/'+encodeURIComponent(f.sha));f={...f,content:b.content}}
       return {...f,d:dec(f.content)};
     }catch(e){if(e.status===404)return {d:null,sha:null};throw e}
   }
-  async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;return (await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)})).content.sha}
+  async function put(path,d,sha){const body={message:'notas: '+path,branch:'main',content:b64(JSON.stringify(d))};if(sha)body.sha=sha;const r=await api('contents/'+path,{method:'PUT',body:JSON.stringify(body)});if(!r?.content?.sha)throw Error('GitHub não confirmou sha');return r.content.sha}
   const conflito=e=>e.status===409||e.status===422;
   async function listarPaginasCache(){
+    await hidratarFila();
     if(indice.length)return clone(lista());
     const c=await cacheLer('notas:indice');
     if(Array.isArray(c)&&!indice.length){indice=c;indiceConhecido=true;mudou()}
     return clone(lista());
   }
   async function listarPaginas(){
+    await hidratarFila();
     if(leitura)return leitura;
     leitura=(async()=>{try{const f=await ler(indicePath,{etag:etag||undefined});if(!f.naoMudou){if(f.d!==null&&!Array.isArray(f.d))throw Error('Índice de páginas inválido');indice=f.d||[];indiceSha=f.sha;etag=f.etag||'';cache('notas:indice',indice)}indiceConhecido=true;erro='';mudou();return clone(lista())}
-      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=e.message;mudou();return clone(lista())}
+      catch(e){if(!indice.length){const c=await cacheLer('notas:indice');if(Array.isArray(c)){indice=c;indiceConhecido=true}}erro=msgErro(e);mudou();return clone(lista())}
       finally{leitura=null}})();return leitura;
   }
   function pendente(id){return [...pend.values()].filter(e=>e.p.id===id).sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev)).at(-1)}
   async function abrirPaginaCache(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);await hidratarFila();const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const atual=abertas.get(id);if(atual)return clone(atual);
     const c=await cacheLer('notas:pagina:'+id);if(!c?.p)return null;
     const p=e?{...c.p,...e.p}:c.p;if(p.origem===null)delete p.origem;
     if(c.sha)shas.set(id,c.sha);tamanhos.set(id,textoDe(p.doc));abertas.set(id,clone(p));return clone(p);
   }
   async function abrirPagina(id){
-    chaveId(id);const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
+    chaveId(id);await hidratarFila();const e=pendente(id);if(e?.p.doc){abertas.set(id,clone(e.p));return clone(e.p)}
     const meta=lista().find(p=>p.id===id),atual=abertas.get(id),rev=revisoes.get(id)||0;
     if(atual&&meta?.sha&&shas.get(id)===meta.sha&&!e)return clone(atual);
     let p,f=null;
@@ -89,14 +821,14 @@ function criarSyncNotas(o){
     abertas.set(id,clone(p));return clone(p);
   }
   function salvarPagina(p){
-    chaveId(p.id);const anterior=pendente(p.id)?.p||abertas.get(p.id)||{},em=Date.now(),
+    chaveId(p.id);const antPend=pendente(p.id),anterior=antPend?.p||abertas.get(p.id)||{},em=Date.now(),
       novo={...clone(anterior),...clone(p),atualizado:p.atualizado||new Date().toISOString(),aparelhoId:aparelho};
     if(novo.origem===null)delete novo.origem;
-    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
+    const k=prefixo+aparelho+':'+p.id,e={k,p:novo,em,criadoEm:antPend?.criadoEm||em,rev:em.toString(36)+'-'+(++seq)+'-'+Math.random().toString(36).slice(2)};
     if(p.doc&&anterior.doc&&textoDe(p.doc)<textoDe(anterior.doc))apagou.add(p.id);
     pend.set(k,e);revisoes.set(p.id,(revisoes.get(p.id)||0)+1);
     if(novo.excluida)abertas.delete(p.id);else if(abertas.has(p.id)||novo.doc)abertas.set(p.id,clone(novo));
-    const duravel=persistir(e);clearTimeout(timer);timer=setTimeout(()=>enviar(),duravel?(o.atraso??1500):0);mudou();return true;
+    const duravel=persistir(e),ms=duravel?(o.atraso??1500):0;clearTimeout(timer);timer=setTimeout(()=>enviar(),ms);if(ms>=10000&&typeof timer?.unref==='function')timer.unref();mudou();return true;
   }
   async function atualizarIndice(id){
     for(let t=0;t<8;t++){
@@ -137,7 +869,8 @@ function criarSyncNotas(o){
     await gravar({id:'notas-recuperadas',titulo:'Notas — cópias recuperadas',pasta:'',ordem:0,atualizado:new Date().toISOString(),doc:{v:1,blocos},aparelhoId:aparelho},true);
   }
   async function gravar(p,uniao=false){
-    let f=null,sha=shas.get(p.id);if(uniao||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+    let f=null,sha=shas.get(p.id),teveConflito=false;if(uniao||!p.doc||!sha){f=await ler(caminho(p.id));sha=f.sha}
+    if(f&&!f.d&&p.excluida){await atualizarIndice(p.id).catch(()=>{});return {d:{...p,excluida:true},sha:null}}
     let unir=uniao||(!!f&&shas.get(p.id)!==f.sha);   // base desconhecida/diferente do remoto
     for(let t=0;t<8;t++){
       let completo={...(f?.d||{}),...p};
@@ -145,14 +878,17 @@ function criarSyncNotas(o){
       delete completo.sha;if(completo.origem===null||(p.doc&&!('origem' in p)&&!(uniao&&completo===f?.d)))delete completo.origem;
       if(p.doc&&f?.d?.doc&&unir)completo.doc={...p.doc,blocos:unirBlocos(blocosDe(p.doc),blocosDe(f.d.doc))};
       if(!completo.doc)throw Error('Conteúdo da página indisponível; alteração preservada.');
-      if(f?.d&&!f.d.excluida&&(uniao||docVazio(completo.doc))&&JSON.stringify(completo.doc)===JSON.stringify(f.d.doc))return atualizarIndice(p.id);   // nada a acrescentar
+      if(f?.d&&!f.d.excluida&&(uniao||docVazio(completo.doc))&&JSON.stringify(completo.doc)===JSON.stringify(f.d.doc)){const r=await atualizarIndice(p.id);if(teveConflito)o.aoResolverConflito?.(p.id);return r}   // nada a acrescentar
       if(f?.d&&!f.d.excluida&&docVazio(completo.doc)&&!docVazio(f.d.doc))completo.doc=clone(f.d.doc);   // página vazia nunca apaga remoto com conteúdo
       try{
         if(!f&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&textoDe(completo.doc)<(tamanhos.get(p.id)||0)*0.5){f=await ler(caminho(p.id));if(f.sha!==sha){unir=true;continue}}
         const antes=f?.d?.doc?textoDe(f.d.doc):0;
         if(antes>0&&textoDe(completo.doc)<antes*0.5&&!apagou.has(p.id)&&p.id!=='notas-recuperadas'&&!f.d.excluida)await guardarCopia(p.id,f);
-        sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);tamanhos.set(p.id,textoDe(completo.doc));return await atualizarIndice(p.id);
-      }catch(e){if(!conflito(e))throw e;f=await ler(caminho(p.id));sha=f.sha;unir=true}
+        sha=await put(caminho(p.id),completo,sha);shas.set(p.id,sha);tamanhos.set(p.id,textoDe(completo.doc));
+        const resInd=await atualizarIndice(p.id);
+        if(teveConflito)o.aoResolverConflito?.(p.id);
+        return resInd;
+      }catch(e){if(!conflito(e))throw e;teveConflito=true;f=await ler(caminho(p.id));sha=f.sha;unir=true}
     }throw Error('Página ocupada; alteração permanece na fila.');
   }
   // Remove legado só depois de reler cada arquivo e achar todos os ids de bloco.
@@ -160,16 +896,17 @@ function criarSyncNotas(o){
     if(!blocosDe(p.doc).every(b=>docVazio({blocos:[b]})||ids.has(chaveB(b))))throw Error('Migração incompleta; plano preservado.')}
   async function enviar(){
     clearTimeout(timer);if(voo)return voo;
-    const executar=async()=>{carregarFila();try{
+    const executar=async()=>{await hidratarFila();await filaWrites;carregarFila();if(!pend.size)return true;if(o.podeEnviar&&!o.podeEnviar())return false;try{
       // Snapshot: edição durante PUT tem outro rev e nunca é retirada por esta confirmação.
       for(const e of [...pend.values()].sort((a,b)=>a.em-b.em||a.rev.localeCompare(b.rev))){
         const confirmado=await gravar(clone(e.p));ultima=Date.now();erro='';
-        if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
+        if(pend.get(e.k)?.rev===e.rev){pend.delete(e.k);try{if(JSON.parse(o.storage?.getItem(e.k)||'null')?.rev===e.rev)o.storage.removeItem(e.k)}catch(x){}
+          removeFilaIdb(e.k);
           if(e.p.excluida)abertas.delete(e.p.id);else if((abertas.has(e.p.id)||e.p.doc)&&confirmado?.d)abertas.set(e.p.id,clone(confirmado.d));
           if(confirmado?.d)cache('notas:pagina:'+e.p.id,{sha:confirmado.sha,p:confirmado.d});}
       }return true;
-    }catch(e){erro=e.message;return false}};
-    voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
+    }catch(e){erro=msgErro(e);o.aoFalhar?.(e);return false}};
+    voo=(o.trava?o.trava(executar):executar()).finally(()=>{voo=null;mudou();if(pend.size&&!erro&&(!o.podeEnviar||o.podeEnviar())){clearTimeout(timer);timer=setTimeout(enviar,0)}});return voo;
   }
   // Versões: commits do arquivo da página; {plano:true} lê o histórico anterior à 1.48 (notasDoc / notasPaginas em semana/plano.json).
   async function versoes(id,opt={}){
@@ -255,7 +992,7 @@ function criarSyncNotas(o){
         await aplicarLegadoPlano(x,emIso);
         try{o.storage.setItem('bcbr_migrada_v2:'+k,h)}catch(e){}
       }
-    }catch(e){erro=e.message}
+    }catch(e){erro=msgErro(e)}
   }
   async function baixarTodas(aoAndar){
     const pgs=await listarPaginas(),imgs=new Set(),colhe=x=>{const s=JSON.stringify(x||'');for(const m of s.matchAll(/\.\/img\/([^"'\s?#<>\\]+)/g)){let nm=m[1];try{nm=decodeURIComponent(nm)}catch(e){}imgs.add(nm)}};
@@ -274,8 +1011,16 @@ function criarSyncNotas(o){
     }
     return {paginas:pgs.length,imagens:[...imgs]};
   }
-  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,
-    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido}),
+  const criadoEmMin=()=>[...pend.values()].reduce((m,e)=>Math.min(m,e.criadoEm||e.em||Date.now()),Infinity);
+  const pendentesDetalhe=(comPayload=false)=>[...pend.values()].sort((a,b)=>(a.criadoEm||a.em)-(b.criadoEm||b.em)).map(e=>({
+    id:'nota:'+e.p.id,pageId:e.p.id,tipo:'nota',
+    titulo:(e.p.excluida?'Excluir nota: ':'Nota: ')+(e.p.titulo||e.p.id),
+    detalhe:e.p.excluida?'Exclusão pendente':'Alteração pendente',
+    criadoEm:e.criadoEm||e.em,atualizadoEm:e.em,rev:e.rev,erro:erro||'',
+    ...(comPayload?{payload:clone(e.p)}:{})
+  }));
+  return {listarPaginas,listarPaginasCache,abrirPagina,abrirPaginaCache,baixarTodas,salvarPagina,versoes,restaurar,enviar,integrarPlano,receberLegado,pendentesDetalhe,pronto:hidratarFila(),
+    resumo:()=>({pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,criadoEmMin:pend.size?criadoEmMin():0}),
     paginasMeta:()=>clone(lista()),
     estado:()=>({paginas:clone(lista()),abertas:clone(Object.fromEntries(abertas)),pendentes:pend.size,volatil:[...pend.values()].some(e=>e.volatil),erro,ultima,enviando:!!voo,indiceConhecido,legado:clone(legadoPreservado)})};
 }
@@ -300,11 +1045,15 @@ const SyncNotas=typeof BCBR==='undefined'?null:criarSyncNotas({
     return {get:k=>op(k,null,false),set:(k,v)=>op(k,v,true)};
   })(),
   converterAntigas:notas=>{const blocos=ntOrdenadas(notas).map(ntNotaParaBloco);return {id:'notas',titulo:'Notas',doc:{v:1,blocos},atualizado:blocos.reduce((s,b)=>b.atualizado>s?b.atualizado:s,'')}},
-  alterou:()=>{if(typeof rdPinta==='function')rdPinta();if(typeof ntLateralPinta==='function')ntLateralPinta()}
+  aoResolverConflito:id=>{try{window.RadioFila?.marcaConflitoResolvido?.('Nota: '+id)}catch(e){}},
+  aoFalhar:e=>{try{window.RadioFila?.aoFalhar?.(e)}catch(x){}},
+  descreveErro:e=>typeof window!=='undefined'&&window.RadioFila?.descreveErro?window.RadioFila.descreveErro(e):(e?.message||'Erro de sincronização'),
+  podeEnviar:()=>{const b=typeof window!=='undefined'&&window.BCBR;if(!b)return true;if((b.pausaAte||0)>Date.now())return false;let tk='';try{tk=localStorage.getItem('bcbr_gh_token')||''}catch(e){}return !(b.chaveErro&&(!b.chaveErroToken||b.chaveErroToken===tk))},
+  alterou:()=>{if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();else if(typeof rdPinta==='function')rdPinta();if(typeof ntLateralPinta==='function')ntLateralPinta()}
 });
 if(typeof window!=='undefined'){
-  window.addEventListener('online',()=>{SyncNotas?.enviar().then(()=>smPuxar())});
-  window.addEventListener('storage',e=>{if(e.key?.startsWith('bcbr_paginas_pendentes_v2:'))SyncNotas?.enviar().then(()=>smPuxar())});
+  window.addEventListener('online',()=>{if(typeof RadioFila==='undefined')SyncNotas?.enviar().then(()=>smPuxar())});
+  window.addEventListener('storage',e=>{if(e.key?.startsWith('bcbr_paginas_pendentes_v2:')){if(typeof RadioFila!=='undefined')RadioFila.tentarAgora('storage');else SyncNotas?.enviar().then(()=>smPuxar())}});
 }
 
 
@@ -554,7 +1303,7 @@ try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d
 // 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
 // SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
 // locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
-try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null);SM.pendMsgs=SM.sujo?JSON.parse(localStorage.getItem('sm_pend_msgs')||'[]'):[]}catch(e){SM.pendMsgs=[]}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const SM_MERGE_FORA=new Set(['notasDoc','notas','notas_v138','paginasEmArquivos']);
@@ -597,12 +1346,48 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
 const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
 function smSujo(sim){
   SM.sujo=sim;
-  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
+  if(!sim){SM.sujoDesde=0;SM.falhou=false;}
+  else if(!SM.sujoDesde)SM.sujoDesde=Date.now();
+  try{
+    if(sim){
+      if(localStorage.getItem('sm_sujo')===null)localStorage.setItem('sm_sujo',String(SM.sujoDesde));
+      if(SM.base)localStorage.setItem('sm_base2',SM.base);
+      if(SM.pendMsgs?.length)localStorage.setItem('sm_pend_msgs',JSON.stringify(SM.pendMsgs.slice(-10)));
+    }else{
+      SM.pendMsgs=[];
+      localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2');localStorage.removeItem('sm_pend_msgs');
+      if(typeof RadioFila!=='undefined')RadioFila.confirmaItem('semana:plano',SM.pendRev);
+    }
+  }catch(e){}
+  if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();
 }
 // Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
+function smEnviaSujoSync(){
+  if(!SM.d||!SM.sujo)return Promise.resolve(true);
+  if(SM.enviandoSujo)return SM.enviandoSujoP||Promise.resolve(true);
+  SM.enviandoSujo=true;
+  const p=smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false;SM.enviandoSujoP=null});
+  SM.enviandoSujoP=p;
+  return p;
+}
 function smEnviaSujo(){
   if(!SM.d||!SM.sujo||SM.enviandoSujo||navigator.onLine===false)return;
-  SM.enviandoSujo=true;smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false});
+  if(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now())return;
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})())return;
+  return smEnviaSujoSync();
+}
+if(typeof RadioFila!=='undefined'){
+  RadioFila.registraHidratador('semana',rec=>{
+    if(!rec||!rec.payload||!rec.payload.d||rec.payload.d.v!==2)return;
+    if(!SM.sujo||(rec.atualizadoEm||0)>=(SM.sujoDesde||0)){
+      SM.d=rec.payload.d;
+      if(rec.payload.base)SM.base=rec.payload.base;
+      SM.sujo=true;SM.sujoDesde=rec.criadoEm||rec.payload.sujoDesde||SM.sujoDesde||Date.now();
+      SM.pendMsgs=Array.isArray(rec.payload.msgs)?rec.payload.msgs:(SM.pendMsgs||[]);
+      SM.pendRev=rec.rev;SM.ok=true;
+      smGuardaCache();smAuto();smRender();smNativoTarefas();
+    }
+  });
 }
 const smDec=s=>decodeURIComponent(escape(atob(String(s).replace(/\n/g,''))));
 const smId=()=>'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -632,12 +1417,12 @@ async function smLerArquivo(path=SM_ARQ,opts={}){
   return f;
 }
 function smErroLeitura(e){
-  if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
+  if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem internet; mostrando a última cópia do aparelho.';
   if(e.limite||(e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse|ocupado/i.test(e.resp||e.message||''))){
-    if(e.ate){const d=new Date(e.ate);return 'Limite de uso do GitHub atingido; tentando às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
-    return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+    if(e.ate){const d=new Date(e.ate);return 'Limite do GitHub, tenta às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
+    return 'Limite do GitHub; tenta de novo em alguns minutos.';
   }
-  if(e.status===401||e.status===403)return 'GitHub recusou a chave (401/403) — confira a chave em Ajustes.';
+  if(e.chave||e.status===401||e.status===403)return 'Chave do GitHub inválida ou vencida → Config › Sincronização';
   const motivo=e.name==='SyntaxError'?'JSON inválido':e.name==='URIError'||e.name==='InvalidCharacterError'?'codificação inválida':e.status?'HTTP '+e.status:String(e.message||'resposta inválida').slice(0,100);
   return 'Não consegui ler os dados do GitHub ('+motivo+'); mostrando a última cópia do aparelho.';
 }
@@ -647,12 +1432,15 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
 }
 // 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
+  if(typeof RadioFila!=='undefined'&&RadioFila.pronto)await RadioFila.pronto().catch(()=>{});
   if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now()){if(BCBR.limiteMsg)SM.erro=BCBR.limiteMsg;return}
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})()){SM.erro='Chave do GitHub inválida ou vencida → Config › Sincronização';return}
   if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
   try{await smPuxar1()}finally{SM.puxando=0;smEnviaSujo()}
 }
 async function smPuxar1(){
   if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now())return;
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})())return;
   smAgendaPuxar();
   if(typeof SyncNotas!=='undefined'){await SyncNotas.receberLegado();await SyncNotas.enviar();await SyncNotas.listarPaginas();if(typeof ntSincroniza==='function')await ntSincroniza()}
   try{
@@ -691,13 +1479,29 @@ function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
   if(!SM.d)return Promise.resolve(false);
   const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
+  const eraSujo=!!SM.sujo;
+  if(!SM.sujo&&!SM.base)SM.base=JSON.stringify(SM.d);
   fn(SM.d);
+  if(msg&&msg!=='alterações feitas sem conexão'){
+    SM.pendMsgs=SM.pendMsgs||[];
+    if(!SM.pendMsgs.includes(msg))SM.pendMsgs.push(msg);
+    if(SM.pendMsgs.length>10)SM.pendMsgs=SM.pendMsgs.slice(-10);
+  }
+  SM.pendRev=Date.now()+Math.random();
+  SM.sujo=true;
+  if(!SM.sujoDesde)SM.sujoDesde=Date.now();
+  try{if(localStorage.getItem('sm_sujo')===null)localStorage.setItem('sm_sujo',String(SM.sujoDesde));if(SM.base)localStorage.setItem('sm_base2',SM.base);if(SM.pendMsgs?.length)localStorage.setItem('sm_pend_msgs',JSON.stringify(SM.pendMsgs.slice(-10)))}catch(e){}
+  if(typeof RadioFila!=='undefined'){
+    RadioFila.gravaItem({id:'semana:plano',tipo:'semana',titulo:'Semana / Tarefas',detalhe:(SM.pendMsgs||[]).join(', ')||msg||'Alterações no plano',rev:SM.pendRev,payload:{d:SM.d,base:SM.base,sujoDesde:SM.sujoDesde,msgs:SM.pendMsgs||[]}});
+  }
   if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
   smGuardaCache();smRender();smNativoTarefas();
-  const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
+  const item={fn,aoSalvar,msg,feito:false,ok:false,rev:SM.pendRev};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
     const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});if(typeof rdGancho==='function')rdGancho('fim',grupo.length);return ok};
+    const revLote=grupo.reduce((m,g)=>g.rev||m,SM.pendRev);
+    let teveConflito=false;
     for(let t=0;t<6;t++){
       try{
         grupo.forEach(g=>g.fn(SM.d));
@@ -707,17 +1511,25 @@ function smMudar(fn,msg,aoSalvar){
         SM.gravs=(SM.gravs||0)+1;
         const enviadas=typeof rdGancho==='function'?rdGancho('envio',texto):null;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
+        if(!r?.content?.sha)throw new Error('GitHub não confirmou sha');
         if(typeof rdGancho==='function')rdGancho('confirmou',enviadas,texto);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
-        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
+        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;
+        if(!SM.lote.length&&SM.pendRev===revLote)smSujo(false);
+        smGuardaCache();smNativoTarefas();
+        if(teveConflito&&typeof RadioFila!=='undefined')RadioFila.marcaConflitoResolvido('Semana / Tarefas');
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
+        if(e.status===409||e.status===422){teveConflito=true;try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=(eraSujo||SM.falhou)?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
         if(typeof rdGancho==='function')rdGancho('erro',e);
-        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
+        SM.falhou=true;
+        SM.erro=typeof RadioFila!=='undefined'?RadioFila.descreveErro(e):('Não salvou no GitHub ('+e.message+'). A mudança fica neste aparelho.');
+        smSujo(true);if(typeof RadioFila!=='undefined')RadioFila.aoFalhar(e);
+        smRender();return fim(false);
       }
     }
+    SM.falhou=true;
     SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smSujo(true);smRender();return fim(false);
   };
   SM.fila=SM.fila.then(tarefa);return SM.fila;
@@ -4549,28 +5361,145 @@ function vPreliminares(){
 }
 
 
-// Radio 1.48: estado de salvamento e exportação explícita; sem diário/detector de perda.
+// Radio 1.65.0: estado unificado de sincronização, faixa fixa, detalhes, exportação de pendências e chave em Config > Sincronização.
 const RD={ultima:0,enviando:0,erro:''};
 function rdGancho(acao,a){
   if(acao==='inicio')RD.enviando++;
   if(acao==='fim')RD.enviando=Math.max(0,RD.enviando-(a||1));
   if(acao==='confirmou'||acao==='leitura'){RD.ultima=Date.now();RD.erro=''}
-  if(acao==='erro')RD.erro=a?.message||'Falha de sincronização';
-  rdPinta();
+  if(acao==='erro')RD.erro=typeof RadioFila!=='undefined'?RadioFila.descreveErro(a):(a?.message||'Falha de sincronização');
+  if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();else rdPinta();
 }
 function rdEstado(){
+  if(typeof RadioFila!=='undefined')return RadioFila.estadoResumo().texto;
   const s=SyncNotas.resumo?SyncNotas.resumo():SyncNotas.estado();
   if(s.volatil)return 'Pendente — mantenha esta aba aberta';
-  if(navigator.onLine===false||window.BCBR?.semRede)return 'Pendente — sem conexão';
+  if(navigator.onLine===false||window.BCBR?.semRede)return 'Sem internet';
   if((window.BCBR?.pausaAte||0)>Date.now()&&window.BCBR?.limiteMsg)return window.BCBR.limiteMsg;
   if(s.erro||SM.erro||RD.erro)return s.erro||SM.erro||RD.erro;
-  if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Enviando…';
-  return s.ultima||RD.ultima?'Salvo ✓':'Aguardando sincronização';
+  if(s.pendentes||s.enviando||SM.sujo||RD.enviando)return 'Salvando…';
+  return s.ultima||RD.ultima?'Sincronizado':'Aguardando sincronização';
 }
-function rdPinta(){const e=document.getElementById('rd_sync');if(e){e.textContent=rdEstado();e.title=rdEstado()}}
+function rdPinta(est){
+  const e=document.getElementById('rd_sync');if(!e)return;
+  const r=est||(typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),cls:''});
+  if(e.textContent!==r.texto)e.textContent=r.texto;
+  if(e.title!==r.texto)e.title=r.texto;
+  e.classList.toggle('rd-erro',r.cls==='err');
+  e.classList.toggle('rd-pend',r.cls==='pend'||r.cls==='saving');
+  e.classList.toggle('rd-ok',r.cls==='ok');
+}
 function rdJanela(titulo,html){const ov=ntModal('rd-modal',`<div class="nt-modal-t"><b>${esc(titulo)}</b><button type="button" class="nt-x" aria-label="Fechar">✕</button></div>${html}`);ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);return ov}
-async function rdSincronizar(){ntAntes();if(SM.sujo)await smMudar(()=>{},'sincronização manual');await SyncNotas.enviar();await smPuxar();rdPinta()}
-function rdSyncAbre(){const ov=rdJanela('Sincronização',`<p>${esc(rdEstado())}</p><button class="b" data-sync>Sincronizar agora</button>`);ov.querySelector('[data-sync]').onclick=async e=>{e.target.disabled=true;try{await rdSincronizar();ntModalFecha(ov)}finally{e.target.disabled=false}}}
+async function rdTentarAgora(){
+  if(typeof ntAntes==='function')ntAntes();
+  if(typeof RadioFila!=='undefined')await RadioFila.tentarAgora('manual');
+  else await rdSincronizar();
+}
+async function rdSincronizar(){
+  if(typeof ntAntes==='function')ntAntes();
+  if(typeof RadioFila!=='undefined'){await RadioFila.tentarAgora('manual');await smPuxar();RadioFila.atualizaUI();return}
+  if(SM.sujo)await smMudar(()=>{},'sincronização manual');
+  await SyncNotas.enviar();await smPuxar();rdPinta();
+}
+function rdIrConfigSync(){
+  document.querySelectorAll('.nt-modal').forEach(m=>{try{ntModalFecha(m)}catch(e){m.remove()}});
+  if(typeof cfgTab!=='undefined')cfgTab='sync';
+  if(typeof go==='function')go('config');
+}
+function rdExportarPendencias(){
+  try{
+    const dados=typeof RadioFila!=='undefined'?RadioFila.exportarObjeto():{geradoEm:new Date().toISOString(),pendentes:[]};
+    const stamp=new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+    const url=URL.createObjectURL(new Blob([JSON.stringify(dados,null,2)],{type:'application/json;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download=`radio-pendencias-${stamp}.json`;a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    if(typeof toast==='function')toast('Pendências exportadas');
+  }catch(e){if(typeof toast==='function')toast('Não foi possível exportar: '+e.message)}
+}
+function rdFormataIdade(ms){
+  const s=Math.max(0,Math.floor(ms/1000));
+  if(s<60)return 'agora';
+  const m=Math.floor(s/60);
+  if(m<60)return `há ${m} min`;
+  const h=Math.floor(m/60);
+  return `há ${h} h ${m%60} min`;
+}
+function rdRenderDetalhesHtml(){
+  const est=typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),chaveErro:false,pendentes:0};
+  const itens=typeof RadioFila!=='undefined'?RadioFila.listar(false):[];
+  const agora=Date.now();
+  const tipoLab={nota:'Nota',progresso:'Progresso',semana:'Semana'};
+  const listaHtml=itens.length
+    ?`<ul class="rd-lista">${itens.map(it=>`<li><span class="rd-tag">${esc(tipoLab[it.tipo]||it.tipo)}</span> <span class="rd-it-t">${esc(it.titulo)}</span> <span class="mut">(${esc(rdFormataIdade(agora-(it.criadoEm||agora)))})</span>${it.detalhe?`<div class="mut rd-it-d">${esc(it.detalhe)}</div>`:''}${it.erro?`<div class="rd-it-e">${esc(it.erro)}</div>`:''}</li>`).join('')}</ul>`
+    :'<p class="mut">Nenhuma alteração pendente. Tudo confirmado no GitHub.</p>';
+  return `<p class="rd-det-st"><b>Estado:</b> ${esc(est.texto)}</p>
+    <div class="row" style="margin:10px 0">
+      <button type="button" class="b" data-sync>Tentar agora</button>
+      <button type="button" class="b s" data-exp>Exportar pendências</button>
+      ${est.chaveErro?'<button type="button" class="b s" onclick="rdIrConfigSync()">Config › Sincronização</button>':''}
+    </div>
+    <h3>Pendentes (${itens.length})</h3>${listaHtml}`;
+}
+function rdSyncAbre(){
+  const ov=rdJanela('Sincronização',`<div id="rd_det_box">${rdRenderDetalhesHtml()}</div>`);
+  const liga=()=>{
+    const bSync=ov.querySelector('[data-sync]'),bExp=ov.querySelector('[data-exp]');
+    if(bExp)bExp.onclick=()=>rdExportarPendencias();
+    if(bSync)bSync.onclick=async e=>{
+      e.target.disabled=true;
+      try{await rdTentarAgora()}finally{
+        const box=ov.querySelector('#rd_det_box');
+        if(box){box.innerHTML=rdRenderDetalhesHtml();liga()}
+      }
+    };
+  };
+  liga();
+}
+function rdCfgSyncHtml(){
+  const tk=(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})();
+  const est=typeof RadioFila!=='undefined'?RadioFila.estadoResumo():{texto:rdEstado(),pendentes:0};
+  return `<div class="card"><h3>Chave do GitHub (banco-cbr-app)</h3>
+    <p class="mut">Token fine-grained com permissão <b>Contents: Read and write</b> no repositório <b>${esc(typeof BCBR!=='undefined'?BCBR.REPO:'banco-cbr-app')}</b>.</p>
+    <p class="mut">Estado atual: <b>${esc(est.texto)}</b></p>
+    <label style="display:block;margin-bottom:10px">Chave atual<input id="cfg_gh_tk" type="password" style="width:100%" value="${esc(tk)}" placeholder="ghp_... ou github_pat_..."></label>
+    <div class="row">
+      <button type="button" class="b" onclick="rdCfgSalvaChave()">Salvar chave</button>
+      <button type="button" class="b s" onclick="rdCfgTestaChave()">Testar chave</button>
+      <button type="button" class="b s" onclick="rdSyncAbre()">Ver pendências (${est.pendentes||0})</button>
+    </div>
+  </div>`;
+}
+async function rdCfgSalvaChave(){
+  const el=document.getElementById('cfg_gh_tk');if(!el)return;
+  const v=el.value.trim();
+  if(!v){if(typeof toast==='function')toast('Informe uma chave válida do GitHub.');return}
+  try{localStorage.setItem('bcbr_gh_token',v);localStorage.removeItem('bcbr_auth_aviso')}catch(e){}
+  try{await window.BCBR?.passarChaveSW?.()}catch(e){}
+  window.BCBR?.limpaChaveErro?.();
+  if(typeof toast==='function')toast('Chave salva — tentando sincronizar…');
+  await rdTentarAgora();
+  if(typeof render==='function'&&typeof tela!=='undefined'&&tela==='config')render();
+}
+async function rdCfgTestaChave(){
+  const el=document.getElementById('cfg_gh_tk'),digitada=el?el.value.trim():'';
+  const salva=(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})();
+  if(!digitada&&!salva){if(typeof toast==='function')toast('Informe uma chave antes de testar.');return}
+  try{
+    if(digitada&&digitada!==salva){
+      const r=await fetch(`https://api.github.com/repos/${window.BCBR.REPO}`,{cache:'no-store',headers:{Authorization:'Bearer '+digitada,Accept:'application/vnd.github+json'}});
+      if(!r.ok)throw new Error('GitHub '+r.status);
+      if(typeof toast==='function')toast('Chave válida! Clique em Salvar chave para aplicar.');
+    }else{
+      window.BCBR?.limpaChaveErro?.();
+      await window.BCBR?.api?.(`/repos/${window.BCBR.REPO}`);
+      window.BCBR?.limpaChaveErro?.();
+      if(typeof toast==='function')toast('Chave válida!');
+    }
+  }catch(e){
+    if(typeof toast==='function')toast('Falha na chave: '+(e?.message||'inválida'));
+  }
+  if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();
+}
 function rdUsoLocal(){
   const chaves=[];let bytes=0,erro=false;
   try{for(let i=0;i<localStorage.length;i++){const chave=localStorage.key(i);if(chave===null)continue;const valor=localStorage.getItem(chave);if(valor===null)continue;const tamanho=(chave.length+valor.length)*2;bytes+=tamanho;chaves.push({chave,bytes:tamanho})}}catch(e){erro=true}
@@ -4578,7 +5507,6 @@ function rdUsoLocal(){
 }
 const rdKB=bytes=>(bytes/1024).toFixed(1);
 async function rdStorageAtualiza(){
-  // Cede ao render síncrono de Ajustes. Uma tentativa de persistência por sessão, mesmo se falhar.
   await Promise.resolve();
   if(!RD.persistTentada){RD.persistTentada=true;try{RD.persist=typeof navigator.storage?.persist==='function'?await navigator.storage.persist():null}catch(e){RD.persist=null}}
   let texto='Estimativa do navegador indisponível.';
@@ -4588,9 +5516,8 @@ async function rdStorageAtualiza(){
 }
 function rdBackupHtml(){
   const uso=rdUsoLocal();rdStorageAtualiza();
-  return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Páginas: use Versões no menu da página. A cópia abaixo inclui as páginas disponíveis online e as pendentes deste aparelho.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button><p>localStorage: ${uso.erro?'leitura indisponível':rdKB(uso.bytes)+' KB usados'} (estimativa UTF-16 de chaves e valores).</p><p>8 maiores chaves:</p><ol style="overflow-wrap:anywhere">${uso.chaves.map(c=>`<li>${esc(c.chave)}: ${rdKB(c.bytes)} KB</li>`).join('')}</ol><p id="rd_estimativa" aria-live="polite">Consultando armazenamento do navegador…</p></div>`;
+  return `<div class="card"><h3>Backup e recuperação</h3><p><a href="https://github.com/${esc(BCBR.REPO)}/tree/backups" target="_blank" rel="noopener noreferrer">Abrir backup diário</a></p><p>Páginas: use Versões no menu da página. A cópia abaixo inclui as páginas disponíveis online e as pendentes deste aparelho.</p><button type="button" class="b" onclick="rdBaixar()">Baixar cópia agora</button> <button type="button" class="b s" onclick="rdExportarPendencias()">Exportar pendências</button><p>localStorage: ${uso.erro?'leitura indisponível':rdKB(uso.bytes)+' KB usados'} (estimativa UTF-16 de chaves e valores).</p><p>8 maiores chaves:</p><ol style="overflow-wrap:anywhere">${uso.chaves.map(c=>`<li>${esc(c.chave)}: ${rdKB(c.bytes)} KB</li>`).join('')}</ol><p id="rd_estimativa" aria-live="polite">Consultando armazenamento do navegador…</p></div>`;
 }
-
 async function rdBaixar(){
   ntAntes();const paginas=[];
   try{for(const p of await SyncNotas.listarPaginas())paginas.push(await SyncNotas.abrirPagina(p.id));
@@ -4598,8 +5525,8 @@ async function rdBaixar(){
   }catch(e){toast('Não foi possível completar a cópia: '+e.message)}
 }
 window.addEventListener('pageshow',()=>smPuxar());
-window.addEventListener('online',rdPinta);window.addEventListener('offline',rdPinta);
-setInterval(rdPinta,1000);
+window.addEventListener('online',()=>rdPinta());window.addEventListener('offline',()=>rdPinta());
+setInterval(()=>rdPinta(),1000);
 
 
 // Busca global (1.42): Ctrl+P (e Ctrl+K fora do texto das Notas) em qualquer aba. Procura em blocos das Notas, páginas, tarefas, eventos do calendário,
@@ -4759,6 +5686,7 @@ function ofIcoLoad(pct){
   return `<svg class="of-ring" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle class="of-trk" cx="12" cy="12" r="9"/><circle class="of-arc" cx="12" cy="12" r="9" stroke-dasharray="${c}" stroke-dashoffset="${off}"/></svg><span class="of-pct">${p}%</span><span class="of-bar" aria-hidden="true"><i style="width:${p}%"></i></span>`;
 }
 function ofPendentes(){
+  if(typeof RadioFila!=='undefined')return RadioFila.contar();
   let n=0;
   try{if(typeof ntTemPendentes==='function'&&ntTemPendentes())n++;if(SM.sujo)n++}catch(e){}
   try{n+=dirty.size+(estDirty?1:0)}catch(e){}
@@ -5134,6 +6062,7 @@ function vFoco(){
 
 
 // ===== util =====
+window.BCBR_APP_ATIVO=true;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const mdI=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g,'$1<i>$2</i>').replace(/^✔/,'<span class="ok">✔</span>').replace(/^✘/,'<span class="no">✘</span>');
@@ -5278,6 +6207,7 @@ function rsSemeia(){
   if(typeof fcMetaLimpa==='function')fcMetaLimpa();
   cards=cards.filter(c=>!c._rs||vistos.has(c.id))}
 rsSemeia();
+if(typeof fcMigraFundidos==='function')fcMigraFundidos('save');
 let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
 let fcAv=load('cbr_fcav',{});        // id -> {id,tema,frente,verso,voto,motivo,data,u}
 let over=load('cbr_over',{});        // id -> areaId (manual)
@@ -5334,19 +6264,26 @@ function recalc(){log=all.filter(l=>!l.x);rebuildSrs()}
 function persist(wk){
   saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);if(typeof fcAv!=='undefined')saveL('cbr_fcav',fcAv);
   if(wk&&wk!=='_est')dirty.add(wk);
-  if(!wk||wk==='_est'){estU=Date.now();saveL('cbr_u',estU)}
-  estDirty=true;saveL('cbr_reset',resetAt);
+  const mudouEst=!wk||wk==='_est'||(typeof RadioFila!=='undefined'&&RadioFila.estadoMudou(over,cfg,resetAt));
+  if(mudouEst){estU=Date.now();saveL('cbr_u',estU);estDirty=true;}
+  saveL('cbr_reset',resetAt);
+  if(typeof RadioFila!=='undefined')RadioFila.persisteProgresso(wk);
   clearTimeout(flushT);flushT=setTimeout(flush,700);
 }
-function syncErroTxt(e){const p=window.BCBR?.pausaAte||0;if(e?.limite||p>Date.now()||e?.status===429||(e?.status===403&&(BCBR.cota?.rest===0||/rate.?limit|secondary|ocupado/i.test(e?.resp||e?.message||''))))return window.BCBR?.limiteMsg||'GitHub ocupado, tentando em breve';return 'Sem conexão, tentando de novo'}
-function setSync(s,e){syncSt=s;const el=$('#sync');if(!el)return;
-  el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:syncErroTxt(e),local:'Só neste aparelho'}[s]}
+function syncErroTxt(e){return typeof RadioFila!=='undefined'?RadioFila.descreveErro(e):(window.BCBR?.limiteMsg||'Sem internet')}
+function setSync(s,e){syncSt=s;if(typeof RD!=='undefined'){if(e)RD.erro=syncErroTxt(e);else if(s==='ok')RD.erro=''}if(typeof RadioFila!=='undefined'){RadioFila.atualizaUI();return}const el=$('#sync');if(!el)return;el.className=s;el.querySelector('span').textContent={ok:'Sincronizado',saving:'Salvando…',err:syncErroTxt(e),local:'Só neste aparelho'}[s]||s}
 async function flush(){
-  if(!DB)return;setSync('saving');const tentadas=[...dirty],tinhaEst=estDirty;
+  if(!DB)return false;
+  if((window.BCBR?.pausaAte||0)>Date.now()){setSync('err',{limite:true,ate:BCBR.pausaAte});if(typeof RadioFila!=='undefined')RadioFila.aoFalhar?.({limite:true,ate:BCBR.pausaAte});return false;}
+  const tk=(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})();
+  if(window.BCBR?.chaveErro&&(!window.BCBR.chaveErroToken||window.BCBR.chaveErroToken===tk)){setSync('err',{chave:true,status:window.BCBR.chaveErroStatus||401});return false;}
+  if(flush._voo)return flush._voo;
+  setSync('saving');
+  flush._voo=(async()=>{
   try{
     const col=DB.collection('cbr');
-    if(estDirty){estDirty=false;await col.doc('estado').set({over,cfg,u:estU,resetAt})}
-    for(const wk of [...dirty]){dirty.delete(wk);
+    if(estDirty){const rev=typeof RadioFila!=='undefined'?RadioFila.revProgresso('estado'):0;await col.doc('estado').set({over,cfg,u:estU,resetAt});if(typeof RadioFila==='undefined'||RadioFila.revProgresso('estado')===rev){estDirty=false;if(typeof RadioFila!=='undefined'){RadioFila.confirmaProgresso?.('estado',rev);RadioFila.marcaEstadoLimpo?.(over,cfg,resetAt);}}}
+    for(const wk of [...dirty]){const rev=typeof RadioFila!=='undefined'?RadioFila.revProgresso(wk):0;
       if(wk.startsWith('c:')){const k=+wk.slice(2);await col.doc('cards_'+k).set({items:cards.filter(c=>!c._rs&&hk(c.id,32)===k).map(c=>[c.id,c.f,c.v,c.tg||'',c.u||0,c.x?1:0])})}
       else if(wk.startsWith('g:')){const id=wk.slice(2);if(uimg[id])await col.doc('uimg_'+id).set({d:uimg[id]})}
       else if(wk.startsWith('m:'))await col.doc('metodo').set({t:metodo,u:metoU})
@@ -5354,11 +6291,16 @@ async function flush(){
       else if(wk.startsWith('i:')){const k=+wk.slice(2),o={};Object.keys(ia).forEach(id=>{if(hk(id,8)===k)o[id]=ia[id]});await col.doc('ia_'+k).set({m:o})}
       else if(wk.startsWith('s:')){const k=+wk.slice(2),o={};Object.keys(fcs).forEach(id=>{if(hk(id,8)===k)o[id]=fcs[id]});await col.doc('fcs_'+k).set({s:o})}
       else if(wk==='av:0'){if(typeof fcAv!=='undefined')await col.doc('fc_avaliacoes').set({items:fcAv})}
-      else await col.doc('log_'+wk).set({items:all.filter(l=>wkKey(l.t)===wk).map(packLog)})}
-    setSync('ok');
-  }catch(e){const atraso=Math.max(15000,(window.BCBR?.pausaAte||0)-Date.now()+500);tentadas.forEach(k=>dirty.add(k));if(tinhaEst)estDirty=true;setSync('err',e);clearTimeout(retryT);retryT=setTimeout(flush,atraso)}
+      else await col.doc('log_'+wk).set({items:all.filter(l=>wkKey(l.t)===wk).map(packLog)});
+      if(typeof RadioFila==='undefined'||RadioFila.revProgresso(wk)===rev){dirty.delete(wk);if(typeof RadioFila!=='undefined')RadioFila.confirmaProgresso?.(wk,rev);}}
+    setSync(dirty.size||estDirty?'pend':'ok');if((dirty.size||estDirty)&&!(window.BCBR?.pausaAte>Date.now())&&!(window.BCBR?.chaveErro&&(!window.BCBR.chaveErroToken||window.BCBR.chaveErroToken===tk))&&navigator.onLine!==false){clearTimeout(flushT);flushT=setTimeout(flush,0);}return true;
+  }catch(e){setSync('err',e);if(typeof RadioFila!=='undefined')RadioFila.aoFalhar(e);else{const atraso=Math.max(15000,(window.BCBR?.pausaAte||0)-Date.now()+500);clearTimeout(retryT);retryT=setTimeout(flush,atraso)}return false}
+  finally{flush._voo=null}
+  })();
+  return flush._voo;
 }
 function mergeRemote(docs){
+  const _dAntes=dirty.size,_eAntes=estDirty;
   primeiro=false;let changed=false;const rc={},fcOk=typeof fcBlocosPreserva==='function';
   const est=docs.find(d=>d.id==='estado');
   if(est){const x=est.data()||{};
@@ -5366,15 +6308,13 @@ function mergeRemote(docs){
     if((x.u||0)>estU){
       const nova=normCfg(x.cfg),ri=riPreserva(cfg.ri,nova.ri),mor=fcOk?fcMortosUne(cfg.fcMortos,nova.fcMortos):nova.fcMortos,fcb=fcOk?fcBlocosPreserva(cfg.fcBlocos,nova.fcBlocos,mor):nova.fcBlocos,fch=fcOk?fcHojeUne(cfg.fcHoje,nova.fcHoje):nova.fcHoje,republica=JSON.stringify(ri)!==JSON.stringify(nova.ri)||JSON.stringify(fcb)!==JSON.stringify(nova.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(nova.fcMortos)||JSON.stringify(fch)!==JSON.stringify(nova.fcHoje);
       nova.ri=ri;nova.fcBlocos=fcb;nova.fcMortos=mor;nova.fcHoje=fch;if((!nova.fcAtivo||!fcb.some(b=>b.id===nova.fcAtivo&&!b.fim))&&cfg.fcAtivo&&fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))nova.fcAtivo=cfg.fcAtivo;
-      over=x.over||{};cfg=nova;aplicaNomes();estU=x.u;saveL('cbr_u',estU);reArea();aplicaTema();changed=true;
+      const mn=estDirty&&window.BCBR?.mergeProgressoDoc?BCBR.mergeProgressoDoc('estado',{over,cfg,u:estU,resetAt},{over:x.over||{},cfg:nova,u:x.u,resetAt:x.resetAt||0}):null;
+      over=mn?mn.over:(x.over||{});cfg=mn?mn.cfg:nova;aplicaNomes();estU=mn?mn.u:x.u;saveL('cbr_u',estU);reArea();aplicaTema();changed=true;
       if(republica)persist('_est');
     }else if(fcOk){
       // Local mais novo: ainda assim une os blocos remotos (senão o próximo envio apagaria o que o outro aparelho fez).
-      const rc0=normCfg(x.cfg),mor=fcMortosUne(cfg.fcMortos,rc0.fcMortos),fcb=fcBlocosPreserva(cfg.fcBlocos,rc0.fcBlocos,mor),fch=fcHojeUne(cfg.fcHoje,rc0.fcHoje);
-      if(JSON.stringify(fcb)!==JSON.stringify(cfg.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(cfg.fcMortos)||JSON.stringify(fch)!==JSON.stringify(cfg.fcHoje)){
-        cfg.fcBlocos=fcb;cfg.fcMortos=mor;cfg.fcHoje=fch;if(!fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))cfg.fcAtivo=fcb.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;
-        saveL('cbr_cfg',cfg);changed=true;estDirty=true}
-      else if((x.u||0)<estU)estDirty=true;
+      const rc0=normCfg(x.cfg);
+      if(estDirty&&window.BCBR?.mergeProgressoDoc){const mn=BCBR.mergeProgressoDoc('estado',{over,cfg,u:estU,resetAt},{over:x.over||{},cfg:rc0,u:x.u||0,resetAt:x.resetAt||0});const nc=normCfg(mn.cfg);if(!nc.fcBlocos.some(b=>b.id===nc.fcAtivo&&!b.fim))nc.fcAtivo=nc.fcBlocos.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;if(JSON.stringify(mn.over)!==JSON.stringify(over)||JSON.stringify(nc)!==JSON.stringify(cfg)){over=mn.over;cfg=nc;aplicaNomes();reArea();aplicaTema();saveL('cbr_over',over);saveL('cbr_cfg',cfg);changed=true}}else{const mor=fcMortosUne(cfg.fcMortos,rc0.fcMortos),fcb=fcBlocosPreserva(cfg.fcBlocos,rc0.fcBlocos,mor),fch=fcHojeUne(cfg.fcHoje,rc0.fcHoje);if(JSON.stringify(fcb)!==JSON.stringify(cfg.fcBlocos)||JSON.stringify(mor)!==JSON.stringify(cfg.fcMortos)||JSON.stringify(fch)!==JSON.stringify(cfg.fcHoje)){cfg.fcBlocos=fcb;cfg.fcMortos=mor;cfg.fcHoje=fch;if(!fcb.some(b=>b.id===cfg.fcAtivo&&!b.fim))cfg.fcAtivo=fcb.some(b=>b.id===rc0.fcAtivo&&!b.fim)?rc0.fcAtivo:null;saveL('cbr_cfg',cfg);changed=true;estDirty=true}else if((x.u||0)<estU)estDirty=true;}
     }
     else if((x.u||0)<estU)estDirty=true;
   }else estDirty=true;
@@ -5398,6 +6338,7 @@ function mergeRemote(docs){
     else if(d.id==='fc_avaliacoes'&&typeof fcAv!=='undefined'){const o=x.items||{};
       Object.entries(o).forEach(([id,r])=>{if(r&&(!fcAv[id]||(r.u||0)>(fcAv[id].u||0))){fcAv[id]=r;changed=true}})}
   });
+  if(typeof fcMigraFundidos==='function'&&fcMigraFundidos('dirty'))changed=true;
   const lc={};all.forEach(l=>{const w=wkKey(l.t);lc[w]=(lc[w]||0)+1});
   Object.keys(lc).forEach(w=>{if(lc[w]>(rc['log_'+w]||0))dirty.add(w)});
   const cc={};cards.forEach(c=>{if(c._rs)return;const k=hk(c.id,32);cc[k]=(cc[k]||0)+1});
@@ -5411,8 +6352,10 @@ function mergeRemote(docs){
   Object.keys(sk).forEach(k=>{if(!docs.some(d=>d.id==='fcs_'+k))dirty.add('s:'+k)});
   if(typeof fcAv!=='undefined'){const avDoc=docs.find(d=>d.id==='fc_avaliacoes'),avRem=avDoc?(avDoc.data().items||{}):{};
     if(Object.keys(fcAv).some(id=>!avRem[id]||(fcAv[id].u||0)>(avRem[id].u||0)))dirty.add('av:0')}
+  if(typeof RadioFila!=='undefined')RadioFila.reconciliaRemoto(docs,{all,cards,fcs,pon,ia,dirty,wkKey,hk});
   if(changed){aplicaEdTodas();all.sort((a,b)=>a.t-b.t);recalc();if(typeof fq!=='undefined'&&fq){const fb=cfg.fcBlocos?.find(b=>b.id===fq.id);if(fb&&fb.t0===fq.t0)Object.entries(fb.resp||{}).forEach(([k,v])=>{if(!fq.resp[k]||(v.t||0)>(fq.resp[k].t||0))fq.resp[k]=v})}saveL('cbr_log',all);saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_reset',resetAt);saveL('cbr_cards',cards);saveL('cbr_fcs',fcs);saveL('cbr_ia',ia);saveL('cbr_pon',pon);saveL('cbr_uimg',uimg);if(typeof fcAv!=='undefined')saveL('cbr_fcav',fcAv)}
-  if(dirty.size||estDirty)flush();else setSync('ok');
+  if(typeof RadioFila!=='undefined'){if(dirty.size>_dAntes||(!_eAntes&&estDirty)||changed)RadioFila.persisteProgresso();else if(!dirty.size&&!estDirty)RadioFila.marcaEstadoLimpo(over,cfg,resetAt);}
+  if((dirty.size||estDirty)&&!(typeof flush==='function'&&flush._voo))flush();else if(!dirty.size&&!estDirty)setSync('ok');
   if(changed&&tela!=='quiz'&&tela!=='fcstudy')render();
 }
 async function iniciaSync(){
@@ -5420,6 +6363,7 @@ async function iniciaSync(){
     const db=await claude.use('db');
     if(!db){smSyncResolve();return;}
     DB=db;setSync('saving');
+    if(typeof RadioFila!=='undefined'){RadioFila.conectaProgresso({get:()=>({all,over,cfg,cards,fcs,ia,pon,fcAv,uimg,metodo,metoU,estU,resetAt,dirty,estDirty,hk,wkKey,packLog}),setEstDirty:v=>{estDirty=!!v},applyEstado:p=>{over=p.over||over;cfg=normCfg(p.cfg||cfg);estU=p.u||estU;resetAt=p.resetAt||resetAt;saveL('cbr_over',over);saveL('cbr_cfg',cfg);saveL('cbr_u',estU);saveL('cbr_reset',resetAt)},mergeLogItems:its=>{let m=false;const ix=new Map(all.map(l=>[l.q+'|'+l.t,l]));its.forEach(a=>{const k=a[0]+'|'+a[1],ex=ix.get(k);if(!ex){const l=unpackLog(a);all.push(l);ix.set(k,l);m=true}else if(a[6]&&!ex.x){ex.x=1;m=true}});if(m)saveL('cbr_log',all);return m},mergeFcs:s=>{let m=false;Object.entries(s).forEach(([id,v])=>{if(!fcs[id]||(v[5]||0)>(fcs[id][5]||0)){fcs[id]=v;m=true}});if(m)saveL('cbr_fcs',fcs);return m},mergeCards:its=>{let m=false;const ix=new Map(cards.map(c=>[c.id,c]));its.forEach(a=>{const ex=ix.get(a[0]);if(!ex){const c={id:a[0],f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]};cards.push(c);ix.set(c.id,c);m=true}else if((a[4]||0)>(ex.u||0)){Object.assign(ex,{f:a[1],v:a[2],tg:a[3],u:a[4],x:a[5]});delete ex._rs;m=true}});if(m)saveL('cbr_cards',cards);return m},mergeAv:its=>{let m=false;if(typeof fcAv!=='undefined')Object.entries(its).forEach(([id,r])=>{if(r&&(!fcAv[id]||(r.u||0)>(fcAv[id].u||0))){fcAv[id]=r;m=true}});if(m)saveL('cbr_fcav',fcAv);return m},mergePon:mp=>{let m=false;Object.entries(mp).forEach(([id,v])=>{if(v&&(!pon[id]||(v.u||0)>(pon[id].u||0))){pon[id]=v;m=true}});if(m)saveL('cbr_pon',pon);return m},mergeIa:mp=>{let m=false;Object.entries(mp).forEach(([id,v])=>{if(v&&!ia[id]){ia[id]=v;m=true}});if(m)saveL('cbr_ia',ia);return m},applyMetodo:p=>{metodo=p.t;metoU=p.u||metoU;saveL('cbr_metodo',{t:metodo,u:metoU});lerManual(metodo)},mergeUimg:(id,d)=>{if(!uimg[id]){uimg[id]=d;saveL('cbr_uimg',uimg);return true}return false},onHidratou:()=>{if(typeof fcMigraFundidos==='function')fcMigraFundidos('dirty');aplicaEdTodas();all.sort((a,b)=>a.t-b.t);recalc();aplicaNomes();reArea();aplicaTema();if(tela!=='quiz'&&tela!=='fcstudy')render()}});await RadioFila.pronto();if(window._fcMigPend){const mp=window._fcMigPend;delete window._fcMigPend;(mp.s||[]).forEach(k=>dirty.add('s:'+k));if(mp.av)dirty.add('av:0');if(mp.est){estDirty=true;estU=Date.now();saveL('cbr_u',estU)}if(dirty.size||estDirty)RadioFila.persisteProgresso();}}
     DB.collection('cbr').onSnapshot(s=>{mergeRemote(s.docs);smSyncResolve()},e=>{setSync('err',e);smSyncResolve()});
   }catch(e){setSync('err',e);smSyncResolve()}
 }
@@ -5606,7 +6550,7 @@ function tabsOrdenadas(){const base=TABS.map(t=>t[0]),o=(cfg.tabs||[]).filter(k=
 
 // ===== telas =====
 const TABS=[['hoje','Hoje'],['semana','Calendário'],['tarefas','Tarefas'],['notas','Notas'],['questoes','Questões'],['estudar','Estudar'],['fc','Flashcards'],['painel','Painel'],['banco','Banco'],['config','Config']];
-function go(t,s){if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='fc'&&!s&&fcAbre())return;if(t==='tarefas')smkIni();tela=t;sub=s??null;render();scrollTo(0,0)}
+function go(t,s){if(tela==='notas'&&typeof ntAntes==='function')ntAntes();if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='fc'&&!s&&fcAbre())return;if(t==='tarefas')smkIni();tela=t;sub=s??null;render();scrollTo(0,0)}
 function render(){aplicaLayout();aplicaTema();
   const ativa=tela==='quiz'?'questoes':tela==='fim'?'':tela==='rt'?'hoje':tela==='fcstudy'?'fc':tela;
   $('#nav').innerHTML=tabsOrdenadas().map(([k,n])=>`<button data-k="${k}" class="${ativa===k?'on':''}" onclick="go('${k}')">${n}</button>`).join('');
@@ -6127,6 +7071,113 @@ const fcDKey=t=>typeof dKey==='function'?dKey(t):(()=>{const d=new Date(t);retur
 let fcTema='',fcImg='todos',fcGrpAberto=true;var _fcMetaCache=null,_fcIncidCache=null;
 function fcMetaLimpa(){_fcMetaCache=null;_fcIncidCache=null}
 const fcQCards=()=>{const x=typeof window!=='undefined'&&window.FC_QUESTOES;return Array.isArray(x)?x:(x&&Array.isArray(x.cards)?x.cards:[])};
+function fcMapaFundidos(){
+  const raw={};
+  const fq=typeof window!=='undefined'&&window.FC_QUESTOES;
+  if(fq&&!Array.isArray(fq)&&fq.fundidos&&typeof fq.fundidos==='object')Object.assign(raw,fq.fundidos);
+  const rf=typeof window!=='undefined'&&window.RESUMOS_FUNDIDOS;
+  if(rf&&typeof rf==='object'&&!Array.isArray(rf))Object.assign(raw,rf);
+  const out=new Map();
+  for(const k of Object.keys(raw)){
+    let cur=k,visto=new Set();
+    while(raw[cur]&&typeof raw[cur]==='string'&&raw[cur]!==cur&&!visto.has(cur)&&visto.size<16){
+      visto.add(cur);cur=raw[cur];
+    }
+    if(cur&&cur!==k)out.set(k,cur);
+  }
+  return out;
+}
+function fcMigraFundidos(salva=true){
+  const mapa=fcMapaFundidos();
+  if(!mapa.size)return false;
+  const resolve=id=>mapa.get(id)||id;
+  let changedFcs=false,changedAv=false,changedEst=false;
+  const dirtyS=new Set();
+  if(typeof fcs!=='undefined'&&fcs){
+    for(const [oldId,newId] of mapa){
+      const so=fcs[oldId];if(!so)continue;
+      const sn=fcs[newId];
+      if(!sn||(so[5]||0)>(sn[5]||0)||((so[5]||0)===(sn[5]||0)&&(so[2]||0)>(sn[2]||0))){
+        fcs[newId]=[so[0],so[1],so[2],so[3],so[4],so[5],(so[6]||(sn&&sn[6]))?1:0];
+      }else if(so[6]&&!sn[6]){
+        sn[6]=1;
+      }
+      delete fcs[oldId];
+      changedFcs=true;
+      if(typeof hk==='function'){dirtyS.add(hk(oldId,8));dirtyS.add(hk(newId,8))}
+    }
+  }
+  if(typeof fcAv!=='undefined'&&fcAv){
+    for(const [oldId,newId] of mapa){
+      const vo=fcAv[oldId];if(!vo)continue;
+      const vn=fcAv[newId];
+      if(!vn||(vo.u||0)>(vn.u||0))fcAv[newId]={...vo,id:newId};
+      delete fcAv[oldId];
+      changedAv=true;
+    }
+  }
+  if(typeof cfg!=='undefined'&&cfg){
+    if(cfg.fcHoje&&Array.isArray(cfg.fcHoje.feitos)){
+      const next=[],seen=new Set();let dif=false;
+      for(const id of cfg.fcHoje.feitos){
+        const r=resolve(id);if(r!==id)dif=true;
+        if(!seen.has(r)){seen.add(r);next.push(r)}else dif=true;
+      }
+      if(dif){cfg.fcHoje.feitos=next;changedEst=true}
+    }
+    if(Array.isArray(cfg.fcBlocos)){
+      for(const b of cfg.fcBlocos){
+        if(!b||!Array.isArray(b.ids))continue;
+        const nextIds=[],seen=new Set();let dif=false;
+        for(const id of b.ids){
+          const r=resolve(id);if(r!==id)dif=true;
+          if(!seen.has(r)){seen.add(r);nextIds.push(r)}else dif=true;
+        }
+        if(dif){b.ids=nextIds;changedEst=true}
+        if(b.resp&&typeof b.resp==='object'){
+          for(const oldId of Object.keys(b.resp)){
+            const newId=resolve(oldId);if(newId===oldId)continue;
+            const ro=b.resp[oldId],rn=b.resp[newId];
+            if(ro&&(!rn||(ro.t||0)>(rn.t||0)))b.resp[newId]=ro;
+            delete b.resp[oldId];changedEst=true;
+          }
+        }
+        if(b.re&&typeof b.re==='object'){
+          for(const oldId of Object.keys(b.re)){
+            const newId=resolve(oldId);if(newId===oldId)continue;
+            b.re[newId]=1;delete b.re[oldId];changedEst=true;
+          }
+        }
+      }
+    }
+  }
+  if(salva&&(changedFcs||changedAv||changedEst)){
+    if(typeof saveL==='function'){
+      if(changedFcs)saveL('cbr_fcs',fcs);
+      if(changedAv)saveL('cbr_fcav',fcAv);
+      if(changedEst)saveL('cbr_cfg',cfg);
+    }
+    if(salva==='save'){
+      if(typeof window!=='undefined'){
+        const prev=window._fcMigPend||{s:[],av:false,est:false};
+        window._fcMigPend={s:[...new Set([...prev.s,...dirtyS])],av:prev.av||changedAv,est:prev.est||changedEst};
+      }
+    }else{
+      if(typeof dirty!=='undefined'){
+        dirtyS.forEach(k=>dirty.add('s:'+k));
+        if(changedAv)dirty.add('av:0');
+      }
+      if(salva==='dirty'){
+        if(changedEst&&typeof estDirty!=='undefined'){estDirty=true;if(typeof estU!=='undefined'){estU=Date.now();if(typeof saveL==='function')saveL('cbr_u',estU)}}
+      }else if(typeof persist==='function'){
+        if(changedEst)persist('_est');
+        else if(changedFcs&&dirtyS.size)persist('s:'+dirtyS.values().next().value);
+        else if(changedAv)persist('av:0');
+      }
+    }
+  }
+  return changedFcs||changedAv||changedEst;
+}
 function fcMetaMapa(){
   if(_fcMetaCache)return _fcMetaCache;
   const byId=new Map(),byRes=new Map();
@@ -7334,7 +8385,7 @@ function pacoteErradas(k){
 
 let cfgTab='geral';
 function vConfig(){
-  const tabs=[['geral','Geral'],['agenda','Agenda'],['atalhos','Atalhos'],['sync','Backup e recuperação'],['metodo','Metodologia']];
+  const tabs=[['geral','Geral'],['agenda','Agenda'],['atalhos','Atalhos'],['sync','Sincronização'],['metodo','Metodologia']];
   return `<div class="subtabs">${tabs.map(([k,n])=>`<button class="${cfgTab===k?'on':''}" onclick="cfgTab='${k}';capKey=null;render()">${n}</button>`).join('')}</div>`+({geral:cfgGeral,agenda:vAgenda,atalhos:cfgAtalhos,sync:cfgSync,metodo:cfgMetodo}[cfgTab])();
 }
 function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){
@@ -7360,7 +8411,7 @@ function cfgAtalhos(){
 }
 function cfgSync(){
   return `<div class="card"><h3>Sincronização</h3><p class="mut">${DB?'Seu progresso é salvo automaticamente no GitHub (banco-cbr-app) e aparece igual em todos os aparelhos.':'A sincronização não está disponível nesta janela. O progresso fica só neste navegador; use o backup abaixo.'}</p>
-  ${rdBackupHtml()}<h3>Backup manual</h3><p class="mut">Opcional. Copie o texto para guardar uma cópia ou para restaurar.</p>
+  ${rdCfgSyncHtml()}${rdBackupHtml()}<h3>Backup manual</h3><p class="mut">Opcional. Copie o texto para guardar uma cópia ou para restaurar.</p>
   <button class="b" onclick="exportar()">Gerar backup</button> <button class="b s" onclick="copiar()">Copiar</button>
   <textarea id="bk" placeholder="O backup aparece aqui. Para importar, cole o texto aqui e clique em Importar."></textarea>
   <p class="row"><button class="b s" onclick="importar()">Importar o texto acima</button> <button class="b s" onclick="zerar()">${zerarOk?'Confirmar: apagar tudo':'Zerar progresso'}</button></p></div>`;

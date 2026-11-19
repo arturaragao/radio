@@ -14,7 +14,7 @@ try{const c=JSON.parse(localStorage.getItem('sm_cache2')||'null');if(c&&c.d&&c.d
 // 1.42: alterações feitas sem conexão. Se a gravação falha por falta de rede, SM.sujo (e localStorage sm_sujo) lembra que o plano local tem o que o GitHub não tem;
 // SM.base = último plano que o GitHub tinha (texto JSON; vai para sm_base2 quando fica sujo). Quando o plano remoto mudou nesse meio tempo, smMerge3 refaz as alterações
 // locais POR CIMA dele (em vez de jogá-las fora) e elas sobem sozinhas ao voltar a conexão. Notas/páginas/frases têm a fusão própria do notas.js.
-try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null)}catch(e){}
+try{const sj=localStorage.getItem('sm_sujo');SM.sujo=sj!==null;SM.sujoDesde=+sj||0;SM.base=SM.sujo?localStorage.getItem('sm_base2'):(SM.d?JSON.stringify(SM.d):null);SM.pendMsgs=SM.sujo?JSON.parse(localStorage.getItem('sm_pend_msgs')||'[]'):[]}catch(e){SM.pendMsgs=[]}
 const smPlano=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const smIgual=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const SM_MERGE_FORA=new Set(['notasDoc','notas','notas_v138','paginasEmArquivos']);
@@ -57,12 +57,48 @@ function smMerge3(b,l,r,topo=true,car=null,sb=null){
 const smFundePlano=remoto=>smMerge3(SM.base?JSON.parse(SM.base):undefined,SM.d,remoto,true,null,SM.base?null:{desde:SM.sujoDesde||0});
 function smSujo(sim){
   SM.sujo=sim;
-  try{if(sim){if(localStorage.getItem('sm_sujo')===null){SM.sujoDesde=Date.now();localStorage.setItem('sm_sujo',String(SM.sujoDesde))}if(SM.base)localStorage.setItem('sm_base2',SM.base)}else{localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2')}}catch(e){}
+  if(!sim){SM.sujoDesde=0;SM.falhou=false;}
+  else if(!SM.sujoDesde)SM.sujoDesde=Date.now();
+  try{
+    if(sim){
+      if(localStorage.getItem('sm_sujo')===null)localStorage.setItem('sm_sujo',String(SM.sujoDesde));
+      if(SM.base)localStorage.setItem('sm_base2',SM.base);
+      if(SM.pendMsgs?.length)localStorage.setItem('sm_pend_msgs',JSON.stringify(SM.pendMsgs.slice(-10)));
+    }else{
+      SM.pendMsgs=[];
+      localStorage.removeItem('sm_sujo');localStorage.removeItem('sm_base2');localStorage.removeItem('sm_pend_msgs');
+      if(typeof RadioFila!=='undefined')RadioFila.confirmaItem('semana:plano',SM.pendRev);
+    }
+  }catch(e){}
+  if(typeof RadioFila!=='undefined')RadioFila.atualizaUI();
 }
 // Sobe o que ficou só neste aparelho (voltou a conexão, ou o plano remoto acabou de ser fundido com o local).
+function smEnviaSujoSync(){
+  if(!SM.d||!SM.sujo)return Promise.resolve(true);
+  if(SM.enviandoSujo)return SM.enviandoSujoP||Promise.resolve(true);
+  SM.enviandoSujo=true;
+  const p=smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false;SM.enviandoSujoP=null});
+  SM.enviandoSujoP=p;
+  return p;
+}
 function smEnviaSujo(){
   if(!SM.d||!SM.sujo||SM.enviandoSujo||navigator.onLine===false)return;
-  SM.enviandoSujo=true;smMudar(()=>{},'alterações feitas sem conexão').finally(()=>{SM.enviandoSujo=false});
+  if(((typeof BCBR!=='undefined'&&BCBR?.pausaAte)||0)>Date.now())return;
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})())return;
+  return smEnviaSujoSync();
+}
+if(typeof RadioFila!=='undefined'){
+  RadioFila.registraHidratador('semana',rec=>{
+    if(!rec||!rec.payload||!rec.payload.d||rec.payload.d.v!==2)return;
+    if(!SM.sujo||(rec.atualizadoEm||0)>=(SM.sujoDesde||0)){
+      SM.d=rec.payload.d;
+      if(rec.payload.base)SM.base=rec.payload.base;
+      SM.sujo=true;SM.sujoDesde=rec.criadoEm||rec.payload.sujoDesde||SM.sujoDesde||Date.now();
+      SM.pendMsgs=Array.isArray(rec.payload.msgs)?rec.payload.msgs:(SM.pendMsgs||[]);
+      SM.pendRev=rec.rev;SM.ok=true;
+      smGuardaCache();smAuto();smRender();smNativoTarefas();
+    }
+  });
 }
 const smDec=s=>decodeURIComponent(escape(atob(String(s).replace(/\n/g,''))));
 const smId=()=>'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -92,12 +128,12 @@ async function smLerArquivo(path=SM_ARQ,opts={}){
   return f;
 }
 function smErroLeitura(e){
-  if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem conexão com o GitHub agora; mostrando a última cópia do aparelho.';
+  if(navigator.onLine===false||(!e.status&&(e.name==='TypeError'||/fetch|network|failed to fetch/i.test(e.message||''))))return 'Sem internet; mostrando a última cópia do aparelho.';
   if(e.limite||(e.status===403||e.status===429)&&(e.status===429||BCBR.cota?.rest===0||/rate.?limit|limite de uso|abuse|ocupado/i.test(e.resp||e.message||''))){
-    if(e.ate){const d=new Date(e.ate);return 'Limite de uso do GitHub atingido; tentando às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
-    return 'Limite de uso do GitHub atingido; tenta de novo em alguns minutos.';
+    if(e.ate){const d=new Date(e.ate);return 'Limite do GitHub, tenta às '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'.'}
+    return 'Limite do GitHub; tenta de novo em alguns minutos.';
   }
-  if(e.status===401||e.status===403)return 'GitHub recusou a chave (401/403) — confira a chave em Ajustes.';
+  if(e.chave||e.status===401||e.status===403)return 'Chave do GitHub inválida ou vencida → Config › Sincronização';
   const motivo=e.name==='SyntaxError'?'JSON inválido':e.name==='URIError'||e.name==='InvalidCharacterError'?'codificação inválida':e.status?'HTTP '+e.status:String(e.message||'resposta inválida').slice(0,100);
   return 'Não consegui ler os dados do GitHub ('+motivo+'); mostrando a última cópia do aparelho.';
 }
@@ -107,12 +143,15 @@ function smConverte(v){   // semana/atual.json (v1) -> plano v2
 }
 // 1.40: GET condicional (If-None-Match com o ETag da última leitura): 304 não gasta a cota do GitHub e não muda nada. Uma busca por vez.
 async function smPuxar(){
+  if(typeof RadioFila!=='undefined'&&RadioFila.pronto)await RadioFila.pronto().catch(()=>{});
   if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now()){if(BCBR.limiteMsg)SM.erro=BCBR.limiteMsg;return}
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})()){SM.erro='Chave do GitHub inválida ou vencida → Config › Sincronização';return}
   if(SM.puxando&&Date.now()-SM.puxando<30000)return;SM.puxando=Date.now();   // (busca travada há mais de 30 s não bloqueia a próxima)
   try{await smPuxar1()}finally{SM.puxando=0;smEnviaSujo()}
 }
 async function smPuxar1(){
   if((typeof BCBR!=='undefined'&&BCBR?.pausaAte||0)>Date.now())return;
+  if(typeof BCBR!=='undefined'&&BCBR?.chaveErro&&BCBR.chaveErroToken===(()=>{try{return localStorage.getItem('bcbr_gh_token')||''}catch(e){return ''}})())return;
   smAgendaPuxar();
   if(typeof SyncNotas!=='undefined'){await SyncNotas.receberLegado();await SyncNotas.enviar();await SyncNotas.listarPaginas();if(typeof ntSincroniza==='function')await ntSincroniza()}
   try{
@@ -151,13 +190,29 @@ function smMudar(fn,msg,aoSalvar){
   if(SM.ed)smRascEdSalva(SM.ed.id);
   if(!SM.d)return Promise.resolve(false);
   const diario=typeof rdGancho==='function'?rdGancho('antes',SM.d):null;
+  const eraSujo=!!SM.sujo;
+  if(!SM.sujo&&!SM.base)SM.base=JSON.stringify(SM.d);
   fn(SM.d);
+  if(msg&&msg!=='alterações feitas sem conexão'){
+    SM.pendMsgs=SM.pendMsgs||[];
+    if(!SM.pendMsgs.includes(msg))SM.pendMsgs.push(msg);
+    if(SM.pendMsgs.length>10)SM.pendMsgs=SM.pendMsgs.slice(-10);
+  }
+  SM.pendRev=Date.now()+Math.random();
+  SM.sujo=true;
+  if(!SM.sujoDesde)SM.sujoDesde=Date.now();
+  try{if(localStorage.getItem('sm_sujo')===null)localStorage.setItem('sm_sujo',String(SM.sujoDesde));if(SM.base)localStorage.setItem('sm_base2',SM.base);if(SM.pendMsgs?.length)localStorage.setItem('sm_pend_msgs',JSON.stringify(SM.pendMsgs.slice(-10)))}catch(e){}
+  if(typeof RadioFila!=='undefined'){
+    RadioFila.gravaItem({id:'semana:plano',tipo:'semana',titulo:'Semana / Tarefas',detalhe:(SM.pendMsgs||[]).join(', ')||msg||'Alterações no plano',rev:SM.pendRev,payload:{d:SM.d,base:SM.base,sujoDesde:SM.sujoDesde,msgs:SM.pendMsgs||[]}});
+  }
   if(typeof rdGancho==='function'){rdGancho('edicao',diario,SM.d);rdGancho('inicio')}
   smGuardaCache();smRender();smNativoTarefas();
-  const item={fn,aoSalvar,msg,feito:false,ok:false};SM.lote.push(item);
+  const item={fn,aoSalvar,msg,feito:false,ok:false,rev:SM.pendRev};SM.lote.push(item);
   const tarefa=async()=>{
     if(item.feito)return item.ok;   // já saiu junto com a gravação anterior
     const grupo=SM.lote.splice(0),fim=ok=>{grupo.forEach(g=>{g.feito=true;g.ok=ok});if(typeof rdGancho==='function')rdGancho('fim',grupo.length);return ok};
+    const revLote=grupo.reduce((m,g)=>g.rev||m,SM.pendRev);
+    let teveConflito=false;
     for(let t=0;t<6;t++){
       try{
         grupo.forEach(g=>g.fn(SM.d));
@@ -167,17 +222,25 @@ function smMudar(fn,msg,aoSalvar){
         SM.gravs=(SM.gravs||0)+1;
         const enviadas=typeof rdGancho==='function'?rdGancho('envio',texto):null;
         const r=await BCBR.api(`/repos/${BCBR.REPO}/contents/${SM_ARQ}`,{method:'PUT',body:JSON.stringify(body)});
+        if(!r?.content?.sha)throw new Error('GitHub não confirmou sha');
         if(typeof rdGancho==='function')rdGancho('confirmou',enviadas,texto);
         grupo.forEach(g=>g.aoSalvar&&g.aoSalvar(salvo));
-        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;if(SM.sujo)smSujo(false);smGuardaCache();smNativoTarefas();
+        SM.gravs++;SM.sha=r.content.sha;SM.erro='';SM.base=texto;
+        if(!SM.lote.length&&SM.pendRev===revLote)smSujo(false);
+        smGuardaCache();smNativoTarefas();
+        if(teveConflito&&typeof RadioFila!=='undefined')RadioFila.marcaConflitoResolvido('Semana / Tarefas');
         if(typeof ntSincroniza==='function')ntSincroniza();
         return fim(true);
       }catch(e){
-        if(e.status===409||e.status===422){try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=SM.sujo?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
+        if(e.status===409||e.status===422){teveConflito=true;try{const f=await smLerArquivo();if(typeof ntAntes==='function')ntAntes();const texto2=smDec(f.content),remoto=JSON.parse(texto2);if(typeof rdGancho==='function')rdGancho('leitura',remoto);SM.d=(eraSujo||SM.falhou)?smFundePlano(remoto):remoto;SM.base=texto2;SM.sha=f.sha;}catch(e2){if(typeof rdGancho==='function')rdGancho('erro',e2)}continue}
         if(typeof rdGancho==='function')rdGancho('erro',e);
-        SM.erro='Não salvou no GitHub ('+e.message+'). Confira a internet; a mudança fica neste aparelho.';smSujo(true);smRender();return fim(false);
+        SM.falhou=true;
+        SM.erro=typeof RadioFila!=='undefined'?RadioFila.descreveErro(e):('Não salvou no GitHub ('+e.message+'). A mudança fica neste aparelho.');
+        smSujo(true);if(typeof RadioFila!=='undefined')RadioFila.aoFalhar(e);
+        smRender();return fim(false);
       }
     }
+    SM.falhou=true;
     SM.erro='Não salvou após conflitos no GitHub. Tente novamente.';smSujo(true);smRender();return fim(false);
   };
   SM.fila=SM.fila.then(tarefa);return SM.fila;

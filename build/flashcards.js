@@ -7,6 +7,113 @@ const fcDKey=t=>typeof dKey==='function'?dKey(t):(()=>{const d=new Date(t);retur
 let fcTema='',fcImg='todos',fcGrpAberto=true;var _fcMetaCache=null,_fcIncidCache=null;
 function fcMetaLimpa(){_fcMetaCache=null;_fcIncidCache=null}
 const fcQCards=()=>{const x=typeof window!=='undefined'&&window.FC_QUESTOES;return Array.isArray(x)?x:(x&&Array.isArray(x.cards)?x.cards:[])};
+function fcMapaFundidos(){
+  const raw={};
+  const fq=typeof window!=='undefined'&&window.FC_QUESTOES;
+  if(fq&&!Array.isArray(fq)&&fq.fundidos&&typeof fq.fundidos==='object')Object.assign(raw,fq.fundidos);
+  const rf=typeof window!=='undefined'&&window.RESUMOS_FUNDIDOS;
+  if(rf&&typeof rf==='object'&&!Array.isArray(rf))Object.assign(raw,rf);
+  const out=new Map();
+  for(const k of Object.keys(raw)){
+    let cur=k,visto=new Set();
+    while(raw[cur]&&typeof raw[cur]==='string'&&raw[cur]!==cur&&!visto.has(cur)&&visto.size<16){
+      visto.add(cur);cur=raw[cur];
+    }
+    if(cur&&cur!==k)out.set(k,cur);
+  }
+  return out;
+}
+function fcMigraFundidos(salva=true){
+  const mapa=fcMapaFundidos();
+  if(!mapa.size)return false;
+  const resolve=id=>mapa.get(id)||id;
+  let changedFcs=false,changedAv=false,changedEst=false;
+  const dirtyS=new Set();
+  if(typeof fcs!=='undefined'&&fcs){
+    for(const [oldId,newId] of mapa){
+      const so=fcs[oldId];if(!so)continue;
+      const sn=fcs[newId];
+      if(!sn||(so[5]||0)>(sn[5]||0)||((so[5]||0)===(sn[5]||0)&&(so[2]||0)>(sn[2]||0))){
+        fcs[newId]=[so[0],so[1],so[2],so[3],so[4],so[5],(so[6]||(sn&&sn[6]))?1:0];
+      }else if(so[6]&&!sn[6]){
+        sn[6]=1;
+      }
+      delete fcs[oldId];
+      changedFcs=true;
+      if(typeof hk==='function'){dirtyS.add(hk(oldId,8));dirtyS.add(hk(newId,8))}
+    }
+  }
+  if(typeof fcAv!=='undefined'&&fcAv){
+    for(const [oldId,newId] of mapa){
+      const vo=fcAv[oldId];if(!vo)continue;
+      const vn=fcAv[newId];
+      if(!vn||(vo.u||0)>(vn.u||0))fcAv[newId]={...vo,id:newId};
+      delete fcAv[oldId];
+      changedAv=true;
+    }
+  }
+  if(typeof cfg!=='undefined'&&cfg){
+    if(cfg.fcHoje&&Array.isArray(cfg.fcHoje.feitos)){
+      const next=[],seen=new Set();let dif=false;
+      for(const id of cfg.fcHoje.feitos){
+        const r=resolve(id);if(r!==id)dif=true;
+        if(!seen.has(r)){seen.add(r);next.push(r)}else dif=true;
+      }
+      if(dif){cfg.fcHoje.feitos=next;changedEst=true}
+    }
+    if(Array.isArray(cfg.fcBlocos)){
+      for(const b of cfg.fcBlocos){
+        if(!b||!Array.isArray(b.ids))continue;
+        const nextIds=[],seen=new Set();let dif=false;
+        for(const id of b.ids){
+          const r=resolve(id);if(r!==id)dif=true;
+          if(!seen.has(r)){seen.add(r);nextIds.push(r)}else dif=true;
+        }
+        if(dif){b.ids=nextIds;changedEst=true}
+        if(b.resp&&typeof b.resp==='object'){
+          for(const oldId of Object.keys(b.resp)){
+            const newId=resolve(oldId);if(newId===oldId)continue;
+            const ro=b.resp[oldId],rn=b.resp[newId];
+            if(ro&&(!rn||(ro.t||0)>(rn.t||0)))b.resp[newId]=ro;
+            delete b.resp[oldId];changedEst=true;
+          }
+        }
+        if(b.re&&typeof b.re==='object'){
+          for(const oldId of Object.keys(b.re)){
+            const newId=resolve(oldId);if(newId===oldId)continue;
+            b.re[newId]=1;delete b.re[oldId];changedEst=true;
+          }
+        }
+      }
+    }
+  }
+  if(salva&&(changedFcs||changedAv||changedEst)){
+    if(typeof saveL==='function'){
+      if(changedFcs)saveL('cbr_fcs',fcs);
+      if(changedAv)saveL('cbr_fcav',fcAv);
+      if(changedEst)saveL('cbr_cfg',cfg);
+    }
+    if(salva==='save'){
+      if(typeof window!=='undefined'){
+        const prev=window._fcMigPend||{s:[],av:false,est:false};
+        window._fcMigPend={s:[...new Set([...prev.s,...dirtyS])],av:prev.av||changedAv,est:prev.est||changedEst};
+      }
+    }else{
+      if(typeof dirty!=='undefined'){
+        dirtyS.forEach(k=>dirty.add('s:'+k));
+        if(changedAv)dirty.add('av:0');
+      }
+      if(salva==='dirty'){
+        if(changedEst&&typeof estDirty!=='undefined'){estDirty=true;if(typeof estU!=='undefined'){estU=Date.now();if(typeof saveL==='function')saveL('cbr_u',estU)}}
+      }else if(typeof persist==='function'){
+        if(changedEst)persist('_est');
+        else if(changedFcs&&dirtyS.size)persist('s:'+dirtyS.values().next().value);
+        else if(changedAv)persist('av:0');
+      }
+    }
+  }
+  return changedFcs||changedAv||changedEst;
+}
 function fcMetaMapa(){
   if(_fcMetaCache)return _fcMetaCache;
   const byId=new Map(),byRes=new Map();

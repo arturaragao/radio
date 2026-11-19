@@ -179,8 +179,8 @@ test('Radio 1.64.0: itens 1–7 no navegador',{timeout:240000},async t=>{
     const ui=await ev("({sync:document.querySelector('#sync span').textContent,rd:document.getElementById('rd_sync').textContent,pausa:BCBR.pausaAte})");
     assert.doesNotMatch(ui.sync,/sem conexão/i);
     assert.doesNotMatch(ui.rd,/sem conexão/i);
-    assert.match(ui.sync,/^GitHub ocupado, tentando às \d\d:\d\d$/);
-    assert.match(ui.rd,/^GitHub ocupado, tentando às \d\d:\d\d$/);
+    assert.match(ui.sync,/^Limite do GitHub, tenta às \d\d:\d\d$/);
+    assert.match(ui.rd,/^Limite do GitHub, tenta às \d\d:\d\d$/);
 
     const hitsAntes=await ev("window.__apiHits164");
     await ev("smPuxar().catch(()=>{});SyncNotas.enviar().catch(()=>{});0");

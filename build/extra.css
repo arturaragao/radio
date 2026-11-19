@@ -1,7 +1,20 @@
 html{background:var(--bg)}/* 1.49: faixas das áreas seguras com o mesmo fundo do tema */
 .versao{font-size:.62rem;font-weight:500;opacity:.6;margin-left:6px;letter-spacing:.02em;vertical-align:middle}
 .hr #rd_sync{background:transparent;color:inherit;border:0;padding:0;font:inherit;font-size:.74rem;opacity:.85;display:flex;align-items:center;white-space:nowrap;cursor:pointer;max-width:100%}
-.hr #rd_sync.rd-erro{color:var(--bad,#ff7272)}
+.hr #rd_sync.rd-erro{color:#fecdd3;opacity:1}.hr #rd_sync.rd-pend{color:#fde68a;opacity:1}.hr #rd_sync.rd-ok{color:#bbf7d0}
+#sync{cursor:pointer}#sync.pend{color:#fde68a;opacity:1}#sync.pend i{background:#fbbf24}#sync.err{color:#fecdd3;opacity:1}
+.rd-faixa{max-width:960px;margin:6px auto 0;padding:7px 12px;border-radius:10px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;font-size:.84rem;font-weight:600;line-height:1.35}
+.rd-faixa.rd-fx-aviso{background:#fef3c7;color:#78350f;border:1px solid #f59e0b}
+.rd-faixa.rd-fx-erro{background:#ffe4e6;color:#881337;border:1px solid #f43f5e}
+.rd-fx-txt{flex:1 1 220px;min-width:0}
+.rd-fx-bts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rd-faixa .rd-fx-bt{padding:4px 10px;font-size:.78rem;background:#fff;color:#1c1917;border:1px solid rgba(0,0,0,.22);border-radius:8px;font-weight:600}
+.rd-faixa .rd-fx-bt:hover{filter:brightness(.96)}
+.rd-lista{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:8px}
+.rd-lista li{padding:8px 10px;border:1px solid var(--bd);border-radius:10px;background:var(--card2)}
+.rd-tag{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 7px;border-radius:99px;border:1px solid var(--bd);background:var(--card);margin-right:4px}
+.rd-it-t{font-weight:600}.rd-it-d{font-size:.82rem;margin-top:2px}.rd-it-e{font-size:.82rem;color:var(--bad);margin-top:2px}
+.rd-det-st{margin:4px 0 8px}
 .rd-topo{display:flex;gap:8px;flex-wrap:wrap;padding:2px 0;font-size:.75rem}
 .rd-topo button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:3px 7px;font:inherit;cursor:pointer;max-width:100%;text-align:left}
 .rd-topo .rd-erro{color:var(--bad,#ff7272)}
@@ -141,7 +154,7 @@ body.emquiz:is(.lay-ajustada,.lay-otimizado) .gal .galm{min-height:0}
 .fcf li{margin:4px 0}
 .fc-peg{margin-top:10px;padding-top:8px;border-top:1px dashed var(--bd);font-size:.96rem;line-height:1.5}
 .fc-peg i{color:var(--pri-tx)}
-@media(max-width:520px){.hb{flex-wrap:nowrap;gap:8px}.brand{min-width:0;overflow:hidden;text-overflow:ellipsis}.hr{gap:6px;min-width:0}.hr #rd_sync{font-size:.68rem}.versao{margin-left:2px}}
+@media(max-width:520px){.hb{flex-wrap:nowrap;gap:8px}.brand{min-width:0;overflow:hidden;text-overflow:ellipsis}.hr{gap:6px;min-width:0}.hr #rd_sync{font-size:.68rem;overflow:hidden;text-overflow:ellipsis}.hr #sync{min-width:0;overflow:hidden}.hr #sync span{overflow:hidden;text-overflow:ellipsis}.versao{margin-left:2px}}
 /* PersonalRad 1.23: cores das alternativas herdadas de .ok/.bad. */
 .pr-percentual{white-space:nowrap;margin-left:.4em;font-weight:600}
 .pr-aviso{color:var(--warn);display:inline-block;margin:6px 0}

@@ -13,6 +13,8 @@ const rdInline='<button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-l
 head=head.replace('<div class="hr">','<div class="hr">'+rdInline);
 head=head.replace('<div class="rd-topo">'+rdInline+'<button','<div class="rd-topo"><button');
 assert.equal((head.match(/id="rd_sync"/g)||[]).length,1);
+head=head.replace('<span id="sync" class="local">','<span id="sync" class="local" onclick="rdSyncAbre()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();rdSyncAbre()}" role="button" tabindex="0">');
+head=head.replace('<nav id="nav"></nav>','<nav id="nav"></nav><div id="rd_faixa" class="rd-faixa" role="alert" hidden></div>');
 const ofBtn='<button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline \u00b7 calculando\u2026" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button>';
 head=head.replace('<button class="tg" id="tg"',ofBtn+'<button class="tg" id="tg"');
 assert.equal((head.match(/id="of_btn"/g)||[]).length,1);

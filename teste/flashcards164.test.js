@@ -56,7 +56,7 @@ test('1.64.0: shim.js respeita 403/429 com espera (Retry-After / X-RateLimit-Res
   vm.runInContext(src,ctx);
   const BCBR=ctx.window.BCBR;
 
-  await assert.rejects(()=>BCBR.api('/repos/a/b/contents/x'),e=>e.limite===true&&/^GitHub ocupado, tentando às \d\d:\d\d$/.test(e.message));
+  await assert.rejects(()=>BCBR.api('/repos/a/b/contents/x'),e=>e.limite===true&&/^Limite do GitHub, tenta às \d\d:\d\d$/.test(e.message));
   assert.equal(calls.length,1);
   assert.ok(BCBR.pausaAte>Date.now());
 

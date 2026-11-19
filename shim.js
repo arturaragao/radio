@@ -8,8 +8,8 @@
   const LS = { tk: "bcbr_gh_token", gm: "bcbr_gemini_key", gmModelo: "bcbr_gemini_modelo", off: "bcbr_offline" };
   const tok = () => localStorage.getItem(LS.tk) || "";
   const offlineAtivo = () => { try { return localStorage.getItem(LS.off) === "1"; } catch (e) { return false; } };
-  window.BCBR = { REPO, pausaAte: 0, limiteMsg: "" };
   const fmtHora = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  window.BCBR = { REPO, pausaAte: 0, limiteMsg: "", chaveErro: "", chaveErroStatus: 0, chaveErroToken: "", semRede: false, ultimoConflitoEm: 0, fmtHora };
   const ehLimite = (st, h, resp) => st === 429 || (st === 403 && (h?.get?.("x-ratelimit-remaining") === "0" || window.BCBR.cota?.rest === 0 || !!h?.get?.("retry-after") || /rate.?limit|secondary|abuse|limite|too many|wait a few/i.test(resp || "")));
   const calculaEspera = (h) => {
     const ra = h?.get?.("retry-after");
@@ -23,6 +23,15 @@
   };
   let configAberta = false, carregamentoPendente = false, recusada = "", aguardando401 = "";
   const aba = Math.random().toString(36).slice(2);
+  const avisaSyncEstado = () => {
+    try { window.RadioFila?.atualizaUI?.(); } catch (e) {}
+    try { if (typeof window.dispatchEvent === "function" && typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("bcbr-sync-estado")); } catch (e) {}
+  };
+  window.BCBR.limpaChaveErro = () => {
+    window.BCBR.chaveErro = ""; window.BCBR.chaveErroStatus = 0; window.BCBR.chaveErroToken = "";
+    recusada = ""; aguardando401 = "";
+    avisaSyncEstado();
+  };
   // Recupera a cópia já usada pelo SW nas versões anteriores, sem apagar nenhuma chave.
   async function recuperarChave() {
     if (tok()) return;
@@ -50,8 +59,9 @@
   document.addEventListener("visibilitychange", () => { if (aguardando401 && document.visibilityState === "visible") credencialRecusada(aguardando401); });
   window.addEventListener("storage", (e) => {
     if (e.key !== LS.tk || !e.newValue) return;
-    recusada = ""; aguardando401 = ""; passarChaveSW();
+    window.BCBR.limpaChaveErro(); passarChaveSW();
     if (configAberta || carregamentoPendente) location.reload();
+    else window.RadioFila?.tentarAgora?.("chave");
   });
 
   // ---------- tela de configuração (1x por aparelho) ----------
@@ -80,7 +90,7 @@
 
   async function api(path, opt = {}) {
     if ((window.BCBR.pausaAte || 0) > Date.now()) {
-      const ate = window.BCBR.pausaAte, msg = window.BCBR.limiteMsg || ("GitHub ocupado, tentando às " + fmtHora(ate));
+      const ate = window.BCBR.pausaAte, msg = window.BCBR.limiteMsg || ("Limite do GitHub, tenta às " + fmtHora(ate));
       throw Object.assign(new Error(msg), { status: 429, limite: true, ate });
     }
     const chave = tok();
@@ -88,24 +98,40 @@
     try { r = await fetch(API + path, {
       ...opt, cache: "no-store",
       headers: { Authorization: "Bearer " + chave, Accept: opt.accept === "raw" ? "application/vnd.github.raw" : opt.accept || "application/vnd.github+json", ...(opt.body ? { "Content-Type": "application/json" } : {}), ...(opt.etag ? { "If-None-Match": opt.etag } : {}) },
-    }); } catch (e) { window.BCBR.semRede = true; throw e; }   // 1.42: falha de rede (mesmo com navigator.onLine verdadeiro) alimenta o indicador offline
+    }); } catch (e) { window.BCBR.semRede = true; avisaSyncEstado(); throw e; }   // 1.42: falha de rede (mesmo com navigator.onLine verdadeiro) alimenta o indicador offline
     window.BCBR.semRede = false;
     // 1.40: cota do GitHub (BCBR.cota) para o ciclo rápido da Semana/Notas voltar a 90 s se faltar; opt.etag = GET condicional (304 não gasta cota).
     const rest = r.headers?.get?.("x-ratelimit-remaining");
     if (rest != null) window.BCBR.cota = { rest: +rest, reset: +r.headers?.get?.("x-ratelimit-reset") || 0 };
-    if (r.status === 304) { window.BCBR.pausaAte = 0; window.BCBR.limiteMsg = ""; return { naoMudou: true }; }
-    if (r.status === 401) { await credencialRecusada(chave); throw Object.assign(new Error("chave"), { chave: true, status: 401 }); }
+    if (r.status === 304) { window.BCBR.pausaAte = 0; window.BCBR.limiteMsg = ""; window.BCBR.chaveErro = ""; window.BCBR.chaveErroStatus = 0; window.BCBR.chaveErroToken = ""; return { naoMudou: true }; }
+    if (r.status === 401) {
+      window.BCBR.chaveErro = "Chave do GitHub inválida ou vencida (401)";
+      window.BCBR.chaveErroStatus = 401;
+      window.BCBR.chaveErroToken = chave;
+      if (!window.BCBR_APP_ATIVO) await credencialRecusada(chave);
+      else avisaSyncEstado();
+      throw Object.assign(new Error("chave"), { chave: true, status: 401 });
+    }
     if (!r.ok) {
       const resp = await r.text().catch(() => "");
       if (ehLimite(r.status, r.headers, resp)) {
         const ate = Math.max(window.BCBR.pausaAte || 0, Date.now() + calculaEspera(r.headers));
-        const msg = "GitHub ocupado, tentando às " + fmtHora(ate);
+        const msg = "Limite do GitHub, tenta às " + fmtHora(ate);
         window.BCBR.pausaAte = ate; window.BCBR.limiteMsg = msg;
+        avisaSyncEstado();
         throw Object.assign(new Error(msg), { status: r.status, resp, limite: true, ate });
+      }
+      if (r.status === 403) {
+        window.BCBR.chaveErro = "Chave do GitHub sem permissão ou vencida (403)";
+        window.BCBR.chaveErroStatus = 403;
+        window.BCBR.chaveErroToken = chave;
+        avisaSyncEstado();
+        throw Object.assign(new Error("chave"), { chave: true, status: 403, resp });
       }
       throw Object.assign(new Error("GitHub " + r.status), { status: r.status, resp });
     }
     window.BCBR.pausaAte = 0; window.BCBR.limiteMsg = "";
+    window.BCBR.chaveErro = ""; window.BCBR.chaveErroStatus = 0; window.BCBR.chaveErroToken = "";
     if (opt.etag !== undefined) { const j = await r.json(); j.etag = r.headers?.get?.("etag") || ""; return j; }
     return opt.accept === "raw" ? r : r.json();
   }
@@ -150,11 +176,12 @@
     const lista = await api(`/repos/${REPO}/contents/dados`);
     const item = Object.fromEntries(lista.map((f) => [f.name, f]));
     const sha = Object.fromEntries(lista.map((f) => [f.name, f.sha]));
+    const lerTxt = (f) => (typeof rawItem === "function" ? rawItem(f) : raw(f.sha));
     let mudou = false;
     const pegar = async (nome) => {
       const c = await kvGet("f:" + nome);
       if (c && c.sha === sha[nome]) return c.txt;
-      const txt = await rawItem(item[nome]); mudou = true; await kvSet("f:" + nome, { sha: sha[nome], txt }); return txt;
+      const txt = await lerTxt(item[nome]); mudou = true; await kvSet("f:" + nome, { sha: sha[nome], txt }); return txt;
     };
     const metodos = async () => {
       if (sha["metodos.json"]) return pegar("metodos.json");
@@ -167,48 +194,232 @@
       if (await kvGet("f:" + nome)) { await kvSet("f:" + nome, null); mudou = true; }
       return "";
     };
-    // 1.52.0 / 1.63.0: resumos/indice.json e flashcards/questoes.json (pastas próprias, opcionais). Sem o arquivo (404), segue sem erro.
-    const pastaJson = async (pasta, arquivo, cacheKey) => {
+    // 1.52.0 / 1.63.0 / 1.65.0: resumos/indice.json, resumos/fundidos.json e flashcards/questoes.json (pastas próprias, opcionais). Sem o arquivo (404), segue sem erro.
+    const pastaArquivos = async (pasta, arquivos) => {
       let lista = [];
+      let falhou = false;
       try { lista = await api(`/repos/${REPO}/contents/${pasta}`); }
-      catch (e) { if (e.chave) throw e; if (e.status !== 404) { const c = await kvGet(cacheKey); return c ? c.txt : ""; } }   // sem rede: usa a cópia do aparelho
-      const f = Array.isArray(lista) && lista.find((x) => x.name === arquivo);
-      if (!f) { if (await kvGet(cacheKey)) { await kvSet(cacheKey, null); mudou = true; } return ""; }
-      const c = await kvGet(cacheKey);
-      if (c && c.sha === f.sha) return c.txt;
-      const txt = await rawItem(f); mudou = true; await kvSet(cacheKey, { sha: f.sha, txt }); return txt;
+      catch (e) { if (e.chave) throw e; if (e.status !== 404) falhou = true; }
+      return Promise.all(arquivos.map(async ([arquivo, cacheKey]) => {
+        if (falhou) { const c = await kvGet(cacheKey); return c ? c.txt : ""; }
+        const fRaw = Array.isArray(lista) && lista.find((x) => x.name === arquivo && (!x.path || x.path === pasta + "/" + arquivo));
+        const f = fRaw && (!fRaw.path && sha[arquivo] && fRaw.sha === sha[arquivo]) ? null : fRaw;
+        if (!f) { if (await kvGet(cacheKey)) { await kvSet(cacheKey, null); mudou = true; } return ""; }
+        const c = await kvGet(cacheKey);
+        if (c && c.sha === f.sha) return c.txt;
+        const txt = await lerTxt(f); mudou = true; await kvSet(cacheKey, { sha: f.sha, txt }); return txt;
+      }));
     };
     const lerResumos = (t) => { try { const j = t ? JSON.parse(t) : null; return Array.isArray(j) ? j : null; } catch (e) { return null; } };
+    const lerFundidos = (t) => {
+      try {
+        const j = t ? JSON.parse(t) : null;
+        if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+        return j.fundidos && typeof j.fundidos === "object" && !Array.isArray(j.fundidos) ? j.fundidos : j;
+      } catch (e) { return null; }
+    };
     const lerFcQuestoes = (t) => { try { const j = t ? JSON.parse(t) : null; return j && Array.isArray(j.cards) ? j : (Array.isArray(j) ? { v: 1, cards: j } : null); } catch (e) { return null; } };
-    const [q, m, mt, tax, sim, rs, fq] = await Promise.all([pegar("questoes.json"), sha["metodologia.md"] ? pegar("metodologia.md") : "", metodos(), opcional("taxonomia-pr.json"), opcional("simulados-pr.json"), pastaJson("resumos", "indice.json", "f:resumos-indice.json"), pastaJson("flashcards", "questoes.json", "f:flashcards-questoes.json")]);
-    if (!fundo) { window.RESUMOS_IDX = lerResumos(rs); window.FC_QUESTOES = lerFcQuestoes(fq); window.QUESTOES = adaptar(JSON.parse(q)); window.METODO = m; window.METODOS_DADOS = mt ? JSON.parse(mt) : null; window.TAXONOMIA_PR = tax ? JSON.parse(tax) : null; window.SIMULADOS_PR = sim ? JSON.parse(sim) : null; }
+    const [q, m, mt, tax, sim, resArr, fqArr] = await Promise.all([
+      pegar("questoes.json"),
+      sha["metodologia.md"] ? pegar("metodologia.md") : "",
+      metodos(),
+      opcional("taxonomia-pr.json"),
+      opcional("simulados-pr.json"),
+      pastaArquivos("resumos", [["indice.json", "f:resumos-indice.json"], ["fundidos.json", "f:resumos-fundidos.json"]]),
+      pastaArquivos("flashcards", [["questoes.json", "f:flashcards-questoes.json"]]),
+    ]);
+    const [rs, rf] = resArr, [fq] = fqArr;
+    if (!fundo) {
+      window.RESUMOS_IDX = lerResumos(rs);
+      window.RESUMOS_FUNDIDOS = lerFundidos(rf);
+      window.FC_QUESTOES = lerFcQuestoes(fq);
+      window.QUESTOES = adaptar(JSON.parse(q));
+      window.METODO = m;
+      window.METODOS_DADOS = mt ? JSON.parse(mt) : null;
+      window.TAXONOMIA_PR = tax ? JSON.parse(tax) : null;
+      window.SIMULADOS_PR = sim ? JSON.parse(sim) : null;
+    }
     return mudou;
   }
   async function dadosDoCache() {
     const q = await kvGet("f:questoes.json"), m = await kvGet("f:metodologia.md"), mt = await kvGet("f:metodos.json");
     if (!q) return false;
-    const tax = await kvGet("f:taxonomia-pr.json"), sim = await kvGet("f:simulados-pr.json"), rs = await kvGet("f:resumos-indice.json"), fq = await kvGet("f:flashcards-questoes.json");
+    const tax = await kvGet("f:taxonomia-pr.json"), sim = await kvGet("f:simulados-pr.json"), rs = await kvGet("f:resumos-indice.json"), rf = await kvGet("f:resumos-fundidos.json"), fq = await kvGet("f:flashcards-questoes.json");
     try { const j = rs && rs.txt ? JSON.parse(rs.txt) : null; window.RESUMOS_IDX = Array.isArray(j) ? j : null; } catch (e) { window.RESUMOS_IDX = null; }
+    try {
+      const j = rf && rf.txt ? JSON.parse(rf.txt) : null;
+      window.RESUMOS_FUNDIDOS = j && typeof j === "object" && !Array.isArray(j) ? (j.fundidos && typeof j.fundidos === "object" && !Array.isArray(j.fundidos) ? j.fundidos : j) : null;
+    } catch (e) { window.RESUMOS_FUNDIDOS = null; }
     try { const j = fq && fq.txt ? JSON.parse(fq.txt) : null; window.FC_QUESTOES = j && Array.isArray(j.cards) ? j : (Array.isArray(j) ? { v: 1, cards: j } : null); } catch (e) { window.FC_QUESTOES = null; }
     window.QUESTOES = adaptar(JSON.parse(q.txt)); window.METODO = m ? m.txt : ""; window.METODOS_DADOS = mt ? JSON.parse(mt.txt) : null; window.TAXONOMIA_PR = tax ? JSON.parse(tax.txt) : null; window.SIMULADOS_PR = sim ? JSON.parse(sim.txt) : null; return true;
   }
 
   // ---------- progresso: o "banco" do artefato vira arquivos no GitHub ----------
-  const docs = new Map(), shas = new Map();   // id -> dados, id -> sha do arquivo
-  let fila = Promise.resolve(), ouvintes = [];
+  const docs = new Map(), shas = new Map(), qDocs = new Map();   // id -> dados, id -> sha, id -> rev pendente na fila
+  let fila = Promise.resolve(), outboxFila = Promise.resolve(), ouvintes = [];
   const avisar = () => { const s = { docs: [...docs].map(([id, d]) => ({ id, data: () => d })) }; ouvintes.forEach((o) => o.cb(s)); };
+  const decB64 = (s) => decodeURIComponent(escape(atob(String(s).replace(/\n/g, ""))));
+
+  function mergeProgressoDoc(id, local, rem) {
+    if (!rem || typeof rem !== "object") return local;
+    if (!local || typeof local !== "object") return rem;
+    if (id.startsWith("log_")) {
+      const mp = new Map();
+      const poe = (a) => {
+        if (!Array.isArray(a)) return;
+        const k = a[0] + "|" + a[1], prev = mp.get(k);
+        if (!prev) mp.set(k, a.slice());
+        else if (a[6] && !prev[6]) prev[6] = 1;
+      };
+      (rem.items || []).forEach(poe);
+      (local.items || []).forEach(poe);
+      return { items: [...mp.values()].sort((a, b) => (a[1] || 0) - (b[1] || 0)) };
+    }
+    if (id.startsWith("cards_")) {
+      const mp = new Map();
+      (rem.items || []).forEach((a) => { if (Array.isArray(a) && a[0]) mp.set(a[0], a.slice()); });
+      (local.items || []).forEach((a) => {
+        if (!Array.isArray(a) || !a[0]) return;
+        const p = mp.get(a[0]);
+        if (!p || (a[4] || 0) >= (p[4] || 0)) mp.set(a[0], a.slice());
+      });
+      return { items: [...mp.values()] };
+    }
+    if (id.startsWith("fcs_")) {
+      const s = { ...(rem.s || {}) };
+      Object.entries(local.s || {}).forEach(([k, v]) => {
+        const ex = s[k];
+        if (!ex || (v && (v[5] || 0) >= (ex[5] || 0))) s[k] = v;
+      });
+      return { s };
+    }
+    if (id === "fc_avaliacoes") {
+      const items = { ...(rem.items || {}) };
+      Object.entries(local.items || {}).forEach(([k, v]) => {
+        const ex = items[k];
+        if (v && (!ex || (v.u || 0) >= (ex.u || 0))) items[k] = v;
+      });
+      return { items };
+    }
+    if (id.startsWith("pon_") || id.startsWith("ia_")) {
+      const m = { ...(rem.m || {}) };
+      Object.entries(local.m || {}).forEach(([k, v]) => {
+        const ex = m[k];
+        if (v && (!ex || (v.u || 0) >= (ex.u || 0))) m[k] = v;
+      });
+      return { m };
+    }
+    if (id === "metodo") return (local.u || 0) >= (rem.u || 0) ? local : rem;
+    if (id.startsWith("uimg_")) return local.d ? local : rem;
+    if (id === "estado") {
+      const lWins = (local.u || 0) >= (rem.u || 0);
+      const resetAt = Math.max(local.resetAt || 0, rem.resetAt || 0);
+      const u = Math.max(local.u || 0, rem.u || 0);
+      const over = lWins ? { ...(rem.over || {}), ...(local.over || {}) } : { ...(local.over || {}), ...(rem.over || {}) };
+      const lc = local.cfg || {}, rc = rem.cfg || {};
+      const cfg = JSON.parse(JSON.stringify(lWins ? lc : rc));
+      const mor = { ...(rc.fcMortos || {}) };
+      Object.entries(lc.fcMortos || {}).forEach(([k, v]) => { if (!(mor[k] >= v)) mor[k] = v; });
+      cfg.fcMortos = Object.fromEntries(Object.entries(mor).sort((a, b) => b[1] - a[1]).slice(0, 100));
+      const bUlt = (b) => Math.max(b.u || 0, ...Object.values(b.resp || {}).map((r) => (r && r.t) || 0));
+      const bm = new Map();
+      (rc.fcBlocos || []).forEach((b) => { if (b && b.id && Array.isArray(b.ids)) bm.set(b.id, b); });
+      (lc.fcBlocos || []).forEach((b) => {
+        if (!b || !b.id || !Array.isArray(b.ids)) return;
+        const a = bm.get(b.id);
+        if (!a) { bm.set(b.id, b); return; }
+        if ((b.t0 || 0) > (a.t0 || 0)) { bm.set(b.id, b); return; }
+        if ((a.t0 || 0) > (b.t0 || 0)) return;
+        const resp = { ...(a.resp || {}) };
+        Object.entries(b.resp || {}).forEach(([k, v]) => { if (!resp[k] || (v && (v.t || 0) > (resp[k].t || 0))) resp[k] = v; });
+        const bMais = (b.u || 0) >= (a.u || 0);
+        bm.set(b.id, { ...(bMais ? b : a), ids: [...new Set([...((bMais ? b.ids : a.ids) || []), ...((bMais ? a.ids : b.ids) || [])])], resp, u: Math.max(a.u || 0, b.u || 0) });
+      });
+      cfg.fcBlocos = [...bm.values()].filter((b) => !(cfg.fcMortos[b.id] >= bUlt(b)));
+      if (lc.fcHoje && rc.fcHoje && lc.fcHoje.d === rc.fcHoje.d) {
+        cfg.fcHoje = { d: lc.fcHoje.d, feitos: [...new Set([...(rc.fcHoje.feitos || []), ...(lc.fcHoje.feitos || [])])] };
+      } else if (lc.fcHoje && (!rc.fcHoje || lc.fcHoje.d > rc.fcHoje.d)) {
+        cfg.fcHoje = lc.fcHoje;
+      } else if (rc.fcHoje) {
+        cfg.fcHoje = rc.fcHoje;
+      }
+      if (lc.ri && rc.ri && lc.ri.d === rc.ri.d && Array.isArray(lc.ri.ids) && Array.isArray(rc.ri.ids)) {
+        cfg.ri = { ...lc.ri, meta: Math.max(lc.ri.meta || 0, rc.ri.meta || 0), ids: [...new Set([...lc.ri.ids, ...rc.ri.ids])] };
+      } else if (lc.ri && (!rc.ri || String(lc.ri.d || "") > String(rc.ri.d || ""))) {
+        cfg.ri = lc.ri;
+      } else if (rc.ri) {
+        cfg.ri = rc.ri;
+      }
+      if (Array.isArray(lc.ests) || Array.isArray(rc.ests)) {
+        const em = new Map();
+        (rc.ests || []).forEach((e) => { if (e && e.id) em.set(e.id, e); });
+        (lc.ests || []).forEach((e) => { if (e && e.id && (!em.has(e.id) || (e.u || 0) >= (em.get(e.id).u || 0))) em.set(e.id, e); });
+        cfg.ests = [...em.values()];
+      }
+      return { over, cfg, u, resetAt };
+    }
+    return { ...rem, ...local };
+  }
+
+  function salvaOutboxIdb(id, data, rev) {
+    outboxFila = outboxFila.then(async () => {
+      await kvSet("q:p:" + id, { id, d: data, rev, t: Date.now() });
+      const idx = (await kvGet("q:p_idx")) || [];
+      const arr = Array.isArray(idx) ? idx : [];
+      if (!arr.includes(id)) await kvSet("q:p_idx", [...arr, id]);
+    }).catch(() => {});
+    return outboxFila;
+  }
+  function removeOutboxIdb(id, rev) {
+    outboxFila = outboxFila.then(async () => {
+      if (qDocs.get(id) !== rev) return;
+      qDocs.delete(id);
+      await kvSet("q:p:" + id, null);
+      const idx = (await kvGet("q:p_idx")) || [];
+      if (Array.isArray(idx) && idx.includes(id)) await kvSet("q:p_idx", idx.filter((x) => x !== id));
+    }).catch(() => {});
+    return outboxFila;
+  }
+
   async function gravarDoc(id, data) {
+    const rev = Date.now() + Math.random();
     docs.set(id, data);
+    qDocs.set(id, rev);
+    await salvaOutboxIdb(id, data, rev);
     const tarefa = async () => {
-      for (let t = 1; t <= 4; t++) {
+      let atual = docs.get(id) || data;
+      let teveConflito = false;
+      for (let t = 1; t <= 5; t++) {
         try {
-          const body = { message: "progresso: " + id, content: b64(JSON.stringify(data)), branch: "main" };
+          const body = { message: "progresso: " + id, content: b64(JSON.stringify(atual)), branch: "main" };
           if (shas.get(id)) body.sha = shas.get(id);
           const r = await api(`/repos/${REPO}/contents/progresso/${id}.json`, { method: "PUT", body: JSON.stringify(body) });
-          shas.set(id, r.content.sha); kvSet("p:" + id, { sha: r.content.sha, d: data }); return;
+          if (!r?.content?.sha) throw new Error("GitHub não confirmou sha");
+          shas.set(id, r.content.sha);
+          docs.set(id, atual);
+          await kvSet("p:" + id, { sha: r.content.sha, d: atual });
+          await removeOutboxIdb(id, rev);
+          if (teveConflito) {
+            window.BCBR.ultimoConflitoEm = Date.now();
+            try { window.RadioFila?.marcaConflitoResolvido?.("Progresso (" + id + ")"); } catch (e2) {}
+            avisar();
+          }
+          return;
         } catch (e) {
-          if (e.status === 409 || e.status === 422) {   // mudou em outro aparelho: pega o sha novo e grava de novo
-            try { const f = await api(`/repos/${REPO}/contents/progresso/${id}.json`); shas.set(id, f.sha); } catch (e2) { shas.delete(id); }
+          if (e.status === 409 || e.status === 422) {
+            teveConflito = true;
+            try {
+              const f = await api(`/repos/${REPO}/contents/progresso/${id}.json`);
+              shas.set(id, f.sha);
+              let remTxt = "";
+              if (f.encoding === "none" || (!f.content && f.size > 0)) remTxt = await raw(f.sha);
+              else if (f.content) remTxt = decB64(f.content);
+              if (remTxt) {
+                const rem = JSON.parse(remTxt);
+                atual = mergeProgressoDoc(id, atual, rem);
+                docs.set(id, atual);
+              }
+            } catch (e2) { if (e2 && e2.status === 404) shas.delete(id); else throw e2; }
             continue;
           }
           throw e;
@@ -219,6 +430,9 @@
     const p = fila.then(tarefa); fila = p.catch(() => {}); return p;
   }
   async function puxar() {
+    if ((window.BCBR.pausaAte || 0) > Date.now()) {
+      throw Object.assign(new Error(window.BCBR.limiteMsg || "Limite do GitHub"), { limite: true, ate: window.BCBR.pausaAte, status: 429 });
+    }
     let lista;
     try { lista = await api(`/repos/${REPO}/contents/progresso`); } catch (e) { if (e.status === 404) lista = []; else throw e; }
     let mudou = false;
@@ -228,10 +442,13 @@
       const c = await kvGet("p:" + id);
       const d = c && c.sha === f.sha ? c.d : JSON.parse(await raw(f.sha));
       if (!(c && c.sha === f.sha)) kvSet("p:" + id, { sha: f.sha, d });
-      docs.set(id, d); shas.set(id, f.sha); mudou = true;
+      const finalD = qDocs.has(id) && docs.has(id) ? mergeProgressoDoc(id, docs.get(id), d) : d;
+      docs.set(id, finalD); shas.set(id, f.sha); mudou = true;
     }));
     return mudou;
   }
+  window.BCBR.mergeProgressoDoc = mergeProgressoDoc;
+  window.BCBR.puxarProgresso = puxar;
   const DBshim = {
     collection() {
       return {
@@ -239,11 +456,13 @@
         onSnapshot(cb, err) {
           const o = { cb, err }; ouvintes.push(o);
           const ciclo = async (primeira) => {
+            if ((window.BCBR.pausaAte || 0) > Date.now()) { err && err(Object.assign(new Error(window.BCBR.limiteMsg || "Limite do GitHub"), { limite: true, ate: window.BCBR.pausaAte, status: 429 })); return; }
+            if (window.BCBR.chaveErro && window.BCBR.chaveErroToken === tok()) { err && err(Object.assign(new Error("chave"), { chave: true, status: window.BCBR.chaveErroStatus || 401 })); return; }
             try { const m = await puxar(); if (m || primeira) avisar(); } catch (e) { err && err(e); }
           };
           ciclo(true);
-          setInterval(() => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && ciclo(false), 60000);
-          document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && ciclo(false));
+          setInterval(() => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && !(window.BCBR.chaveErro && window.BCBR.chaveErroToken === tok()) && ciclo(false), 60000);
+          document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && !((window.BCBR.pausaAte || 0) > Date.now()) && !(window.BCBR.chaveErro && window.BCBR.chaveErroToken === tok()) && ciclo(false));
           return () => { ouvintes = ouvintes.filter((x) => x !== o); };
         },
       };
@@ -432,7 +651,7 @@
     if (cache) { abrirApp(); checarDados(); return; }
     try { await carregarDados(); ok = true; }
     catch (e) {
-      if (e.chave) { carregamentoPendente = true; return; }
+      if (e.chave && e.status === 401 && !window.BCBR_APP_ATIVO) { carregamentoPendente = true; return; }
       ok = await dadosDoCache();   // sem internet: usa o que já está no aparelho
       if (!ok) {
         document.getElementById("app").innerHTML = '<div class="card"><p>Não foi possível baixar o banco. Verifique a conexão e tente novamente.</p><button class="b" id="bcbr_tentar">Tentar novamente</button></div>';

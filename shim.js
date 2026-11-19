@@ -54,7 +54,18 @@
       recusada = chave; aguardando401 = "";
       telaConfig("O GitHub respondeu 401: a credencial foi recusada. Salve uma chave válida.");
     };
-    if (navigator.locks) await navigator.locks.request("bcbr-login", mostrar); else mostrar();
+    if (navigator.locks) {
+      try {
+        if (typeof AbortController === "function" && typeof setTimeout === "function") {
+          const ac = new AbortController();
+          const tm = setTimeout(() => ac.abort(), 3000);
+          tm?.unref?.();
+          await navigator.locks.request("bcbr-login", { signal: ac.signal }, () => { clearTimeout(tm); mostrar(); });
+        } else {
+          await navigator.locks.request("bcbr-login", mostrar);
+        }
+      } catch (e) { mostrar(); }
+    } else mostrar();
   }
   document.addEventListener("visibilitychange", () => { if (aguardando401 && document.visibilityState === "visible") credencialRecusada(aguardando401); });
   window.addEventListener("storage", (e) => {
@@ -146,9 +157,56 @@
   Object.assign(window.BCBR, { api, raw, b64 });   // usados pela aba Semana (build/semana.js)
 
   // ---------- cache simples em IndexedDB ----------
-  const idb = new Promise((ok, no) => { const r = indexedDB.open("bcbr", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
-  const kvGet = (k) => idb.then((d) => new Promise((ok) => { const t = d.transaction("kv").objectStore("kv").get(k); t.onsuccess = () => ok(t.result); t.onerror = () => ok(undefined); })).catch(() => undefined);
-  const kvSet = (k, v) => idb.then((d) => new Promise((ok) => { const t = d.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = ok; t.onerror = ok; })).catch(() => {});
+  const IDB_MS = 2500;
+  const idb = new Promise((ok, no) => {
+    if (typeof indexedDB === "undefined") { window.BCBR.idbIndisponivel = true; return no(new Error("sem idb")); }
+    let fim = false;
+    const encerra = (fn, v, indisp) => {
+      if (fim) return; fim = true;
+      if (tm && typeof clearTimeout === "function") clearTimeout(tm);
+      if (indisp) { window.BCBR.idbIndisponivel = true; avisaSyncEstado(); }
+      fn(v);
+    };
+    const tm = typeof setTimeout === "function" ? setTimeout(() => encerra(no, new Error("idb timeout"), true), IDB_MS) : null;
+    if (typeof tm?.unref === "function") tm.unref();
+    try {
+      const r = indexedDB.open("bcbr", 1);
+      r.onupgradeneeded = () => { if (!r.result.objectStoreNames?.contains?.("kv")) r.result.createObjectStore("kv"); };
+      r.onsuccess = () => {
+        const d = r.result;
+        if (d) d.onversionchange = () => { try { d.close?.(); } catch (e) {} };
+        if (fim) { try { d?.close?.(); } catch (e) {} return; }
+        encerra(ok, d, false);
+      };
+      r.onerror = () => encerra(no, r.error || new Error("idb erro"), true);
+      r.onblocked = () => encerra(no, new Error("idb bloqueado"), true);
+    } catch (e) { encerra(no, e, true); }
+  });
+  idb.catch(() => {});
+  const kvGet = (k) => idb.then((d) => new Promise((ok) => {
+    let fim = false;
+    const done = (v) => { if (fim) return; fim = true; if (tm && typeof clearTimeout === "function") clearTimeout(tm); ok(v); };
+    const tm = typeof setTimeout === "function" ? setTimeout(() => done(undefined), IDB_MS) : null;
+    if (typeof tm?.unref === "function") tm.unref();
+    try {
+      const tx = d.transaction("kv");
+      const req = tx.objectStore("kv").get(k);
+      req.onsuccess = () => done(req.result);
+      req.onerror = () => done(undefined);
+      tx.onabort = tx.onerror = () => done(undefined);
+    } catch (e) { done(undefined); }
+  })).catch(() => undefined);
+  const kvSet = (k, v) => idb.then((d) => new Promise((ok) => {
+    let fim = false;
+    const done = () => { if (fim) return; fim = true; if (tm && typeof clearTimeout === "function") clearTimeout(tm); ok(); };
+    const tm = typeof setTimeout === "function" ? setTimeout(done, IDB_MS) : null;
+    if (typeof tm?.unref === "function") tm.unref();
+    try {
+      const tx = d.transaction("kv", "readwrite");
+      tx.objectStore("kv").put(v, k);
+      tx.oncomplete = tx.onerror = tx.onabort = done;
+    } catch (e) { done(); }
+  })).catch(() => {});
 
   async function passarChaveSW() {
     if (!tok()) return;
@@ -604,7 +662,7 @@
       const v = (await r.text()).trim(); if (!v || v === window.BCBR_VERSAO) return;
       if (sessionStorage.getItem("bcbr_recarregou") === v) return;   // não entra em laço se o GitHub ainda serve a velha
       sessionStorage.setItem("bcbr_recarregou", v);
-      const ks = await caches.keys(); await Promise.all(ks.filter((k) => k.startsWith("bcbr-v")).map((k) => caches.delete(k)));
+      const ks = await caches.keys(); await Promise.all(ks.filter((k) => k.startsWith("bcbr-v") || /^bcbr-\d/.test(k)).map((k) => caches.delete(k)));
       const reg = "serviceWorker" in navigator && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update().catch(() => {});
       location.reload();
     } catch (e) {}

@@ -965,7 +965,7 @@ function ntQuickSwitcher(){
   l.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b&&it[+b.dataset.i])abre(it[+b.dataset.i])});
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();q.focus();
 }
-document.addEventListener('keydown',e=>{
+if(typeof document!=='undefined')document.addEventListener('keydown',e=>{
   if(e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&String(e.key).toLowerCase()==='k'){
     e.preventDefault();ntQuickSwitcher();
   }

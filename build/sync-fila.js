@@ -2,7 +2,7 @@
 // backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
 (function (root) {
   const DB_NOME = 'bcbr-fila', STORE = 'fila', LS_META = 'bcbr_fila_meta', LS_PROG = 'bcbr_fila_prog';
-  const DEZ_MIN = 10 * 60 * 1000;
+  const DEZ_MIN = 10 * 60 * 1000, IDB_MS = 2500;
   const clone = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
   const fmtHora = (ms) => {
     const d = new Date(ms);
@@ -10,7 +10,7 @@
   };
   const tokAtual = () => { try { return localStorage.getItem('bcbr_gh_token') || ''; } catch (e) { return ''; } };
 
-  let dbRef = null, dbAbrindo = null, hidratando = null, drenando = null;
+  let dbRef = null, dbAbrindo = null, hidratando = null, drenando = null, idbFalhou = false;
   let writesEmCurso = Promise.resolve();
   let conflitoAte = 0, conflitoDesc = '', ultimoErro = '', uiTimer = null, retryTimer = null;
   let falhasSeguidas = 0, backoffAte = 0, hidratouDb = false;
@@ -19,49 +19,75 @@
   const hidratadosTipos = { progresso: false, semana: false };
   const drenadores = [];
 
+  function marcaIdbIndisponivel() {
+    idbFalhou = true;
+    if (typeof window !== 'undefined' && window.BCBR) window.BCBR.idbIndisponivel = true;
+    try { atualizaUI(); } catch (e) {}
+  }
+
   function abrirDb() {
     if (dbRef) return Promise.resolve(dbRef);
     if (dbAbrindo) return dbAbrindo;
     if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    if (typeof window !== 'undefined' && window.BCBR?.idbIndisponivel) {
+      idbFalhou = true;
+      return Promise.resolve(null);
+    }
     dbAbrindo = new Promise((ok) => {
+      let fim = false;
+      const done = (d, falhou) => {
+        if (fim) return;
+        fim = true;
+        if (tm && typeof clearTimeout === 'function') clearTimeout(tm);
+        if (falhou) marcaIdbIndisponivel();
+        ok(d);
+      };
+      const tm = typeof setTimeout === 'function' ? setTimeout(() => done(null, true), IDB_MS) : null;
+      if (typeof tm?.unref === 'function') tm.unref();
       try {
         const req = indexedDB.open(DB_NOME, 1);
         req.onupgradeneeded = () => {
           const d = req.result;
           if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'id' });
         };
-        req.onsuccess = () => { dbRef = req.result; ok(dbRef); };
-        req.onerror = () => ok(null);
-        req.onblocked = () => ok(null);
-      } catch (e) { ok(null); }
+        req.onsuccess = () => {
+          const d = req.result;
+          if (d) d.onversionchange = () => { try { d.close?.(); } catch (e) {} if (dbRef === d) { dbRef = null; dbAbrindo = null; } };
+          if (fim) { try { d?.close?.(); } catch (e) {} return; }
+          dbRef = d;
+          done(dbRef, false);
+        };
+        req.onerror = () => done(null, true);
+        req.onblocked = () => done(null, true);
+      } catch (e) { done(null, true); }
     });
     return dbAbrindo;
   }
 
   function idbOp(modo, fn) {
-    if (dbRef) {
+    const exec = (d) => {
+      if (!d) return Promise.resolve(null);
       return new Promise((ok) => {
-        try {
-          const tx = dbRef.transaction(STORE, modo);
-          const st = tx.objectStore(STORE);
-          const r = fn(st);
-          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
-          tx.onerror = tx.onabort = () => ok(null);
-        } catch (e) { ok(null); }
-      });
-    }
-    return abrirDb().then((d) => {
-      if (!d) return null;
-      return new Promise((ok) => {
+        let fim = false;
+        const done = (v) => {
+          if (fim) return;
+          fim = true;
+          if (tm && typeof clearTimeout === 'function') clearTimeout(tm);
+          ok(v);
+        };
+        const tm = typeof setTimeout === 'function' ? setTimeout(() => done(null), IDB_MS) : null;
+        if (typeof tm?.unref === 'function') tm.unref();
         try {
           const tx = d.transaction(STORE, modo);
           const st = tx.objectStore(STORE);
           const r = fn(st);
-          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
-          tx.onerror = tx.onabort = () => ok(null);
-        } catch (e) { ok(null); }
+          tx.oncomplete = () => done(r && 'result' in r ? r.result : true);
+          tx.onerror = tx.onabort = () => done(null);
+        } catch (e) { done(null); }
       });
-    });
+    };
+    if (dbRef) return exec(dbRef);
+    return abrirDb().then(exec);
   }
 
   function espelhaMetaLS() {
@@ -165,7 +191,14 @@
         espelhaMetaLS();
       }
       if (typeof SyncNotas !== 'undefined' && SyncNotas.pronto) {
-        await SyncNotas.pronto.catch(() => {});
+        await Promise.race([
+          SyncNotas.pronto.catch(() => {}),
+          new Promise((r) => {
+            if (typeof setTimeout !== 'function') return r();
+            const t = setTimeout(r, IDB_MS);
+            if (typeof t?.unref === 'function') t.unref();
+          }),
+        ]);
       }
       hidratouDb = true;
       aplicaHidratador('semana');
@@ -277,6 +310,7 @@
     const enviando = !!drenando || !!ntResumo?.enviando || (typeof syncSt !== 'undefined' && syncSt === 'saving') || (typeof RD !== 'undefined' && RD.enviando > 0);
     const conectado = typeof DB !== 'undefined' && !!DB;
     const volatil = !!ntResumo?.volatil;
+    const idbIndisponivel = idbFalhou || !!b.idbIndisponivel;
     const basePend = n === 1 ? '1 alteração pendente — salva neste PC' : `${n} alterações pendentes — salvas neste PC`;
     const erroRaw = ntResumo?.erro || (typeof SM !== 'undefined' && SM.erro) || (typeof RD !== 'undefined' && RD.erro) || ultimoErro || '';
 
@@ -317,9 +351,15 @@
       cls = 'ok';
       texto = 'Sincronizado';
     }
+    if (idbIndisponivel && !mostrarFaixa) {
+      mostrarFaixa = true;
+      faixaTexto = n > 0
+        ? `${basePend} · IndexedDB indisponível (modo seguro no localStorage)`
+        : 'IndexedDB indisponível — fila em modo seguro (localStorage).';
+    }
 
     return {
-      cls, texto, chaveErro, limite, offline, enviando, conectado,
+      cls, texto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
       conflito: conflitoAte > agora, conflitoDesc, pendentes: n, idadeMaxMs: idade,
       mostrarFaixa, faixaTexto, erro: erroRaw,
     };

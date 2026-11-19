@@ -356,19 +356,59 @@ if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};
 // Adaptador do app. IndexedDB usa o store já compartilhado pelo shim; falhar é normal.
 const SyncNotas=typeof BCBR==='undefined'?null:criarSyncNotas({
   api:(p,o)=>BCBR.api(p,o),repo:BCBR.REPO,
-  trava:fn=>typeof navigator!=='undefined'&&navigator.locks?.request?navigator.locks.request('radio-paginas-v2',fn):fn(),
+  trava:fn=>{
+    if(typeof navigator==='undefined'||!navigator.locks?.request)return fn();
+    if(typeof AbortController!=='function'||typeof setTimeout!=='function')return navigator.locks.request('radio-paginas-v2',fn);
+    const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),8000);
+    if(typeof tm?.unref==='function')tm.unref();
+    return navigator.locks.request('radio-paginas-v2',{signal:ac.signal},()=>{clearTimeout(tm);return fn()}).catch(e=>{clearTimeout(tm);if(e?.name==='AbortError')return false;throw e});
+  },
   storage:(()=>{try{return localStorage}catch(e){return null}})(),
   cache:(()=>{
+    const IDB_MS=2500;
     let db;
-    const abrir=()=>db||(db=new Promise((ok,no)=>{
-      try{const r=indexedDB.open('bcbr',1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('kv'))r.result.createObjectStore('kv')};
-        r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);r.onblocked=()=>no(Error('cache indisponível'));
-      }catch(e){no(e)}
-    }));
-    const op=async(k,v,grava)=>{const d=await abrir();return new Promise((ok,no)=>{
-      const t=d.transaction('kv',grava?'readwrite':'readonly'),r=grava?t.objectStore('kv').put(v,k):t.objectStore('kv').get(k);
-      t.oncomplete=()=>ok(r.result);t.onerror=t.onabort=()=>no(t.error);
-    })};
+    const abrir=()=>{
+      if(typeof window!=='undefined'&&window.BCBR?.idbIndisponivel)return Promise.reject(Error('cache indisponível'));
+      if(db)return db;
+      db=new Promise((ok,no)=>{
+        let fim=false;
+        const done=(fn,v,indisp)=>{
+          if(fim)return;fim=true;
+          if(tm&&typeof clearTimeout==='function')clearTimeout(tm);
+          if(indisp&&typeof window!=='undefined'&&window.BCBR)window.BCBR.idbIndisponivel=true;
+          fn(v);
+        };
+        const tm=typeof setTimeout==='function'?setTimeout(()=>done(no,Error('cache timeout'),true),IDB_MS):null;
+        if(typeof tm?.unref==='function')tm.unref();
+        try{
+          const r=indexedDB.open('bcbr',1);
+          r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('kv'))r.result.createObjectStore('kv')};
+          r.onsuccess=()=>{
+            const d=r.result;
+            if(d)d.onversionchange=()=>{try{d.close?.()}catch(e){}db=null};
+            if(fim){try{d?.close?.()}catch(e){}return}
+            done(ok,d,false);
+          };
+          r.onerror=()=>done(no,r.error||Error('cache erro'),true);
+          r.onblocked=()=>done(no,Error('cache indisponível'),true);
+        }catch(e){done(no,e,true)}
+      });
+      db.catch(()=>{});
+      return db;
+    };
+    const op=async(k,v,grava)=>{
+      const d=await abrir();
+      return new Promise((ok,no)=>{
+        let fim=false;
+        const done=(fn,val)=>{if(fim)return;fim=true;if(tm&&typeof clearTimeout==='function')clearTimeout(tm);fn(val)};
+        const tm=typeof setTimeout==='function'?setTimeout(()=>done(no,Error('cache op timeout')),IDB_MS):null;
+        if(typeof tm?.unref==='function')tm.unref();
+        try{
+          const t=d.transaction('kv',grava?'readwrite':'readonly'),r=grava?t.objectStore('kv').put(v,k):t.objectStore('kv').get(k);
+          t.oncomplete=()=>done(ok,r.result);t.onerror=t.onabort=()=>done(no,t.error||Error('cache op erro'));
+        }catch(e){done(no,e)}
+      });
+    };
     return {get:k=>op(k,null,false),set:(k,v)=>op(k,v,true)};
   })(),
   converterAntigas:notas=>{const blocos=ntOrdenadas(notas).map(ntNotaParaBloco);return {id:'notas',titulo:'Notas',doc:{v:1,blocos},atualizado:blocos.reduce((s,b)=>b.atualizado>s?b.atualizado:s,'')}},

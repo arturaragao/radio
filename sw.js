@@ -62,7 +62,8 @@ self.addEventListener("fetch", (e) => {
   // app: abre na hora com a cópia do aparelho e baixa a versão nova por trás (pedido do Artur, 23/10/2026: abrir rápido no celular).
   // Se a página mudou, avisa o app ("Versão nova do app pronta · Atualizar"). Sem cópia: rede (e cópia se o GitHub falhar).
   e.respondWith((async () => {
-    const cache = await caches.open(VERSAO), hit = await cache.match(e.request) || await cache.match(e.request, { ignoreSearch: true }) || (e.request.mode === "navigate" ? await cache.match("./index.html", { ignoreSearch: true }) : null);   // ./?pagina=<id> e ?v= abrem com a cópia do app
+    const vReq = u.searchParams.get("v"), vIgual = !vReq || VERSAO === "bcbr-" + vReq;
+    const cache = await caches.open(VERSAO), hit = await cache.match(e.request) || (vIgual ? await cache.match(e.request, { ignoreSearch: true }) : null) || (e.request.mode === "navigate" ? await cache.match("./index.html", { ignoreSearch: true }) : null);   // ./?pagina=<id> e ?v= (mesma versão) abrem com a cópia do app
     const rede = fetch(e.request.url, { cache: "no-cache" }).then(async (r) => {
       if (r.ok) {
         const pagina = e.request.mode === "navigate";

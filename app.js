@@ -3,7 +3,7 @@
 // backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
 (function (root) {
   const DB_NOME = 'bcbr-fila', STORE = 'fila', LS_META = 'bcbr_fila_meta', LS_PROG = 'bcbr_fila_prog';
-  const DEZ_MIN = 10 * 60 * 1000;
+  const DEZ_MIN = 10 * 60 * 1000, IDB_MS = 2500;
   const clone = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
   const fmtHora = (ms) => {
     const d = new Date(ms);
@@ -11,7 +11,7 @@
   };
   const tokAtual = () => { try { return localStorage.getItem('bcbr_gh_token') || ''; } catch (e) { return ''; } };
 
-  let dbRef = null, dbAbrindo = null, hidratando = null, drenando = null;
+  let dbRef = null, dbAbrindo = null, hidratando = null, drenando = null, idbFalhou = false;
   let writesEmCurso = Promise.resolve();
   let conflitoAte = 0, conflitoDesc = '', ultimoErro = '', uiTimer = null, retryTimer = null;
   let falhasSeguidas = 0, backoffAte = 0, hidratouDb = false;
@@ -20,49 +20,75 @@
   const hidratadosTipos = { progresso: false, semana: false };
   const drenadores = [];
 
+  function marcaIdbIndisponivel() {
+    idbFalhou = true;
+    if (typeof window !== 'undefined' && window.BCBR) window.BCBR.idbIndisponivel = true;
+    try { atualizaUI(); } catch (e) {}
+  }
+
   function abrirDb() {
     if (dbRef) return Promise.resolve(dbRef);
     if (dbAbrindo) return dbAbrindo;
     if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    if (typeof window !== 'undefined' && window.BCBR?.idbIndisponivel) {
+      idbFalhou = true;
+      return Promise.resolve(null);
+    }
     dbAbrindo = new Promise((ok) => {
+      let fim = false;
+      const done = (d, falhou) => {
+        if (fim) return;
+        fim = true;
+        if (tm && typeof clearTimeout === 'function') clearTimeout(tm);
+        if (falhou) marcaIdbIndisponivel();
+        ok(d);
+      };
+      const tm = typeof setTimeout === 'function' ? setTimeout(() => done(null, true), IDB_MS) : null;
+      if (typeof tm?.unref === 'function') tm.unref();
       try {
         const req = indexedDB.open(DB_NOME, 1);
         req.onupgradeneeded = () => {
           const d = req.result;
           if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'id' });
         };
-        req.onsuccess = () => { dbRef = req.result; ok(dbRef); };
-        req.onerror = () => ok(null);
-        req.onblocked = () => ok(null);
-      } catch (e) { ok(null); }
+        req.onsuccess = () => {
+          const d = req.result;
+          if (d) d.onversionchange = () => { try { d.close?.(); } catch (e) {} if (dbRef === d) { dbRef = null; dbAbrindo = null; } };
+          if (fim) { try { d?.close?.(); } catch (e) {} return; }
+          dbRef = d;
+          done(dbRef, false);
+        };
+        req.onerror = () => done(null, true);
+        req.onblocked = () => done(null, true);
+      } catch (e) { done(null, true); }
     });
     return dbAbrindo;
   }
 
   function idbOp(modo, fn) {
-    if (dbRef) {
+    const exec = (d) => {
+      if (!d) return Promise.resolve(null);
       return new Promise((ok) => {
-        try {
-          const tx = dbRef.transaction(STORE, modo);
-          const st = tx.objectStore(STORE);
-          const r = fn(st);
-          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
-          tx.onerror = tx.onabort = () => ok(null);
-        } catch (e) { ok(null); }
-      });
-    }
-    return abrirDb().then((d) => {
-      if (!d) return null;
-      return new Promise((ok) => {
+        let fim = false;
+        const done = (v) => {
+          if (fim) return;
+          fim = true;
+          if (tm && typeof clearTimeout === 'function') clearTimeout(tm);
+          ok(v);
+        };
+        const tm = typeof setTimeout === 'function' ? setTimeout(() => done(null), IDB_MS) : null;
+        if (typeof tm?.unref === 'function') tm.unref();
         try {
           const tx = d.transaction(STORE, modo);
           const st = tx.objectStore(STORE);
           const r = fn(st);
-          tx.oncomplete = () => ok(r && 'result' in r ? r.result : true);
-          tx.onerror = tx.onabort = () => ok(null);
-        } catch (e) { ok(null); }
+          tx.oncomplete = () => done(r && 'result' in r ? r.result : true);
+          tx.onerror = tx.onabort = () => done(null);
+        } catch (e) { done(null); }
       });
-    });
+    };
+    if (dbRef) return exec(dbRef);
+    return abrirDb().then(exec);
   }
 
   function espelhaMetaLS() {
@@ -166,7 +192,14 @@
         espelhaMetaLS();
       }
       if (typeof SyncNotas !== 'undefined' && SyncNotas.pronto) {
-        await SyncNotas.pronto.catch(() => {});
+        await Promise.race([
+          SyncNotas.pronto.catch(() => {}),
+          new Promise((r) => {
+            if (typeof setTimeout !== 'function') return r();
+            const t = setTimeout(r, IDB_MS);
+            if (typeof t?.unref === 'function') t.unref();
+          }),
+        ]);
       }
       hidratouDb = true;
       aplicaHidratador('semana');
@@ -278,6 +311,7 @@
     const enviando = !!drenando || !!ntResumo?.enviando || (typeof syncSt !== 'undefined' && syncSt === 'saving') || (typeof RD !== 'undefined' && RD.enviando > 0);
     const conectado = typeof DB !== 'undefined' && !!DB;
     const volatil = !!ntResumo?.volatil;
+    const idbIndisponivel = idbFalhou || !!b.idbIndisponivel;
     const basePend = n === 1 ? '1 alteração pendente — salva neste PC' : `${n} alterações pendentes — salvas neste PC`;
     const erroRaw = ntResumo?.erro || (typeof SM !== 'undefined' && SM.erro) || (typeof RD !== 'undefined' && RD.erro) || ultimoErro || '';
 
@@ -318,9 +352,15 @@
       cls = 'ok';
       texto = 'Sincronizado';
     }
+    if (idbIndisponivel && !mostrarFaixa) {
+      mostrarFaixa = true;
+      faixaTexto = n > 0
+        ? `${basePend} · IndexedDB indisponível (modo seguro no localStorage)`
+        : 'IndexedDB indisponível — fila em modo seguro (localStorage).';
+    }
 
     return {
-      cls, texto, chaveErro, limite, offline, enviando, conectado,
+      cls, texto, chaveErro, limite, offline, enviando, conectado, idbIndisponivel,
       conflito: conflitoAte > agora, conflitoDesc, pendentes: n, idadeMaxMs: idade,
       mostrarFaixa, faixaTexto, erro: erroRaw,
     };
@@ -1029,19 +1069,59 @@ if(typeof module!=='undefined'&&module.exports)module.exports={criarSyncNotas};
 // Adaptador do app. IndexedDB usa o store já compartilhado pelo shim; falhar é normal.
 const SyncNotas=typeof BCBR==='undefined'?null:criarSyncNotas({
   api:(p,o)=>BCBR.api(p,o),repo:BCBR.REPO,
-  trava:fn=>typeof navigator!=='undefined'&&navigator.locks?.request?navigator.locks.request('radio-paginas-v2',fn):fn(),
+  trava:fn=>{
+    if(typeof navigator==='undefined'||!navigator.locks?.request)return fn();
+    if(typeof AbortController!=='function'||typeof setTimeout!=='function')return navigator.locks.request('radio-paginas-v2',fn);
+    const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),8000);
+    if(typeof tm?.unref==='function')tm.unref();
+    return navigator.locks.request('radio-paginas-v2',{signal:ac.signal},()=>{clearTimeout(tm);return fn()}).catch(e=>{clearTimeout(tm);if(e?.name==='AbortError')return false;throw e});
+  },
   storage:(()=>{try{return localStorage}catch(e){return null}})(),
   cache:(()=>{
+    const IDB_MS=2500;
     let db;
-    const abrir=()=>db||(db=new Promise((ok,no)=>{
-      try{const r=indexedDB.open('bcbr',1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('kv'))r.result.createObjectStore('kv')};
-        r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);r.onblocked=()=>no(Error('cache indisponível'));
-      }catch(e){no(e)}
-    }));
-    const op=async(k,v,grava)=>{const d=await abrir();return new Promise((ok,no)=>{
-      const t=d.transaction('kv',grava?'readwrite':'readonly'),r=grava?t.objectStore('kv').put(v,k):t.objectStore('kv').get(k);
-      t.oncomplete=()=>ok(r.result);t.onerror=t.onabort=()=>no(t.error);
-    })};
+    const abrir=()=>{
+      if(typeof window!=='undefined'&&window.BCBR?.idbIndisponivel)return Promise.reject(Error('cache indisponível'));
+      if(db)return db;
+      db=new Promise((ok,no)=>{
+        let fim=false;
+        const done=(fn,v,indisp)=>{
+          if(fim)return;fim=true;
+          if(tm&&typeof clearTimeout==='function')clearTimeout(tm);
+          if(indisp&&typeof window!=='undefined'&&window.BCBR)window.BCBR.idbIndisponivel=true;
+          fn(v);
+        };
+        const tm=typeof setTimeout==='function'?setTimeout(()=>done(no,Error('cache timeout'),true),IDB_MS):null;
+        if(typeof tm?.unref==='function')tm.unref();
+        try{
+          const r=indexedDB.open('bcbr',1);
+          r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('kv'))r.result.createObjectStore('kv')};
+          r.onsuccess=()=>{
+            const d=r.result;
+            if(d)d.onversionchange=()=>{try{d.close?.()}catch(e){}db=null};
+            if(fim){try{d?.close?.()}catch(e){}return}
+            done(ok,d,false);
+          };
+          r.onerror=()=>done(no,r.error||Error('cache erro'),true);
+          r.onblocked=()=>done(no,Error('cache indisponível'),true);
+        }catch(e){done(no,e,true)}
+      });
+      db.catch(()=>{});
+      return db;
+    };
+    const op=async(k,v,grava)=>{
+      const d=await abrir();
+      return new Promise((ok,no)=>{
+        let fim=false;
+        const done=(fn,val)=>{if(fim)return;fim=true;if(tm&&typeof clearTimeout==='function')clearTimeout(tm);fn(val)};
+        const tm=typeof setTimeout==='function'?setTimeout(()=>done(no,Error('cache op timeout')),IDB_MS):null;
+        if(typeof tm?.unref==='function')tm.unref();
+        try{
+          const t=d.transaction('kv',grava?'readwrite':'readonly'),r=grava?t.objectStore('kv').put(v,k):t.objectStore('kv').get(k);
+          t.oncomplete=()=>done(ok,r.result);t.onerror=t.onabort=()=>done(no,t.error||Error('cache op erro'));
+        }catch(e){done(no,e)}
+      });
+    };
     return {get:k=>op(k,null,false),set:(k,v)=>op(k,v,true)};
   })(),
   converterAntigas:notas=>{const blocos=ntOrdenadas(notas).map(ntNotaParaBloco);return {id:'notas',titulo:'Notas',doc:{v:1,blocos},atualizado:blocos.reduce((s,b)=>b.atualizado>s?b.atualizado:s,'')}},
@@ -4855,7 +4935,7 @@ function ntQuickSwitcher(){
   l.addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(b&&it[+b.dataset.i])abre(it[+b.dataset.i])});
   ov.querySelector('.nt-x').onclick=()=>ntModalFecha(ov);pinta();q.focus();
 }
-document.addEventListener('keydown',e=>{
+if(typeof document!=='undefined')document.addEventListener('keydown',e=>{
   if(e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&String(e.key).toLowerCase()==='k'){
     e.preventDefault();ntQuickSwitcher();
   }
@@ -6207,7 +6287,6 @@ function rsSemeia(){
   if(typeof fcMetaLimpa==='function')fcMetaLimpa();
   cards=cards.filter(c=>!c._rs||vistos.has(c.id))}
 rsSemeia();
-if(typeof fcMigraFundidos==='function')fcMigraFundidos('save');
 let fcs=load('cbr_fcs',{});          // id -> [ease,ivl,reps,due,lapses,t,susp]
 let fcAv=load('cbr_fcav',{});        // id -> {id,tema,frente,verso,voto,motivo,data,u}
 let over=load('cbr_over',{});        // id -> areaId (manual)
@@ -8437,7 +8516,7 @@ function importar(){try{const d=JSON.parse($("#bk").value);all=(d.log||[]).map(l
   recalc();reArea();all.forEach(l=>dirty.add(wkKey(l.t)));persist('_est');aplicaTema();render();toast("Importado")}catch(e){toast("Texto inválido")}}
 function setPeso(id,v){if(v==='')delete cfg.pesos[id];else cfg.pesos[id]=+v;persist('_est')}
 
-aplicaTema();smkIni();render();iniciaSync();smAtalhosInicia();
+if(typeof fcMigraFundidos==='function')fcMigraFundidos('save');aplicaTema();smkIni();render();iniciaSync();smAtalhosInicia();
 
 
 // ===== aba Questões (pedido do Artur, 22/10/2026) =====

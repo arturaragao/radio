@@ -7,7 +7,7 @@ const PORTA=8772;
 test('Offline 1.42: app abre do aparelho sem internet, enfileira e envia ao voltar sem duplicar',{timeout:300000},async t=>{
   const C=await iniciar({porta:PORTA,sw:true,env:{BCBR_QS:'5700'}});
   t.after(()=>C.fim());
-  const {ev,call,ate,abre,reset,par,confirmado}=C;
+  const {ev,call,click,ate,abre,reset,par,confirmado}=C;
   await call('Page.addScriptToEvaluateOnNewDocument',{source:"window.__tt=null;new MutationObserver(()=>{if(window.__tt===null&&document.querySelector('.sm-row[data-tid]'))window.__tt=performance.now()}).observe(document,{childList:true,subtree:true});"});
   await abre('tarefas');
   await click('#of_btn');

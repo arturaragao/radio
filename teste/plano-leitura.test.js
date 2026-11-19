@@ -33,7 +33,7 @@ test('plano 401: mensagem identifica chave recusada e registra erro',async()=>{
   const erro=Object.assign(new Error('chave'),{status:401});
   const a=app(async()=>{throw erro});
   await a.c.smPuxar1();
-  assert.equal(a.sm().erro,'GitHub recusou a chave (401/403) — confira a chave em Ajustes.');
+  assert.equal(a.sm().erro,'Chave do GitHub inválida ou vencida → Config › Sincronização');
   assert.equal(a.avisos.length,1);assert.ok(a.avisos[0].includes(erro));
 });
 
@@ -90,11 +90,11 @@ test('base com indentação antiga funde objetos e PUT passa a usar JSON compact
 });
 
 for(const [nome,erro,cota,mensagem] of [
-  ['403 chave',Object.assign(new Error('GitHub 403'),{status:403}),null,/recusou a chave/],
-  ['403 cota',Object.assign(new Error('GitHub 403'),{status:403}),{rest:0},/Limite de uso/],
-  ['403 secundário',Object.assign(new Error('GitHub 403'),{status:403,resp:'secondary rate limit'}),null,/Limite de uso/],
-  ['429',Object.assign(new Error('GitHub 429'),{status:429}),null,/Limite de uso/],
-  ['rede',new TypeError('Failed to fetch'),null,/Sem conexão/],
+  ['403 chave',Object.assign(new Error('GitHub 403'),{status:403}),null,/Chave do GitHub inválida ou vencida/],
+  ['403 cota',Object.assign(new Error('GitHub 403'),{status:403}),{rest:0},/Limite do GitHub/],
+  ['403 secundário',Object.assign(new Error('GitHub 403'),{status:403,resp:'secondary rate limit'}),null,/Limite do GitHub/],
+  ['429',Object.assign(new Error('GitHub 429'),{status:429}),null,/Limite do GitHub/],
+  ['rede',new TypeError('Failed to fetch'),null,/Sem internet/],
   ['HTTP 500',Object.assign(new Error('GitHub 500'),{status:500}),null,/Não consegui ler.*HTTP 500/],
 ])test('mensagem honesta: '+nome,async()=>{
   const a=app(async()=>{throw erro});a.c.BCBR.cota=cota;

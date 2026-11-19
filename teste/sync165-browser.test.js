@@ -322,3 +322,143 @@ test('Radio 1.65.0: sincronização que nunca perde nada (navegador, GitHub simu
 
   assert.deepEqual(C.erros, []);
 });
+
+test('Radio 1.65.0 regressão: resumos/fundidos.json na abertura migra fcs/fcAv/cfg sem travar em Carregando o banco', { timeout: 120000 }, async (t) => {
+  const C = await iniciar({ porta: 8812, sw: false, largura: 1280, altura: 900, env: { BCBR_QS: '10' } });
+  t.after(() => C.fim());
+  const { ev, call, ate } = C;
+
+  await call('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{
+    if(window.__regFundidos)return;window.__regFundidos=true;
+    localStorage.setItem('cbr_fcs',JSON.stringify({fc_old_1:[2.5,6,2,Date.now()+86400000,0,1700000000000,0]}));
+    localStorage.setItem('cbr_fcav',JSON.stringify({fc_old_1:{id:'fc_old_1',voto:'up',u:1700000000000}}));
+    localStorage.setItem('cbr_cfg',JSON.stringify({fcHoje:{d:'2026-11-18',feitos:['fc_old_1']},fcBlocos:[{id:'b1',ids:['fc_old_1'],resp:{fc_old_1:{g:3,ok:true,t:1700000000000}},i:0,fim:false,t0:1,u:1}]}));
+    const orig=window.fetch.bind(window);
+    window.fetch=async(u,o)=>{
+      const s=String(u);
+      if(s.includes('/contents/resumos')&&!s.includes('fundidos')){
+        return new Response(JSON.stringify([{name:'fundidos.json',path:'resumos/fundidos.json',sha:'sha_rf_reg1'}]),{status:200,headers:{'content-type':'application/json'}});
+      }
+      if(s.includes('/git/blobs/sha_rf_reg1')){
+        return new Response(JSON.stringify({fc_old_1:'fc_new_1'}),{status:200,headers:{'content-type':'application/json'}});
+      }
+      return orig(u,o);
+    };
+  })();` });
+
+  const t0 = Date.now();
+  await call('Page.navigate', { url: C.URL_ });
+  await ate("typeof NT!=='undefined'&&!!NT.ed&&!NT.carregando&&typeof RadioFila!=='undefined'", 10000);
+  const dt = Date.now() - t0;
+  assert.ok(dt < 10000, 'app abriu rápido com fundidos.json (' + dt + ' ms)');
+
+  const res = await ev(`({
+    carregando:document.getElementById('app').textContent.includes('Carregando o banco'),
+    rdSync:document.getElementById('rd_sync').textContent,
+    hasOldFcs:'fc_old_1' in fcs,
+    hasNewFcs:'fc_new_1' in fcs,
+    hasNewAv:'fc_new_1' in fcAv,
+    hojeFeitos:cfg.fcHoje?.feitos||[],
+    blocoIds:cfg.fcBlocos?.[0]?.ids||[]
+  })`);
+  assert.equal(res.carregando, false, 'saiu de Carregando o banco…');
+  assert.notEqual(res.rdSync, 'Aguardando sincronização', 'topo saiu de Aguardando sincronização');
+  assert.equal(res.hasOldFcs, false, 'ID antigo migrado de fcs');
+  assert.equal(res.hasNewFcs, true, 'ID novo presente em fcs');
+  assert.equal(res.hasNewAv, true, 'ID novo presente em fcAv');
+  assert.deepEqual(res.hojeFeitos, ['fc_new_1']);
+  assert.deepEqual(res.blocoIds, ['fc_new_1']);
+  assert.deepEqual(C.erros, []);
+});
+
+test('Radio 1.65.0 regressão: IndexedDB bloqueado/sem resposta + fila 1.64 no localStorage abre em poucos segundos e preserva a fila', { timeout: 120000 }, async (t) => {
+  const C = await iniciar({ porta: 8813, sw: false, largura: 1280, altura: 900, env: { BCBR_QS: '10' } });
+  t.after(() => C.fim());
+  const { ev, call, ate } = C;
+
+  const CHAVE_164 = 'bcbr_paginas_pendentes_v2:dev164:notas';
+  const criaScript = (modo) => `(()=>{
+    if(window.__regIdb164)return;window.__regIdb164=true;
+    if(!localStorage.getItem('${CHAVE_164}')){
+      localStorage.setItem('${CHAVE_164}',JSON.stringify({
+        k:'${CHAVE_164}',
+        p:{id:'notas',titulo:'Notas',pasta:'',ordem:0,atualizado:'2026-11-18T10:00:00.000Z',doc:{v:1,blocos:[{id:'b164',atualizado:'2026-11-18T10:00:00.000Z',conteudo:{type:'paragraph',attrs:{id:'b164'},content:[{type:'text',text:'Texto pendente da 1.64 preservado'}]}}]}},
+        em:Date.now()-120000,
+        rev:'r164-1'
+      }));
+    }
+    if(!localStorage.getItem('sm_sujo')){
+      const planoBase={v:2,regras:'',subtitulo:'',dias:{},tarefas:[],notas:[]};
+      const planoLocal={v:2,regras:'',subtitulo:'',dias:{},tarefas:[{id:'t164',dia:'sem',texto:'Tarefa 1.64',area:'tarefas',feito:false}],notas:[]};
+      localStorage.setItem('sm_cache2',JSON.stringify({sha:'s0',d:planoLocal}));
+      localStorage.setItem('sm_base2',JSON.stringify(planoBase));
+      localStorage.setItem('sm_sujo',String(Date.now()-120000));
+    }
+    const origFetch=window.fetch.bind(window);
+    window.fetch=async(u,o)=>{
+      if(o&&o.method==='PUT')throw new TypeError('Failed to fetch');
+      return origFetch(u,o);
+    };
+    indexedDB.open=function(){
+      const fake={};
+      if('${modo}'==='blocked'){
+        setTimeout(()=>{if(typeof fake.onblocked==='function')fake.onblocked(new Event('blocked'))},30);
+      }
+      return fake;
+    };
+  })();`;
+
+  // Caso A: indexedDB.open nunca responde (nem onsuccess, nem onerror, nem onblocked)
+  await call('Page.addScriptToEvaluateOnNewDocument', { source: criaScript('hang') });
+  const t0 = Date.now();
+  await call('Page.navigate', { url: C.URL_ });
+  await ate("typeof NT!=='undefined'&&!!NT.ed&&!NT.carregando&&typeof RadioFila!=='undefined'", 8000);
+  const dtHang = Date.now() - t0;
+  assert.ok(dtHang < 7000, 'saiu de Carregando o banco em poucos segundos com IDB travado (' + dtHang + ' ms)');
+
+  const stHang = await ev(`({
+    carregando:document.getElementById('app').textContent.includes('Carregando o banco'),
+    rdSync:document.getElementById('rd_sync').textContent,
+    faixaHidden:document.getElementById('rd_faixa').hidden,
+    faixaTxt:document.getElementById('rd_faixa').textContent,
+    notaTxt:NT.ed.getText(),
+    lsNota:localStorage.getItem('${CHAVE_164}'),
+    lsSmSujo:localStorage.getItem('sm_sujo'),
+    cont:RadioFila.contar(),
+    idbIndisp:RadioFila.estadoResumo().idbIndisponivel
+  })`);
+  assert.equal(stHang.carregando, false, 'não ficou preso em Carregando o banco…');
+  assert.notEqual(stHang.rdSync, 'Aguardando sincronização', 'topo saiu de Aguardando sincronização');
+  assert.equal(stHang.idbIndisp, true, 'sinalizou modo seguro sem IndexedDB');
+  assert.equal(stHang.faixaHidden, false, 'mostrou faixa de aviso do modo seguro');
+  assert.match(stHang.faixaTxt, /IndexedDB|modo seguro/i);
+  assert.match(stHang.notaTxt, /Texto pendente da 1\.64 preservado/, 'nota da fila 1.64 foi carregada');
+  assert.ok(stHang.lsNota && stHang.lsNota.includes('Texto pendente da 1.64 preservado'), 'fila 1.64 de Notas preservada no localStorage');
+  assert.ok(stHang.lsSmSujo, 'sm_sujo da 1.64 preservado no localStorage');
+  assert.ok(stHang.cont >= 2, 'pendências da 1.64 contabilizadas (' + stHang.cont + ')');
+
+  // Caso B: segunda aba com indexedDB.open disparando 'blocked'
+  const aba2 = await C.novaAba();
+  t.after(() => aba2.fecha());
+  await aba2.call('Page.addScriptToEvaluateOnNewDocument', { source: criaScript('blocked') });
+  const t1 = Date.now();
+  await aba2.call('Page.navigate', { url: C.URL_ });
+  for (let i = 0; i < 60; i++) {
+    if (await aba2.ev("typeof NT!=='undefined'&&!!NT.ed&&!NT.carregando&&typeof RadioFila!=='undefined'").catch(() => false)) break;
+    await espera(100);
+  }
+  const dtBlocked = Date.now() - t1;
+  assert.ok(dtBlocked < 5000, 'aba com IDB blocked abriu rápido (' + dtBlocked + ' ms)');
+  const stBlocked = await aba2.ev(`({
+    carregando:document.getElementById('app').textContent.includes('Carregando o banco'),
+    lsNota:!!localStorage.getItem('${CHAVE_164}'),
+    faixaHidden:document.getElementById('rd_faixa').hidden,
+    idbIndisp:RadioFila.estadoResumo().idbIndisponivel
+  })`);
+  assert.equal(stBlocked.carregando, false);
+  assert.equal(stBlocked.lsNota, true, 'fila 1.64 intacta com IDB blocked');
+  assert.equal(stBlocked.faixaHidden, false, 'aviso de modo seguro visível com IDB blocked');
+  assert.equal(stBlocked.idbIndisp, true);
+  assert.deepEqual(C.erros, []);
+  assert.deepEqual(aba2.erros, []);
+});

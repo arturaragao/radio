@@ -181,10 +181,20 @@ const fcTemParaHoje=c=>cfg.fcNovosPrimeiro?(c.n+c.d):(c.d+Math.min(c.n,Math.max(
 
 // ---- 1.63.0: Bloco diário de 100 ("Hoje: 100 cards") ----
 const fcHojeData=()=>fcDKey(Date.now());
+const fcFrenteChave=c=>norm(fcTxt(c?.f||'')).replace(/\s+/g,' ').trim();
+const fcHojeTema=c=>{
+  const m=fcMeta(c),p=fcChaveParts(m.chave);
+  return norm(p?(p.a+'|'+p.t):(m.tema||c.tg||'Sem tema')).replace(/\s+/g,' ').trim();
+};
 function fcHojeEstado(){
   const h=fcHojeData(),c=cfg.fcHoje;
-  if(c&&c.d===h&&Array.isArray(c.feitos))return {d:h,feitos:[...new Set(c.feitos)]};
-  return {d:h,feitos:[]};
+  const mapa=fcMapaFundidos(),feitos=new Set((c&&c.d===h&&Array.isArray(c.feitos)?c.feitos:[]).map(id=>mapa.get(id)||id));
+  // Reconstrói o contador se uma sincronização trouxe cfg incompleto, sem perder o histórico SRS.
+  Object.entries(fcs).forEach(([id,s])=>{if(s[5]&&fcDKey(s[5])===h&&s[2]<=1&&!s[4])feitos.add(mapa.get(id)||id)});
+  [...(cfg.fcBlocos||[]),...(fq?[fq]:[])].forEach(b=>Object.entries(b.resp||{}).forEach(([id,r])=>{
+    if(r&&r.t&&fcDKey(r.t)===h&&(r.p===null||r.p?.[2]===0))feitos.add(mapa.get(id)||id);
+  }));
+  return {d:h,feitos:[...feitos]};
 }
 function fcHojeUne(local,remota){
   const h=fcHojeData();
@@ -197,10 +207,9 @@ function fcHojeUne(local,remota){
 }
 function fcHojeRegistra(id,add){
   const h=fcHojeData();
-  if(!cfg.fcHoje||cfg.fcHoje.d!==h)cfg.fcHoje={d:h,feitos:[]};
-  const s=new Set(cfg.fcHoje.feitos||[]);
+  const s=new Set(fcHojeEstado().feitos);
   if(add)s.add(id);else s.delete(id);
-  cfg.fcHoje.feitos=[...s];
+  cfg.fcHoje={d:h,feitos:[...s]};
 }
 function fcIncidMapa(){
   const qs=typeof Q!=='undefined'&&Array.isArray(Q)?Q:[];
@@ -243,37 +252,79 @@ function fcHojeIncidencia(c){
   if(incBanco>0)return 100+incBanco*100+(Number(m.incid)||0)*1e-6;
   return Number(m.incid)||0;
 }
-function fcHojeNovos(){
-  const feitos=new Set(fcHojeEstado().feitos);
-  const novos=fcAtivos().filter(c=>(!fcs[c.id]||fcs[c.id][2]===0)&&!feitos.has(c.id))
+function fcNovosDisponiveis(bloco='',prioridade=[]){
+  const mapa=fcMapaFundidos(),porId=new Map(),ids=new Set(),frentes=new Set();
+  cards.forEach(c=>{if(!porId.has(c.id))porId.set(c.id,c)});
+  const resolve=id=>mapa.get(id)||id;
+  const marca=id=>{const k=resolve(id),f=fcFrenteChave(porId.get(k)||porId.get(id));ids.add(k);if(f)frentes.add(f)};
+  // reps=0 também ocorre após uma resposta errada no modo antigo: último>0 prova que já foi visto.
+  Object.entries(fcs).forEach(([id,s])=>{if(s[2]>0||s[5]>0)marca(id)});
+  (cfg.fcHoje?.feitos||[]).forEach(marca);
+  [...(cfg.fcBlocos||[]),...(fq?[fq]:[])].forEach(b=>{
+    Object.keys(b.resp||{}).forEach(marca);
+    if(b.id!==bloco&&!b.fim&&(!b.hoje||b.hoje===fcHojeData()))(b.ids||[]).forEach(marca);
+  });
+  return [...prioridade.map(id=>porId.get(resolve(id))),...cards].filter(c=>c&&!c.x&&!fst(c.id)[6]).filter(c=>{
+    const k=resolve(c.id),f=fcFrenteChave(c);
+    if(k!==c.id||ids.has(k)||(f&&frentes.has(f)))return false;
+    marca(k);return true;
+  });
+}
+function fcHojeNovos(bloco='',prioridade=[]){
+  const novos=fcNovosDisponiveis(bloco,prioridade)
     .map(c=>({c,img:fcTemImagem(c)?1:0,s:fcHojeIncidencia(c)}));   // pontua uma vez por card (não dentro do sort)
   novos.sort((a,b)=>(b.img-a.img)||(b.s-a.s)||String(a.c.id).localeCompare(String(b.c.id)));
   return novos.map(x=>x.c);
 }
+function fcHojeAleatorio(semente){
+  let s=2166136261;
+  for(const c of String(semente))s=Math.imul(s^c.charCodeAt(0),16777619)>>>0;
+  return ()=>{s=(s+0x6D2B79F5)>>>0;let t=Math.imul(s^(s>>>15),s|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296};
+}
+function fcHojeOrdem(ids,semente){
+  const rnd=fcHojeAleatorio(semente+':ordem'),grupos=new Map();
+  const lista=[...ids];
+  for(let i=lista.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[lista[i],lista[j]]=[lista[j],lista[i]]}
+  lista.forEach(id=>{const k=fcHojeTema(cardBy(id));if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(id)});
+  const out=[];let anterior=null;
+  while(out.length<lista.length){
+    let op=[...grupos].filter(([k,g])=>g.length&&k!==anterior);
+    if(!op.length)op=[...grupos].filter(([,g])=>g.length);
+    // Maior fila primeiro evita adjacências inclusive quando um tema ocupa metade do bloco.
+    const max=Math.max(...op.map(([,g])=>g.length));op=op.filter(([,g])=>g.length===max);
+    const [k,g]=op[Math.floor(rnd()*op.length)];out.push(g.pop());anterior=k;
+  }
+  return out;
+}
 function fcHojeFila(){
   const feitos=fcHojeEstado().feitos,faltam=Math.max(0,FC_HOJE_META-feitos.length);
   if(!faltam)return [];
-  return fcHojeNovos().slice(0,faltam).map(c=>c.id);
+  const h=fcHojeData(),rnd=fcHojeAleatorio(h+':selecao'),grupos=new Map(),conta=new Map(),teto=Math.ceil(FC_HOJE_META*.15);
+  feitos.forEach(id=>{const c=cardBy(id);if(c){const k=fcHojeTema(c);conta.set(k,(conta.get(k)||0)+1)}});
+  fcHojeNovos().forEach(c=>{
+    const k=fcHojeTema(c);if(!grupos.has(k))grupos.set(k,{k,com:[],sem:[],peso:0});
+    const g=grupos.get(k),s=Math.max(0,fcHojeIncidencia(c));g[fcTemImagem(c)?'com':'sem'].push(c.id);g.peso=Math.max(g.peso,s);
+  });
+  const gs=[...grupos.values()].sort((a,b)=>a.k.localeCompare(b.k)),ids=[];
+  while(ids.length<faltam){
+    const disponiveis=gs.filter(g=>g.com.length||g.sem.length);if(!disponiveis.length)break;
+    let op=disponiveis.filter(g=>(conta.get(g.k)||0)<teto);
+    if(!op.length)op=disponiveis; // Só ultrapassa o teto depois de esgotar os demais temas.
+    const imagem=op.some(g=>g.com.length),tipo=imagem?'com':'sem';op=op.filter(g=>g[tipo].length);
+    const total=op.reduce((s,g)=>s+g.peso,0);let alvo=rnd()*(total||op.length),g=op[op.length-1];
+    for(const x of op){alvo-=total?x.peso:1;if(alvo<0){g=x;break}}
+    const j=Math.floor(rnd()*g[tipo].length);ids.push(g[tipo].splice(j,1)[0]);conta.set(g.k,(conta.get(g.k)||0)+1);
+  }
+  return fcHojeOrdem(ids,h);
 }
 function fcHojeAtualiza(b){
   const h=fcHojeData();
   if(!b||b.hoje!==h)return false;
-  const ativos=new Set(fcAtivos().map(c=>c.id));
-  const novos=fcHojeNovos().map(c=>c.id);
+  const novos=fcHojeNovos(b.id,b.ids).map(c=>c.id);
   const novosSet=new Set(novos);
   const resp=b.resp||{};
-  const mantidos=(b.ids||[]).filter(id=>ativos.has(id)&&(resp[id]||novosSet.has(id)));
-  const ja=new Set(mantidos);
-  const feitos=fcHojeEstado().feitos;
-  const faltam=Math.max(0,FC_HOJE_META-feitos.length);
-  const pend=mantidos.filter(id=>!resp[id]).length;
-  let faltaPreencher=Math.max(0,faltam-pend);
-  const extras=[];
-  for(const id of novos){
-    if(faltaPreencher<=0)break;
-    if(!ja.has(id)){extras.push(id);ja.add(id);faltaPreencher--}
-  }
-  const proxIds=[...mantidos,...extras];
+  // O conjunto e a ordem são um retrato da abertura: retomar nunca seleciona ou acrescenta cards.
+  const proxIds=fcIdsAtivos((b.ids||[]).filter(id=>resp[id]||b.re?.[id]||novosSet.has(id)),resp);
   const mudou=proxIds.length!==(b.ids||[]).length||proxIds.some((id,idx)=>id!==b.ids[idx]);
   if(mudou){
     const curId=b.ids?.[b.i];
@@ -359,7 +410,20 @@ function fcAvCancela(){fcAvEdit=null;render()}
 const cTags=c=>{const t=String(c.tg||'').trim();return (/[;,]/.test(t)?t.split(/[;,]/):t.split(/\s+/)).map(x=>x.trim()).filter(Boolean)};
 const cTagOk=c=>!fcTags.size||cTags(c).some(t=>fcTags.has(norm(t)));
 function fcTog(k){fcTags.has(k)?fcTags.delete(k):fcTags.add(k);render()}
-const fcIdsAtivos=ids=>(ids||[]).filter(id=>{const c=cardBy(id);return c&&!c.x&&!fst(id)[6]});
+const fcIdsAtivos=(ids,resp={})=>{
+  const mapa=fcMapaFundidos(),vistos=new Set(),preferidas=new Map(),porId=new Map();
+  cards.forEach(c=>{if(!porId.has(c.id))porId.set(c.id,c)});
+  const lista=(ids||[]).map(id=>mapa.get(id)||id).filter(id=>{const c=porId.get(id);return c&&!c.x&&!fst(id)[6]});
+  lista.forEach(id=>{
+    const f=fcFrenteChave(porId.get(id)),anterior=preferidas.get(f);
+    if(f&&(!anterior||(!resp[anterior]&&resp[id])))preferidas.set(f,id);
+  });
+  return lista.filter(id=>{
+    const f=fcFrenteChave(porId.get(id));
+    if(vistos.has(id)||(f&&preferidas.get(f)!==id))return false;
+    vistos.add(id);return true;
+  });
+};
 // União de blocos entre aparelhos: preserva respostas de ambos por carimbo mais recente; reinício (t0 mais novo) vence o bloco antigo.
 // Descarte deixa tombstone {id:u}; o bloco só some se não teve atividade (u ou resposta) depois do descarte — atividade posterior em outro aparelho o mantém (mais seguro: não perde resposta).
 const fcBlocoUlt=b=>Math.max(b.u||0,...Object.values(b.resp||{}).map(r=>r&&r.t||0));
@@ -368,12 +432,13 @@ function fcBlocosPreserva(local,remota,mortos){
   const L=Array.isArray(local)?local:[],R=Array.isArray(remota)?remota:[],m=new Map();
   const une=(a,b)=>{
     if(!a)return b;if(!b)return a;
-    if((b.t0||0)>(a.t0||0))return b;
-    if((a.t0||0)>(b.t0||0))return a;
+    const diario=a.hoje&&a.hoje===b.hoje;
+    if(!diario&&(b.t0||0)>(a.t0||0))return b;
+    if(!diario&&(a.t0||0)>(b.t0||0))return a;
     const resp={...(a.resp||{})};
     Object.entries(b.resp||{}).forEach(([k,v])=>{if(!resp[k]||(v.t||0)>(resp[k].t||0))resp[k]=v});
     const bMais=(b.u||0)>(a.u||0);
-    return {...(bMais?b:a),ids:[...new Set([...(bMais?b.ids:a.ids)||[],...(bMais?a.ids:b.ids)||[]])],resp,i:bMais?b.i:a.i,fim:bMais?!!b.fim:!!a.fim,u:Math.max(a.u||0,b.u||0)};
+    return {...(bMais?b:a),ids:[...new Set([...(bMais?b.ids:a.ids)||[],...(bMais?a.ids:b.ids)||[]])],resp,i:bMais?b.i:a.i,fim:diario?!!(a.fim||b.fim):(bMais?!!b.fim:!!a.fim),t0:bMais?b.t0:a.t0,u:Math.max(a.u||0,b.u||0)};
   };
   R.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,b)});
   L.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,une(m.get(b.id),b))});
@@ -383,11 +448,12 @@ function fcBlocosAbertos(){
   const h=fcHojeData();
   return (cfg.fcBlocos||[]).filter(b=>!b.fim&&(!b.hoje||b.hoje===h)).map(b=>{
     if(b.hoje===h)fcHojeAtualiza(b);
-    const ids=fcIdsAtivos(b.ids),feitas=ids.filter(id=>b.resp?.[id]).length;
+    const ids=fcIdsAtivos(b.ids,b.resp),feitas=ids.filter(id=>b.resp?.[id]).length;
     return ids.length?{...b,ids,feitas,n:ids.length}:null;
   }).filter(Boolean).sort((a,b)=>(b.u||0)-(a.u||0));
 }
 function fcBlocoSalvaNovo(b){
+  b.ids=fcIdsAtivos(b.ids,b.resp);
   const h=fcHojeData();
   const list=(cfg.fcBlocos||[]).filter(x=>x.id!==b.id&&!(b.rs&&x.rs===b.rs)&&(!x.hoje||x.hoje===h)&&(x.rs||x.hoje||!x.fim));
   const semRs=list.filter(x=>!x.rs&&!x.hoje).sort((a,b)=>(b.u||0)-(a.u||0)).slice(0,4);
@@ -405,8 +471,9 @@ function fcBlocoSync(){
 function fcBlocoSalva(wk){fcBlocoSync();persist(wk||'_est')}
 function fcBlocoCarrega(b){
   if(b.hoje===fcHojeData())fcHojeAtualiza(b);
-  const ids=fcIdsAtivos(b.ids);if(!ids.length)return false;
-  const i=Math.max(0,Math.min(+b.i||0,ids.length-1)),resp=JSON.parse(JSON.stringify(b.resp||{}));
+  const ids=fcIdsAtivos(b.ids,b.resp);if(!ids.length)return false;
+  const atual=fcMapaFundidos().get(b.ids?.[b.i])||b.ids?.[b.i],k=ids.indexOf(atual);
+  const i=k>=0?k:Math.max(0,Math.min(+b.i||0,ids.length-1)),resp=JSON.parse(JSON.stringify(b.resp||{}));
   fq={id:b.id,rs:b.rs||'',hoje:b.hoje||'',titulo:b.titulo||'',ids,i,resp,re:b.re?{...b.re}:{},shown:!!resp[ids[i]],fim:!!b.fim,t0:b.t0||Date.now(),u:b.u||Date.now(),hist:[]};
   fcAvEdit=null;cfg.fcAtivo=b.id;return true;
 }
@@ -414,7 +481,7 @@ function fcAbre(){
   const h=fcHojeData();
   if(fq&&!fq.fim&&(!fq.hoje||fq.hoje===h)){
     if(fq.hoje===h)fcHojeAtualiza(fq);
-    fq.ids=fcIdsAtivos(fq.ids);
+    fq.ids=fcIdsAtivos(fq.ids,fq.resp);
     if(fq.ids.length){fq.i=Math.min(fq.i,fq.ids.length-1);tela='fcstudy';sub=null;render();scrollTo(0,0);return true}
     fq=null;
   }
@@ -445,7 +512,7 @@ function fcStart(){
   fcTagsPoda();
   const now=Date.now(),c=fcContagem(),A=fcAtivos().filter(fcFiltroOk);
   const rev=A.filter(x=>{const s=fcs[x.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).slice(0,cfg.fcMax).map(x=>x.id);
-  const novAll=A.filter(x=>!fcs[x.id]||fcs[x.id][2]===0).map(x=>x.id);
+  const novAll=fcNovosDisponiveis().filter(fcFiltroOk).map(x=>x.id);
   const ids=cfg.fcNovosPrimeiro?(novAll.length?novAll:rev):[...rev,...novAll.slice(0,Math.max(0,cfg.fcNovos-c.nh))];
   if(!ids.length){toast('Nada para estudar agora.');return}
   const tgNomes=fcTags.size?[...new Set(A.flatMap(cTags).filter(t=>fcTags.has(norm(t))))].slice(0,3).join(', '):'';
@@ -458,9 +525,10 @@ function fcStart(){
 function fcResumoCards(rsId,modo='hoje'){
   const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===rsId);if(!r)return [];
   const tag=norm('Resumo: '+r.titulo),A=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag));
-  if(modo==='tudo')return A.map(c=>c.id);
+  if(modo==='tudo')return fcIdsAtivos(A.map(c=>c.id));
   if(modo==='errados'){const b=(fq&&fq.rs===rsId?fq:null)||(cfg.fcBlocos||[]).find(x=>x.rs===rsId);return fcIdsAtivos((b?.ids||[]).filter(id=>b.resp?.[id]&&!b.resp[id].ok))}
-  const now=Date.now(),nov=A.filter(c=>!fcs[c.id]||fcs[c.id][2]===0).map(c=>c.id);
+  const novos=new Set(fcNovosDisponiveis('rs:'+rsId).map(c=>c.id));
+  const now=Date.now(),nov=A.filter(c=>novos.has(c.id)).map(c=>c.id);
   const rev=A.filter(c=>{const s=fcs[c.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).map(c=>c.id);
   return cfg.fcNovosPrimeiro?(nov.length?nov:rev):[...rev,...nov];
 }
@@ -683,7 +751,7 @@ function vFcStudy(){
   if(!fq)return vFc();
   if(fq.hoje&&fq.hoje!==fcHojeData()){fq=null;return vFc()}
   if(!fq.fim&&fq.hoje===fcHojeData())fcHojeAtualiza(fq);
-  fq.ids=fcIdsAtivos(fq.ids);
+  fq.ids=fcIdsAtivos(fq.ids,fq.resp);
   if(!fq.ids.length){fq=null;return vFc()}
   if(fq.i>=fq.ids.length)fq.i=fq.ids.length-1;
   const ids=fq.ids,n=ids.length,rs=fq.resp||{},feitas=ids.filter(i=>rs[i]).length,ok=ids.filter(i=>rs[i]?.ok).length,er=feitas-ok;

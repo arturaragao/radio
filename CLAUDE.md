@@ -1,5 +1,10 @@
 # Banco CBR (app)
 
+## 1.66.0 — 21/11/2026 — Flashcards sem repetidos e bloco do dia embaralhado; Preliminares: copiar só a seleção, busca melhor, check fecha o exame
+(1) Flashcards (`build/flashcards.js`): bloco do dia escolhido por amostragem proporcional à incidência (imagem primeiro), teto ~15% por tema (relaxa se faltar), ordem embaralhada estável por dia (semente = data) e salva no bloco; dedupe por id e frente normalizada (mantém a ocorrência respondida); card já respondido não volta como novo; modo antigo: Errei/Difícil segue reaprendendo; sync do bloco do dia mescla local/remoto (união de respostas, mais recente vence ordem/posição, concluído não reabre).
+(2) Preliminares (`build/preliminares.js`/`.css`): com seleção de texto, copiar leva só a seleção; duplo clique não copia o laudo; busca sem acento/caixa, termos em AND, "frase exata", destaque seguro, debounce, sem novos downloads; marcar o check fecha o toggle do exame.
+Testes: flashcards-bloco+164 24/24, preliminares+browser 48/48; flashcards-browser com as mesmas falhas do HEAD (retomada após recarga, timeout 120 s). Revisão cruzada Codex: APROVADO. Não testado em aparelho real.
+
 ## 1.65.0 — 18/11/2026 — Sincronização durável em IndexedDB, reenvio automático, conflitos mesclados, avisos claros e flashcards fundidos
 
 (1) Fila durável em IndexedDB (`build/sync-fila.js`, `build/sync-notas.js`, `build/semana.js`, `shim.js`, `build/montar.py`): toda alteração que vai ao GitHub (Notas em `notas:fila:*` no IDB `bcbr`, Progresso/config em `bcbr-fila` e `q:p:*` no IDB `bcbr`, Semana/preliminares conferidos em `bcbr-fila` antes do PUT) é gravada localmente em IndexedDB ANTES de tentar enviar e só sai da fila após confirmação com `sha` novo (exigido no PUT de Notas, Progresso e Semana); `go()` chama `ntAntes()` antes de trocar de aba; `SyncNotas` impede regressão de IDB mais novo para `localStorage` antigo; `smMudar()` marca `SM.sujo` imediatamente (zerando `SM.sujoDesde` na confirmação); `persist()` sempre atualiza `estU` quando `estado` muda; `reconciliaRemoto` corrige reconstrução de pendências para anulações (`l.x`), `fcs`, `pon`, `ia` e `cards` após recarregar.

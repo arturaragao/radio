@@ -4,9 +4,58 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 function ctx(extra={}){
   const c=vm.createContext({console,localStorage:{getItem:()=>null},navigator:{onLine:true},document:{},...extra});
   vm.runInContext('var SM={d:{prelConf:{}}};'+fs.readFileSync(path.join(__dirname,'..','build','preliminares.js'),'utf8')+'\n;this.P={SM,prelCfgSalva,prelSalvaChave,prelDbGrava,prelHidrata,prelLocalSet,prelAgrupaDias,prelRotuloDia,prelPeriodo,prelSemRodape,prelTextoPuro,prelCopiaLimpa,prelConferido,prelPendente,prelFalta,prelFaltaTxt,prelFaltaTopo,prelFiltra,prelAgrupa,prelTokens,prelSeguro,prelDiffPalavras,prelCorrigidoHtml,prelData,prelTextoHtml,PRL,prelListaHtml,prelCorpoHtml,prelItem,prelIndexa,prelBuscaLaudos,prelLimpaMemoria,prelIrLaudo,prelLaudosInicia,prelPar,prelErroGeral};',c);
+  vm.runInContext('Object.assign(this.P,{prelCopiaCorrigido,prelCopiaAcesso,prelConfClique,prelFiltroMuda,prelTermos,prelDestaca})',c);
   return c.P;
 }
 const J=x=>JSON.parse(JSON.stringify(x));   // resultados vêm de outro contexto vm
+test('seleção: copia só o fragmento selecionado no Corrigido, sem estilos nem exclusões',()=>{
+  const dados={},selecionado={rangeCount:1,toString:()=> 'Só trecho final',getRangeAt:()=>({commonAncestorContainer:{nodeType:1,closest:s=>s==='.prl-cor'},cloneContents:()=>({html:'<p style="color:red" onclick="x()">Só <del class="x">antigo</del><ins>trecho</ins> <b>final</b></p>'})})};
+  let impediu=0;
+  const c=ctx({window:{getSelection:()=>selecionado},document:{createElement:()=>({appendChild(f){this.innerHTML=f.html}})}});
+  c.prelCopiaCorrigido({clipboardData:{setData:(k,v)=>dados[k]=v},preventDefault:()=>impediu++});
+  assert.equal(impediu,1);assert.equal(dados['text/plain'],'Só trecho final');
+  assert.equal(dados['text/html'],'<p>Só trecho <b>final</b></p>');
+  selecionado.toString=()=>'';
+  c.prelCopiaCorrigido({clipboardData:{setData:()=>assert.fail('seleção vazia')},preventDefault:()=>assert.fail('seleção vazia')});
+});
+test('acesso: seleção e duplo clique não copiam; clique simples continua copiando',async()=>{
+  let selecao='',timer,copias=[];
+  const c=ctx({window:{getSelection:()=>selecao},navigator:{clipboard:{writeText:async t=>copias.push(t)}},toast:()=>{},setTimeout:f=>(timer=f,1),clearTimeout:()=>{timer=null}});
+  const ev=detail=>({detail,preventDefault(){},stopPropagation(){}});
+  await c.prelCopiaAcesso(ev(1),'123');assert.equal(typeof timer,'function');
+  await c.prelCopiaAcesso(ev(2),'123');assert.equal(timer,null);assert.equal(copias.length,0);
+  selecao='23';await c.prelCopiaAcesso(ev(1),'123');assert.equal(timer,null);
+  selecao='';await c.prelCopiaAcesso(ev(1),'123');selecao='23';await timer();assert.equal(copias.length,0);
+  selecao='';await c.prelCopiaAcesso(ev(1),'123');await timer();assert.deepEqual(copias,['123']);
+});
+test('busca: AND entre campos e versões, acentos/caixa, frases e edição de aspas sem cache incorreto',()=>{
+  const c=ctx(),P=c.PRL;
+  P.itens=[{acesso:'1',data:'2026-11-10',exame:'TC de TÓRAX',categoria:'Tomografia'},{acesso:'2',data:'2026-11-11',exame:'TC de tórax',categoria:'Tomografia'}];
+  c.prelIndexa('1',{preliminar:{texto:'Nódulo pulmonar. Fígado normal.'},definitivo:{texto:'Sem derrame.'}});
+  c.prelIndexa('2',{preliminar:{texto:'Nódulo pequeno pulmonar.'},definitivo:{texto:'Sem derrame.'}});
+  assert.deepEqual(J(c.prelFiltra(P.itens,{texto:'TORAX nódulo derrame'})).map(i=>i.acesso),['2','1']);
+  assert.deepEqual(J(c.prelBuscaLaudos('tomografia "NODULO PULMONAR" derrame')).lista.map(x=>x.ac),['1']);
+  assert.equal(c.prelBuscaLaudos('nodulo ausente').total,0);
+  assert.equal(c.prelBuscaLaudos('"nodulo pulmonar"').total,1);
+  assert.equal(c.prelBuscaLaudos('nodulo pulmonar').total,2);
+  assert.deepEqual(J(c.prelTermos('  "NÓDULO pulmonar" TORAX  ')),['nodulo pulmonar','torax']);
+  assert.match(c.prelListaHtml(),/prl-n0/);
+  P.filtro.texto='torax nodulo';const h=c.prelListaHtml();assert.ok(h.indexOf('data-ac="2"')<h.indexOf('data-ac="1"'));
+});
+test('check: marcar fecha apenas o exame e salva fechado; desmarcar não reabre; plano indisponível não fecha',()=>{
+  let c,aberto={open:true};
+  c=ctx({smMudar:f=>f(c.SM.d)});c.PRL.estado={'a|1':true,'a|2':true};
+  const el={dataset:{ac:'1',acs:'1,3'},checked:true,closest:()=>aberto};
+  c.prelConfClique(el);assert.equal(aberto.open,false);assert.equal(c.PRL.estado['a|1'],false);assert.equal(c.PRL.estado['a|2'],true);assert.ok(c.SM.d.prelConf['1']);
+  el.checked=false;c.prelConfClique(el);assert.equal(aberto.open,false);assert.equal(c.PRL.estado['a|1'],false);assert.equal(c.SM.d.prelConf['1'],undefined);
+  const sem=ctx();aberto.open=true;el.checked=true;sem.prelConfClique(el);assert.equal(el.checked,false);assert.equal(aberto.open,true);
+});
+test('busca: consulta e contagem atualizam juntas sem baixar dados',()=>{
+  const cont={},values={prl_q:{value:'rim'},prl_cont:cont};
+  const c=ctx({clearTimeout:()=>{},fetch:()=>assert.fail('busca não baixa dados'),document:{getElementById:id=>values[id]}});
+  c.PRL.itens=[];c.prelFiltroMuda(true);assert.equal(c.PRL.filtro.texto,'rim');assert.equal(cont.textContent,'0 laudos de 0');
+  values.prl_q.value='fígado';c.prelFiltroMuda(true);assert.equal(c.PRL.filtro.texto,'fígado');assert.equal(cont.textContent,'0 laudos de 0');
+});
 const IT=[
   {acesso:'1001',data:'2026-11-10',modalidade:'US',categoria:'Ultrassom',exame:'Doppler arterial de MMII',chefe:'Chefe A.',mudou:true},
   {acesso:'1002',data:'2026-11-12',modalidade:'US',categoria:'Ultrassom',exame:'Doppler arterial de MMII',chefe:'Chefe B.',mudou:false},

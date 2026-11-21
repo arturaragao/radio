@@ -10,11 +10,11 @@ function trecho(ini,fim){
   return app.slice(i0,i1);
 }
 
-function criaCtx({cards=[],fcs={},fcAv={},cfg={},resumos=[]}={}){
+function criaCtx({cards=[],fcs={},fcAv={},cfg={},resumos=[],agora}={}){
   const store=new Map();
   let persisted=[],gravados={};
   const ctx={
-    Date,Math,Set,Map,Array,Object,JSON,Number,String,Boolean,RegExp,
+    Date:agora==null?Date:class extends Date{constructor(...a){super(...(a.length?a:[agora]))}static now(){return agora}},Math,Set,Map,Array,Object,JSON,Number,String,Boolean,RegExp,
     DATA_PROVA:'2026-12-12',RI_DIARIA:50,DAY:864e5,
     Q:[],QID:{},all:[],log:[],over:{},pon:{},ia:{},uimg:{},srs:{},
     cards:cards.map(c=>({...c})),
@@ -63,7 +63,7 @@ function criaCtx({cards=[],fcs={},fcAv={},cfg={},resumos=[]}={}){
     trecho('async function flush(){','async function iniciaSync()'),
     trecho('function go(t,s){','function render()'),
     trecho('function blocoPainel({','const DIFV='),
-    trecho('const FC0=()=>','// ---- painel ----'),
+    fs.readFileSync(path.join(__dirname,'..','build','flashcards.js'),'utf8'),
     fs.readFileSync(path.join(__dirname,'..','build','notas.js'),'utf8').match(/function ntResumoBtn\(\)\{[\s\S]*?\nfunction ntResumoFc\([\s\S]*?\n(?=\/\/|function vNotas)/)[0]
   ].join('\n');
   vm.runInContext(src+';cfg=normCfg(cfg);this.ev=s=>eval(s);',ctx);
@@ -433,4 +433,220 @@ test('1.61 fcDescarta deixa tombstone respeitado pela união; atividade posterio
   ev('cfg.fcBlocos=[]');ctx.estU=1;ctx.mergeRemote([remoto(tb+90000)]);  // remoto mais novo, sem tombstone próprio
   assert.ok(!ev('cfg.fcBlocos.some(x=>x.id==="b1")'),'b1 não ressuscita (remoto mais novo)');
   assert.ok(ev('cfg.fcMortos.b1')>=tb,'tombstone local sobrevive ao cfg remoto');
+});
+
+const AGORA_BLOCO=new Date(2026,10,21,12).getTime();
+function cardsDoDia(temas=10,quantidade=40){
+  return Array.from({length:temas},(_,t)=>Array.from({length:quantidade},(_,i)=>({
+    id:`t${t}-c${i}`,f:`Pergunta ${t}/${i}`,v:`Resposta ${t}/${i}`,
+    chave:`a|Tema ${t}|Subtema ${i%3}`,tema:`Tema ${t}`,incid:t===0?10000:1
+  }))).flat();
+}
+
+test('Hoje: não repete ID/frente e exclui respostas antigas, fundidos e reservas de outro bloco',()=>{
+  const cards=[
+    {id:'c1',f:'<b>Qual é o sinal?</b>'},{id:'c1',f:'<b>Qual é o sinal?</b>'},
+    {id:'c2',f:'  QUAL E O SINAL?  '},{id:'novo',f:'Pergunta nova'},
+    {id:'errou',f:'Visto antes'},{id:'copia',f:' VISTO ANTES '},
+    {id:'acertou',f:'Acertou antes'},{id:'historico',f:'Histórico sem SRS'},
+    {id:'feito',f:'Feito de ontem'},{id:'removido',f:'Texto antigo'},
+    {id:'mantido',f:'Texto fundido'},{id:'reservado',f:'Em outro bloco'},
+    {id:'copia-reserva',f:' EM OUTRO BLOCO '}
+  ];
+  const ctx=criaCtx({cards,agora:AGORA_BLOCO,
+    fcs:{errou:[2.5,0,0,0,0,AGORA_BLOCO-864e5,0],acertou:[2.5,1,1,0,0,AGORA_BLOCO-864e5,0],removido:[2.5,1,1,0,0,AGORA_BLOCO-864e5,0]},
+    cfg:{fcHoje:{d:'2026-11-20',feitos:['feito']},fcBlocos:[
+      {id:'antigo',ids:['historico'],resp:{historico:{g:3,t:AGORA_BLOCO-864e5}},fim:true},
+      {id:'outro',ids:['reservado'],resp:{},fim:false}
+    ]}});
+  ctx.window.RESUMOS_FUNDIDOS={removido:'mantido'};
+  const ids=[...ctx.fcHojeFila()];
+  assert.equal(ids.length,2);
+  assert.deepEqual(ids.slice().sort(),['c1','novo']);
+  ctx.fcHojeStart();
+  assert.equal(ctx.ev('fq.ids.length'),2);
+  assert.equal(new Set(ctx.ev('fq.ids')).size,2);
+  assert.equal(new Set(ctx.ev('fq.ids.map(id=>fcFrenteChave(cardBy(id)))')).size,2);
+});
+
+test('blocos comuns: deduplicam frentes e IDs e não reservam o mesmo novo em dois blocos',()=>{
+  const cards=[{id:'a',f:'Sinal A'},{id:'a',f:'Sinal A'},{id:'b',f:' SINAL A '},{id:'c',f:'Sinal C'}];
+  const ctx=criaCtx({cards,agora:AGORA_BLOCO});
+  ctx.fcStart();
+  assert.deepEqual([...ctx.ev('fq.ids')],['a','c']);
+  assert.equal(ctx.fcHojeFila().length,0,'novos já reservados no bloco comum');
+  const ativo=ctx.ev('fq.id');
+  ctx.fcStart();
+  assert.equal(ctx.ev('fq.id'),ativo,'não abre outro bloco com os mesmos novos');
+  assert.equal(ctx.ev('cfg.fcBlocos.length'),1);
+  assert.equal(ctx.fcBlocoCarrega({id:'legado',ids:['a','b','a','c'],i:3,resp:{}}),true);
+  assert.deepEqual([...ctx.ev('fq.ids')],['a','c']);
+  assert.equal(ctx.ev('fq.i'),1,'deduplicação preserva o card atual');
+});
+
+test('Hoje: escolha e ordem estáveis por dia, embaralhadas e sem temas consecutivos quando possível',()=>{
+  const cards=cardsDoDia(),ctx=criaCtx({cards,agora:AGORA_BLOCO});
+  const ids=[...ctx.fcHojeFila()],igual=criaCtx({cards:cards.slice().reverse(),agora:AGORA_BLOCO});
+  assert.equal(ids.length,100);
+  assert.deepEqual([...igual.fcHojeFila()],ids,'mesma semente e catálogo em outra ordem');
+  const temas=ids.map(id=>ctx.ev('fcHojeTema')(cards.find(c=>c.id===id)));
+  assert.ok(temas.every((t,i)=>!i||t!==temas[i-1]));
+  assert.notDeepEqual(ids,ids.slice().sort(),'não exibe por tema/ID');
+  const amostra=cards.slice(0,2).concat(cards.slice(40,42),cards.slice(80,82)).map(c=>c.id);
+  const ordem=[...ctx.fcHojeOrdem(amostra,'2026-11-21')];
+  assert.deepEqual([...ctx.fcHojeOrdem(amostra,'2026-11-21')],ordem);
+  assert.notDeepEqual([...ctx.fcHojeOrdem(amostra,'2026-11-22')],ordem);
+  assert.deepEqual(ordem.slice().sort(),amostra.slice().sort());
+  const desigual=cards.slice(0,4).concat(cards.slice(40,42),cards.slice(80,81)).map(c=>c.id);
+  const intercalados=[...ctx.fcHojeOrdem(desigual,'2026-11-21')].map(id=>ctx.ev('fcHojeTema')(cards.find(c=>c.id===id)));
+  assert.ok(intercalados.every((t,i)=>!i||t!==intercalados[i-1]),'tema majoritário com metade arredondada ainda intercala');
+});
+
+test('Hoje: teto de 15 por tema agrupa subtemas e só é relaxado quando faltam alternativas',()=>{
+  const cards=cardsDoDia(),ctx=criaCtx({cards,agora:AGORA_BLOCO});
+  const ids=[...ctx.fcHojeFila()],conta={};
+  ids.forEach(id=>{const tema=ctx.ev('fcHojeTema')(cards.find(c=>c.id===id));conta[tema]=(conta[tema]||0)+1});
+  assert.equal(ids.length,100);
+  assert.ok(Object.values(conta).every(n=>n<=15));
+  assert.equal(conta['a|tema 0'],15,'alta incidência ocupa o teto, sem dominar o dia');
+  const escassos=cardsDoDia(1,95).concat(cardsDoDia(2,5).filter(c=>c.tema==='Tema 1'));
+  const pouco=criaCtx({cards:escassos,agora:AGORA_BLOCO}),fila=[...pouco.fcHojeFila()];
+  assert.equal(fila.length,100,'usa todos os disponíveis se o teto impedir completar');
+  assert.equal(fila.filter(id=>id.startsWith('t1-')).length,5,'esgota as alternativas');
+});
+
+test('Hoje: amostragem favorece proporcionalmente a incidência e prioriza imagens respeitando o teto',()=>{
+  const cards=cardsDoDia(200,10).map((c,i)=>({...c,incid:Math.floor(i/10)<100?5:1}));
+  const ctx=criaCtx({cards,agora:AGORA_BLOCO}),fila=[...ctx.fcHojeFila()];
+  const alta=fila.filter(id=>Number(id.match(/^t(\d+)/)[1])<100).length;
+  assert.equal(fila.length,100);
+  assert.ok(alta>=65&&alta<100,`seleção ponderada inclui ambos os grupos: ${alta}/100 de alta incidência`);
+  const imagens=cardsDoDia().map(c=>({...c,fi:Number(c.id.split('-c')[1])<4?['imagem.jpg']:[],incid:1}));
+  const imgCtx=criaCtx({cards:imagens,agora:AGORA_BLOCO}),imgIds=[...imgCtx.fcHojeFila()];
+  assert.equal(imgIds.length,100);
+  assert.equal(imgIds.filter(id=>imagens.find(c=>c.id===id).fi.length>0).length,40,'inclui todas as imagens disponíveis antes dos cards sem imagem');
+  const concentradas=cardsDoDia().map(c=>({...c,fi:c.tema==='Tema 0'?['imagem.jpg']:[]}));
+  const capCtx=criaCtx({cards:concentradas,agora:AGORA_BLOCO}),capIds=[...capCtx.fcHojeFila()];
+  assert.equal(capIds.length,100);
+  assert.equal(capIds.filter(id=>id.startsWith('t0-')).length,15,'imagem não permite furar o teto havendo outros temas');
+});
+
+test('Hoje: retomar mantém o bloco salvo e sincronizar adota ordem e posição mais recentes',()=>{
+  const cards=cardsDoDia(),ctx=criaCtx({cards,agora:AGORA_BLOCO});
+  ctx.fcHojeStart();
+  const ordem=[...ctx.ev('fq.ids')],primeiro=ordem[0];
+  ctx.ev('fq.shown=true');ctx.fcGrade(1);
+  const cfg=JSON.parse(ctx.store.get('cbr_cfg')),fcs=JSON.parse(ctx.store.get('cbr_fcs'));
+  assert.deepEqual(cfg.fcBlocos[0].ids,ordem,'ordem persistida após a resposta');
+  const novos=[{id:'alias-importado',f:cards.find(c=>c.id===ordem[1]).f,incid:1e9},...cardsDoDia(11,40).filter(c=>c.tema==='Tema 10')];
+  const retomado=criaCtx({cards:[...novos,...cards],cfg,fcs,agora:AGORA_BLOCO});
+  retomado.fcHojeStart();
+  assert.deepEqual([...retomado.ev('fq.ids')],ordem,'catálogo alterado não muda a escolha salva');
+  assert.equal(retomado.ev('fq.i'),1);
+  assert.equal(retomado.ev('fq.resp[fq.ids[0]].ok'),false);
+  const h=retomado.ev('fcHojeData()'),local=retomado.ev('cfg.fcBlocos[0]');
+  const remoto={...JSON.parse(JSON.stringify(local)),ids:ordem.slice().reverse(),i:50,t0:local.t0+10,u:local.u+100,resp:{[ordem[2]]:{g:3,ok:true,t:AGORA_BLOCO+100,p:null}}};
+  retomado.mergeRemote([{id:'estado',data:()=>({u:AGORA_BLOCO+100,cfg:{fcHoje:{d:h,feitos:[]},fcBlocos:[remoto]}})}]);
+  const unido=retomado.ev('cfg.fcBlocos[0]');
+  assert.deepEqual([...unido.ids],remoto.ids,'sincronização preserva a ordem do bloco mais recente');
+  assert.equal(unido.i,50);
+  assert.ok(unido.resp[primeiro]);assert.ok(unido.resp[ordem[2]],'preserva respostas dos dois aparelhos');
+  assert.ok(retomado.fcHojeEstado().feitos.includes(primeiro));
+  assert.ok(retomado.fcHojeEstado().feitos.includes(ordem[2]));
+  retomado.fcRetoma(unido.id);
+  assert.deepEqual([...retomado.ev('fq.ids')],remoto.ids);
+  assert.equal(retomado.ev('fq.i'),50);
+});
+
+test('Hoje: bloco legado conserva a ordem e não cresce ao retomar ou atualizar',()=>{
+  const cards=cardsDoDia(),h='2026-11-21',ids=['t2-c3','t1-c2','t0-c1'];
+  const ctx=criaCtx({cards,agora:AGORA_BLOCO,cfg:{fcBlocos:[{id:'hoje:'+h,hoje:h,ids,i:1,resp:{},t0:AGORA_BLOCO-100,u:AGORA_BLOCO-100,fim:false}]}});
+  ctx.fcHojeStart();
+  assert.deepEqual([...ctx.ev('fq.ids')],ids);
+  assert.equal(ctx.ev('fq.i'),1);
+  assert.equal(ctx.fcHojeAtualiza(ctx.ev('fq')),false);
+  assert.deepEqual([...ctx.ev('fq.ids')],ids);
+});
+
+test('Hoje: respondidos não voltam como novos no dia seguinte, inclusive sem SRS sincronizado',()=>{
+  const cards=cardsDoDia(),ctx=criaCtx({cards,agora:AGORA_BLOCO});ctx.fcHojeStart();
+  const feitos=[...ctx.ev('fq.ids')].slice(0,3);
+  for(const g of [1,2,3]){ctx.ev('fq.shown=true');ctx.fcGrade(g)}
+  const cfg=JSON.parse(ctx.store.get('cbr_cfg')),fcs=JSON.parse(ctx.store.get('cbr_fcs'));
+  const copia={id:'outro-id',f:cards.find(c=>c.id===feitos[0]).f.toUpperCase()};
+  for(const progresso of [fcs,{}]){
+    const amanha=criaCtx({cards:[copia,...cards],cfg,fcs:progresso,agora:AGORA_BLOCO+864e5}),fila=[...amanha.fcHojeFila()];
+    assert.equal(fila.length,100);
+    assert.ok(feitos.every(id=>!fila.includes(id)));
+    assert.ok(!fila.includes('outro-id'),'frente respondida sob outro ID também fica excluída');
+  }
+  const semContador=criaCtx({cards,cfg:{...cfg,fcHoje:{d:'2026-11-21',feitos:[]}},fcs:{},agora:AGORA_BLOCO});
+  assert.equal(semContador.fcHojeEstado().feitos.length,3,'recupera contador das respostas após sincronização incompleta');
+});
+
+test('Hoje: modo antigo mantém Errei/Difícil na reaprendizagem após atualizar e recarregar',()=>{
+  const cards=cardsDoDia(1,3);
+  for(const nota of [1,2]){
+    const ctx=criaCtx({cards,agora:AGORA_BLOCO,cfg:{fcNovosPrimeiro:false}});
+    ctx.fcHojeStart();
+    const id=ctx.ev('fq.ids[0]');
+    ctx.ev('fq.shown=true');ctx.fcGrade(nota);
+    assert.equal(ctx.fcs[id][5],AGORA_BLOCO,'SRS já foi gravado');
+    assert.equal(ctx.ev('fq.resp')[id],undefined,'ainda sem resposta definitiva');
+    assert.equal(ctx.ev('fq.re')[id],1);
+    ctx.vFcStudy();
+    assert.ok(ctx.ev('fq.ids').includes(id),'renderização mantém o card em reaprendizagem');
+    const retomado=criaCtx({cards,agora:AGORA_BLOCO,cfg:JSON.parse(ctx.store.get('cbr_cfg')),fcs:JSON.parse(ctx.store.get('cbr_fcs'))});
+    retomado.fcHojeStart();
+    assert.ok(retomado.ev('fq.ids').includes(id),'recarga mantém o card em reaprendizagem');
+    assert.equal(retomado.ev('fq.re')[id],1);
+    for(let i=0;i<2;i++){retomado.ev('fq.shown=true');retomado.fcGrade(3)}
+    assert.equal(retomado.ev('fq.ids[fq.i]'),id,'card volta depois dos demais');
+    retomado.ev('fq.shown=true');retomado.fcGrade(1);retomado.vFcStudy();
+    assert.ok(retomado.ev('fq.ids').includes(id),'novo erro continua na fila');
+    assert.equal(retomado.ev('fq.fim'),false);
+    retomado.ev('fq.shown=true');retomado.fcGrade(3);
+    assert.equal(retomado.ev('fq.resp')[id].g,3,'resposta definitiva registrada ao acertar');
+    assert.equal(retomado.ev('fq.re')[id],undefined);
+    assert.equal(retomado.ev('fq.fim'),true);
+  }
+});
+
+test('Hoje: união conserva respostas e IDs dos dois aparelhos, posição mais recente e conclusão',()=>{
+  const cards=['c1','c2','c3'].map(id=>({id,f:id,v:id})),h='2026-11-21';
+  const ctx=criaCtx({cards,agora:AGORA_BLOCO});
+  for(const localMaisNovo of [false,true])for(const concluidoMaisNovo of [false,true]){
+    const antigo={id:'hoje:'+h,hoje:h,ids:['c1','c2'],i:0,resp:{c1:{g:1,ok:false,t:100}},fim:!concluidoMaisNovo,t0:10,u:100};
+    const recente={...antigo,ids:['c2','c3'],i:1,resp:{c1:{g:3,ok:true,t:200},c3:{g:2,ok:true,t:200}},fim:concluidoMaisNovo,t0:20,u:200};
+    const [unido]=ctx.fcBlocosPreserva([localMaisNovo?recente:antigo],[localMaisNovo?antigo:recente],{});
+    assert.deepEqual([...unido.ids],['c2','c3','c1'],'ordem mais recente primeiro e união dos IDs');
+    assert.equal(unido.i,1,'posição do aparelho mais recente');
+    assert.equal(unido.t0,20);
+    assert.equal(unido.u,200);
+    assert.equal(unido.resp.c1.g,3,'resposta mais recente vence');
+    assert.equal(unido.resp.c3.g,2,'resposta só do outro aparelho preservada');
+    assert.ok(Object.keys(unido.resp).every(id=>unido.ids.includes(id)),'respostas continuam dentro do bloco');
+    assert.equal(unido.fim,true,'conclusão não reabre com cópia pendente de outro aparelho');
+    assert.equal(ctx.fcBlocoCarrega(unido),true);
+    assert.match(ctx.vFcStudy(),/Bloco concluído/);
+  }
+});
+
+test('bloco legado: deduplicação conserva a ocorrência respondida e seu progresso no painel',()=>{
+  const cards=[{id:'primeiro',f:'Mesma frente',v:'A'},{id:'posterior',f:'MESMA   FRENTE',v:'B'},{id:'outro',f:'Outra frente',v:'C'}];
+  for(const respondido of ['primeiro','posterior']){
+    const b={id:'legado',ids:['primeiro','posterior','outro'],i:2,resp:{[respondido]:{g:3,ok:true,t:AGORA_BLOCO}},fim:false,t0:AGORA_BLOCO,u:AGORA_BLOCO};
+    const ctx=criaCtx({cards,agora:AGORA_BLOCO,cfg:{fcBlocos:[b]}});
+    const [aberto]=ctx.fcBlocosAbertos();
+    assert.deepEqual([...aberto.ids],[respondido,'outro']);
+    assert.equal(aberto.feitas,1,'resposta contada no painel');
+    assert.equal(aberto.n,2,'frente repetida removida');
+    ctx.fcRetoma(b.id);
+    assert.deepEqual([...ctx.ev('fq.ids')],[respondido,'outro']);
+    assert.equal(ctx.ev('fq.i'),1,'mantém o card atual após deduplicar');
+    assert.match(ctx.vFcStudy(),/1\/2/,'progresso aparece no estudo');
+    const salvo=JSON.parse(ctx.store.get('cbr_cfg'));
+    const recarregado=criaCtx({cards,agora:AGORA_BLOCO,cfg:salvo});
+    assert.equal(recarregado.fcBlocosAbertos()[0].feitas,1,'progresso persiste após recarregar');
+  }
 });

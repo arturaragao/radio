@@ -31,18 +31,25 @@ function prelRotuloDia(dia,hoje=prelHoje()){
   const [y,m,d]=dia.split('-').map(Number);return PRL_DOW[new Date(y,m-1,d,12).getDay()]+' '+prelData(dia);
 }
 const prelDiaDe=i=>String(i.data||'').slice(0,10);
+const prelTermos=q=>[...new Set((prelNorm(q).match(/"[^"]+"|[^\s"]+/g)||[]).map(t=>t.replace(/^"|"$/g,'').replace(/\s+/g,' ').trim()).filter(Boolean))];
+function prelCampos(i){
+  const x=PRL.idx[String(i.acesso)];
+  return [...prelAcessos(i),...(Array.isArray(i.descricoes)?i.descricoes:[]),i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data),x?.pre.t,x?.def.t].map(s=>prelNorm(s).replace(/\s+/g,' '));
+}
+const prelPontos=(i,tk)=>{const h=prelCampos(i);return tk.filter(t=>h.some(s=>s.includes(t))).length};
+const prelCompara=(a,b,tk)=>prelPontos(b,tk)-prelPontos(a,tk)||(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso));
 function prelFiltra(itens,f={}){
-  const t=prelNorm(f.texto).trim().split(/\s+/).filter(Boolean),lidos=f.lidos||{};
-  return (itens||[]).filter(i=>{
+  const t=prelTermos(f.texto),lidos=f.lidos||{};
+  const r=(itens||[]).filter(i=>{
     if(f.de&&(i.data||'')<f.de)return false;
     if(f.ate&&(i.data||'')>f.ate)return false;
     if(f.so==='mudou'&&!i.mudou)return false;
     if(f.so==='naolidos'&&prelLido(i,lidos))return false;
     if(f.so==='naoconf'&&!prelPendente(i,f.conf))return false;
     if(!t.length)return true;
-    const h=prelNorm([...prelAcessos(i),...(Array.isArray(i.descricoes)?i.descricoes:[]),i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data)].join(' '));
-    return t.every(p=>h.includes(p));
+    return prelPontos(i,t)===t.length;
   });
+  return t.length?r.sort((a,b)=>prelCompara(a,b,t)):r;
 }
 // Categoria > exame > itens (mais recente primeiro). Categorias na ordem do contrato; desconhecidas por último, em ordem alfabética.
 function prelAgrupa(itens){
@@ -139,11 +146,11 @@ function prelTextoPuro(html){
 // Corrigido copiado = texto final como no definitivo: sem o que foi apagado (<del>) e sem marcas (<ins>)
 function prelCopiaLimpa(html){const h=String(html??'').replace(/<del>[\s\S]*?<\/del> ?/g,'').replace(/<\/?ins>/g,'').replace(/ {2,}/g,' ');return {html:h,texto:prelTextoPuro(h)}}
 function prelCopiaCorrigido(e){
-  const s=getSelection();if(!s||!s.rangeCount||s.isCollapsed)return;
+  const s=window.getSelection();if(!s||!s.rangeCount||!String(s).trim()||!e.clipboardData)return;
   const r=s.getRangeAt(0),n=r.commonAncestorContainer,el=n.nodeType===1?n:n.parentElement;
   if(!el||!el.closest('.prl-cor'))return;
   const d=document.createElement('div');d.appendChild(r.cloneContents());
-  const c=prelCopiaLimpa(d.innerHTML);
+  const c=prelCopiaLimpa(prelSeguro(d.innerHTML));
   e.clipboardData.setData('text/html',c.html);e.clipboardData.setData('text/plain',c.texto);e.preventDefault();
 }
 // 1.54.0: índice de busca dos laudos SÓ EM MEMÓRIA (PRL.idx; nada em localStorage, IndexedDB, cache do SW nem repo): texto puro, sem rodapé do PACS, e a versão sem acento/caixa.
@@ -155,18 +162,16 @@ function prelIndexa(ac,p){
   PRL.idx[ac]=x;
   PRL.idxv++;
 }
-// Laudos que têm TODAS as palavras no preliminar ou no definitivo, mais recentes primeiro. Digitar mais letras só refina a lista anterior (filtro incremental).
+// Todos os termos/frases em qualquer campo; consulta somente o índice em memória.
 // -> {total, lista:[{ac,i,onde:'preliminar'|'definitivo'|'ambos',x:{t,n}}]} com até `max` itens
 function prelBuscaLaudos(q,max=20){
-  const tk=prelNorm(q).trim().split(/\s+/).filter(Boolean),b=PRL.bc;
+  const tk=prelTermos(q);
   if(!tk.length||!PRL.itens)return {total:0,lista:[],tk};
-  const chave=tk.join(' '),base=b.v===PRL.idxv&&b.it===PRL.itens&&b.q&&chave.startsWith(b.q)?b.r:PRL.itens.filter(i=>PRL.idx[String(i.acesso)]);
   const tem=(x,t)=>t.every(w=>x.n.includes(w));
-  const r=base.filter(i=>{const x=PRL.idx[String(i.acesso)];return tem(x.def,tk)||tem(x.pre,tk)}).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso)));
-  PRL.bc={q:chave,v:PRL.idxv,it:PRL.itens,r};
+  const r=prelFiltra(PRL.itens,{texto:q});
   return {total:r.length,tk,lista:r.slice(0,max).map(i=>{
-    const ac=String(i.acesso),x=PRL.idx[ac],d=tem(x.def,tk),p=tem(x.pre,tk);
-    return {ac,i,onde:d&&p?'ambos':d?'definitivo':'preliminar',x:d?x.def:x.pre};
+    const ac=String(i.acesso),x=PRL.idx[ac]||{pre:{t:'',n:''},def:{t:'',n:''}},d=tem(x.def,tk),p=tem(x.pre,tk);
+    return {ac,i,onde:d&&p?'ambos':p?'preliminar':d?'definitivo':'ambos',x:d?x.def:p?x.pre:tk.some(t=>x.def.n.includes(t))?x.def:x.pre};
   })};
 }
 // baixa em segundo plano (4 por vez) os pares ainda não baixados e indexa; os já baixados com status "aguardando" são reconferidos por ETag. Sem chave: nada.
@@ -320,7 +325,7 @@ function prelDiaAbertoSalva(dia,aberto){
   try{const l=[...s];if(l.length)localStorage.setItem(PRL_ABERTOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_ABERTOS_LS)}catch(e){}
 }
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
-const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2))};
+const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2));prelDestaca(document.getElementById('prl_lista'),prelTermos(PRL.filtro.texto))};
 const prelAberto=(k,padrao)=>PRL.estado[k]!==undefined?PRL.estado[k]:padrao;
 const prelFiltroAtivo=()=>!!(PRL.filtro.texto.trim()||PRL.filtro.de||PRL.filtro.ate||PRL.filtro.so);
 function prelTg(el){
@@ -345,7 +350,7 @@ function prelCorpoHtml(ac){
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
   return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':'')+`<button type="button" class="prl-cp" onclick="prelCopiaLaudo(event,'${prelEsc(ac)}')" title="Copiar o laudo final (definitivo, sem o rodapé do PACS)">copiar laudo</button>`,corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
-function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
+function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);prelDestaca(e,prelTermos(PRL.filtro.texto));if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
 function prelItem(i){
   const ac=String(i.acesso),acs=prelAcessos(i),k='a|'+ac,ab=prelAberto(k,false),lido=prelLido(i,PRL.lidos),conf=prelConferido(i,prelConf()),rot=acs.join(' + ');
   // acesso: clique copia o número (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
@@ -357,6 +362,7 @@ function prelConfClique(el){
   const ac=el.dataset.ac,acs=el.dataset.acs.split(','),on=el.checked,hora=prelAgora();
   if(typeof SM==='undefined'||!SM.d||typeof smMudar!=='function'){el.checked=!on;if(typeof toast==='function')toast('O plano ainda está carregando; tente de novo');return}
   smMudar(d=>{const c=d.prelConf=d.prelConf||{};if(on)c[ac]=hora;else acs.forEach(a=>{delete c[a]})},on?'preliminares: conferido':'preliminares: desmarcado');
+  if(on){PRL.estado['a|'+ac]=false;const d=el.closest('details.prl-n3');if(d)d.open=false}
   prelRepinta();   // o smRender do plano não redesenha com o foco dentro de .nt
 }
 // copia texto (e HTML, se houver) para a área de transferência; devolve se conseguiu
@@ -368,7 +374,9 @@ async function prelCopia(t,h){
 // clique no número do acesso: copia SÓ o número (sem abrir/fechar o toggle)
 async function prelCopiaAcesso(ev,ac){
   ev.preventDefault();ev.stopPropagation();
-  toast(await prelCopia(String(ac))?'Acesso copiado':'Não consegui copiar');
+  clearTimeout(PRL.copiaTimer);
+  if(ev.detail>1||String(window.getSelection()||'').trim())return;
+  PRL.copiaTimer=setTimeout(async()=>{if(!String(window.getSelection()||'').trim())toast(await prelCopia(String(ac))?'Acesso copiado':'Não consegui copiar')},300);
 }
 // botão "copiar laudo" no cabeçalho do Corrigido: laudo final = definitivo sem o rodapé do PACS, sem <del>/<ins> (text/plain com quebras + text/html)
 async function prelCopiaLaudo(ev,ac){
@@ -465,7 +473,8 @@ async function prelCfgTesta(){
 function prelRepinta(){if(typeof tela!=='undefined'&&tela==='notas'&&NT.prel&&typeof render==='function')render()}
 const prelFaltaTopo=()=>{if(!PRL.itens)return '';const v=prelVis();return v.length?(prelFalta2(v)?' · '+prelFaltaTxt(prelFalta2(v)):' · tudo conferido'):''};
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelVis().length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
-function prelFiltroMuda(){
+function prelFiltroMuda(espera=false){
+  clearTimeout(PRL.filtroTimer);
   const g=id=>document.getElementById(id)?.value||'';
   PRL.filtro={texto:g('prl_q'),de:g('prl_de'),ate:g('prl_ate'),so:g('prl_so')};PRL.dest=null;
   const l=document.getElementById('prl_lista');if(l){l.innerHTML=prelListaHtml();prelPares()}
@@ -473,7 +482,7 @@ function prelFiltroMuda(){
   const q=document.getElementById('prl_pend');if(q)q.textContent=prelFaltaTopo();
 }
 function prelPeriodoSet(n){PRL.filtro={...PRL.filtro,...prelPeriodo(n)};prelRepinta()}
-function prelLimpa(){PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest=null;prelRepinta()}
+function prelLimpa(){clearTimeout(PRL.filtroTimer);PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest=null;prelRepinta()}
 function prelModoSet(m){PRL.modo=m==='exame'?'exame':'dia';try{localStorage.setItem('bcbr_prl_modo',PRL.modo)}catch(e){}prelRepinta()}
 function vPreliminares(){
   prelSoltaAltura();
@@ -484,7 +493,7 @@ function vPreliminares(){
   if(!PRL.itens)return `<div class="prl">${topo}${PRL.erro?`<p class="prl-erro" role="alert">${prelEsc(PRL.erro)}</p>`:`<p class="mut" role="status">Carregando o índice…</p>`}</div>`;
   return `<div class="prl">${topo}${PRL.erro?`<p class="prl-erro" role="alert">${prelEsc(PRL.erro)}</p>`:''}
    <div class="prl-filtros" role="search">
-    <label class="prl-busca">Buscar<input id="prl_q" type="search" value="${prelEsc(f.texto)}" placeholder="acesso, exame, chefe…" oninput="prelFiltroMuda()"></label>
+     <label class="prl-busca">Buscar<input id="prl_q" type="search" value="${prelEsc(f.texto)}" placeholder="exame, acesso, laudo ou &quot;frase exata&quot;" oninput="prelFiltroMuda(true)"></label>
     <label>De<input id="prl_de" type="date" value="${prelEsc(f.de)}" onchange="prelFiltroMuda()"></label>
     <label>Até<input id="prl_ate" type="date" value="${prelEsc(f.ate)}" onchange="prelFiltroMuda()"></label>
     <label>Mostrar<select id="prl_so" onchange="prelFiltroMuda()"><option value="">Todos</option><option value="mudou" ${f.so==='mudou'?'selected':''}>Só com correção</option><option value="naoconf" ${f.so==='naoconf'?'selected':''}>Só não conferidos</option><option value="naolidos" ${f.so==='naolidos'?'selected':''}>Só não lidos</option></select></label>

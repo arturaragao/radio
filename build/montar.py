@@ -2,7 +2,7 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.65.0"
+VERSAO = "1.66.0"
 # 1.65.0: sincronização durável em IndexedDB (Notas, Progresso, Semana), reenvio automático 30s/online/aba/abertura com backoff 403/429, merge 409 no progresso, aviso claro / faixa fixa >10 min ou erro de chave / detalhes / exportar pendências / beforeunload, e migração de flashcards fundidos (v:2 + resumos/fundidos.json)
 # 1.64.0: Preliminares fechados por padrão (lembra abertos); botão offline clean com check verde nítido e anel/barra %; aviso sem texto; flashcards HTML sanitizado/formatado + painel <= 90 px + imagens (caminhos/acentos/cache); 403/429 com espera e mensagem sem "sem conexão"
 # 1.63.0: Flashcards — atalhos (Espaço vira/volta, Enter próximo, G abre/fecha imagem), filtros/grupos por tema e com/sem imagem, flashcards/questoes.json, bloco diário de 100 ("Hoje: 100 cards"); Notas: cursor no fim do texto colado

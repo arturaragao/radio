@@ -1,4 +1,4 @@
-// Banco CBR app 1.65.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.66.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // Radio 1.65.0: fila durável unificada em IndexedDB (Notas, Progresso, Semana), reenvio automático,
 // backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
 (function (root) {
@@ -5000,18 +5000,25 @@ function prelRotuloDia(dia,hoje=prelHoje()){
   const [y,m,d]=dia.split('-').map(Number);return PRL_DOW[new Date(y,m-1,d,12).getDay()]+' '+prelData(dia);
 }
 const prelDiaDe=i=>String(i.data||'').slice(0,10);
+const prelTermos=q=>[...new Set((prelNorm(q).match(/"[^"]+"|[^\s"]+/g)||[]).map(t=>t.replace(/^"|"$/g,'').replace(/\s+/g,' ').trim()).filter(Boolean))];
+function prelCampos(i){
+  const x=PRL.idx[String(i.acesso)];
+  return [...prelAcessos(i),...(Array.isArray(i.descricoes)?i.descricoes:[]),i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data),x?.pre.t,x?.def.t].map(s=>prelNorm(s).replace(/\s+/g,' '));
+}
+const prelPontos=(i,tk)=>{const h=prelCampos(i);return tk.filter(t=>h.some(s=>s.includes(t))).length};
+const prelCompara=(a,b,tk)=>prelPontos(b,tk)-prelPontos(a,tk)||(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso));
 function prelFiltra(itens,f={}){
-  const t=prelNorm(f.texto).trim().split(/\s+/).filter(Boolean),lidos=f.lidos||{};
-  return (itens||[]).filter(i=>{
+  const t=prelTermos(f.texto),lidos=f.lidos||{};
+  const r=(itens||[]).filter(i=>{
     if(f.de&&(i.data||'')<f.de)return false;
     if(f.ate&&(i.data||'')>f.ate)return false;
     if(f.so==='mudou'&&!i.mudou)return false;
     if(f.so==='naolidos'&&prelLido(i,lidos))return false;
     if(f.so==='naoconf'&&!prelPendente(i,f.conf))return false;
     if(!t.length)return true;
-    const h=prelNorm([...prelAcessos(i),...(Array.isArray(i.descricoes)?i.descricoes:[]),i.exame,i.categoria,i.chefe,i.modalidade,prelData(i.data)].join(' '));
-    return t.every(p=>h.includes(p));
+    return prelPontos(i,t)===t.length;
   });
+  return t.length?r.sort((a,b)=>prelCompara(a,b,t)):r;
 }
 // Categoria > exame > itens (mais recente primeiro). Categorias na ordem do contrato; desconhecidas por último, em ordem alfabética.
 function prelAgrupa(itens){
@@ -5108,11 +5115,11 @@ function prelTextoPuro(html){
 // Corrigido copiado = texto final como no definitivo: sem o que foi apagado (<del>) e sem marcas (<ins>)
 function prelCopiaLimpa(html){const h=String(html??'').replace(/<del>[\s\S]*?<\/del> ?/g,'').replace(/<\/?ins>/g,'').replace(/ {2,}/g,' ');return {html:h,texto:prelTextoPuro(h)}}
 function prelCopiaCorrigido(e){
-  const s=getSelection();if(!s||!s.rangeCount||s.isCollapsed)return;
+  const s=window.getSelection();if(!s||!s.rangeCount||!String(s).trim()||!e.clipboardData)return;
   const r=s.getRangeAt(0),n=r.commonAncestorContainer,el=n.nodeType===1?n:n.parentElement;
   if(!el||!el.closest('.prl-cor'))return;
   const d=document.createElement('div');d.appendChild(r.cloneContents());
-  const c=prelCopiaLimpa(d.innerHTML);
+  const c=prelCopiaLimpa(prelSeguro(d.innerHTML));
   e.clipboardData.setData('text/html',c.html);e.clipboardData.setData('text/plain',c.texto);e.preventDefault();
 }
 // 1.54.0: índice de busca dos laudos SÓ EM MEMÓRIA (PRL.idx; nada em localStorage, IndexedDB, cache do SW nem repo): texto puro, sem rodapé do PACS, e a versão sem acento/caixa.
@@ -5124,18 +5131,16 @@ function prelIndexa(ac,p){
   PRL.idx[ac]=x;
   PRL.idxv++;
 }
-// Laudos que têm TODAS as palavras no preliminar ou no definitivo, mais recentes primeiro. Digitar mais letras só refina a lista anterior (filtro incremental).
+// Todos os termos/frases em qualquer campo; consulta somente o índice em memória.
 // -> {total, lista:[{ac,i,onde:'preliminar'|'definitivo'|'ambos',x:{t,n}}]} com até `max` itens
 function prelBuscaLaudos(q,max=20){
-  const tk=prelNorm(q).trim().split(/\s+/).filter(Boolean),b=PRL.bc;
+  const tk=prelTermos(q);
   if(!tk.length||!PRL.itens)return {total:0,lista:[],tk};
-  const chave=tk.join(' '),base=b.v===PRL.idxv&&b.it===PRL.itens&&b.q&&chave.startsWith(b.q)?b.r:PRL.itens.filter(i=>PRL.idx[String(i.acesso)]);
   const tem=(x,t)=>t.every(w=>x.n.includes(w));
-  const r=base.filter(i=>{const x=PRL.idx[String(i.acesso)];return tem(x.def,tk)||tem(x.pre,tk)}).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||String(b.acesso).localeCompare(String(a.acesso)));
-  PRL.bc={q:chave,v:PRL.idxv,it:PRL.itens,r};
+  const r=prelFiltra(PRL.itens,{texto:q});
   return {total:r.length,tk,lista:r.slice(0,max).map(i=>{
-    const ac=String(i.acesso),x=PRL.idx[ac],d=tem(x.def,tk),p=tem(x.pre,tk);
-    return {ac,i,onde:d&&p?'ambos':d?'definitivo':'preliminar',x:d?x.def:x.pre};
+    const ac=String(i.acesso),x=PRL.idx[ac]||{pre:{t:'',n:''},def:{t:'',n:''}},d=tem(x.def,tk),p=tem(x.pre,tk);
+    return {ac,i,onde:d&&p?'ambos':p?'preliminar':d?'definitivo':'ambos',x:d?x.def:p?x.pre:tk.some(t=>x.def.n.includes(t))?x.def:x.pre};
   })};
 }
 // baixa em segundo plano (4 por vez) os pares ainda não baixados e indexa; os já baixados com status "aguardando" são reconferidos por ETag. Sem chave: nada.
@@ -5289,7 +5294,7 @@ function prelDiaAbertoSalva(dia,aberto){
   try{const l=[...s];if(l.length)localStorage.setItem(PRL_ABERTOS_LS,JSON.stringify(l));else localStorage.removeItem(PRL_ABERTOS_LS)}catch(e){}
 }
 // acessos que ficaram abertos (estado) sem o par na memória: baixa só esses
-const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2))};
+const prelPares=()=>{for(const k in PRL.estado)if(k.startsWith('a|')&&PRL.estado[k]&&!PRL.pares[k.slice(2)])prelPar(k.slice(2));prelDestaca(document.getElementById('prl_lista'),prelTermos(PRL.filtro.texto))};
 const prelAberto=(k,padrao)=>PRL.estado[k]!==undefined?PRL.estado[k]:padrao;
 const prelFiltroAtivo=()=>!!(PRL.filtro.texto.trim()||PRL.filtro.de||PRL.filtro.ate||PRL.filtro.so);
 function prelTg(el){
@@ -5314,7 +5319,7 @@ function prelCorpoHtml(ac){
   if(p.status==='aguardando')return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+'<p class="mut">Aguardando o definitivo do chefe — o robô completa na próxima coleta.</p>';
   return prelSub('Laudo preliminar',prelSeguro(preH),k+'p')+prelSub('Laudo definitivo',def,k+'d')+prelSub('Corrigido'+(p.mudou===false?' (sem mudanças)':'')+`<button type="button" class="prl-cp" onclick="prelCopiaLaudo(event,'${prelEsc(ac)}')" title="Copiar o laudo final (definitivo, sem o rodapé do PACS)">copiar laudo</button>`,corr,k+'c',true,' prl-cor');   // 1.50.3: o corrigido já abre (é o que o Artur quer ver)
 }
-function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
+function prelCorpoPinta(ac){const e=document.getElementById('prl_c_'+ac);if(e){e.innerHTML=prelCorpoHtml(ac);prelDestaca(e,prelTermos(PRL.filtro.texto));if(PRL.dest&&PRL.dest.ac===ac)prelDestaca(e,PRL.dest.tk)}}
 function prelItem(i){
   const ac=String(i.acesso),acs=prelAcessos(i),k='a|'+ac,ab=prelAberto(k,false),lido=prelLido(i,PRL.lidos),conf=prelConferido(i,prelConf()),rot=acs.join(' + ');
   // acesso: clique copia o número (sem abrir/fechar); checkbox à direita: "conferi a correção" (label/input não ativam o summary)
@@ -5326,6 +5331,7 @@ function prelConfClique(el){
   const ac=el.dataset.ac,acs=el.dataset.acs.split(','),on=el.checked,hora=prelAgora();
   if(typeof SM==='undefined'||!SM.d||typeof smMudar!=='function'){el.checked=!on;if(typeof toast==='function')toast('O plano ainda está carregando; tente de novo');return}
   smMudar(d=>{const c=d.prelConf=d.prelConf||{};if(on)c[ac]=hora;else acs.forEach(a=>{delete c[a]})},on?'preliminares: conferido':'preliminares: desmarcado');
+  if(on){PRL.estado['a|'+ac]=false;const d=el.closest('details.prl-n3');if(d)d.open=false}
   prelRepinta();   // o smRender do plano não redesenha com o foco dentro de .nt
 }
 // copia texto (e HTML, se houver) para a área de transferência; devolve se conseguiu
@@ -5337,7 +5343,9 @@ async function prelCopia(t,h){
 // clique no número do acesso: copia SÓ o número (sem abrir/fechar o toggle)
 async function prelCopiaAcesso(ev,ac){
   ev.preventDefault();ev.stopPropagation();
-  toast(await prelCopia(String(ac))?'Acesso copiado':'Não consegui copiar');
+  clearTimeout(PRL.copiaTimer);
+  if(ev.detail>1||String(window.getSelection()||'').trim())return;
+  PRL.copiaTimer=setTimeout(async()=>{if(!String(window.getSelection()||'').trim())toast(await prelCopia(String(ac))?'Acesso copiado':'Não consegui copiar')},300);
 }
 // botão "copiar laudo" no cabeçalho do Corrigido: laudo final = definitivo sem o rodapé do PACS, sem <del>/<ins> (text/plain com quebras + text/html)
 async function prelCopiaLaudo(ev,ac){
@@ -5434,7 +5442,8 @@ async function prelCfgTesta(){
 function prelRepinta(){if(typeof tela!=='undefined'&&tela==='notas'&&NT.prel&&typeof render==='function')render()}
 const prelFaltaTopo=()=>{if(!PRL.itens)return '';const v=prelVis();return v.length?(prelFalta2(v)?' · '+prelFaltaTxt(prelFalta2(v)):' · tudo conferido'):''};
 const prelContagem=()=>{if(!PRL.itens)return '';const t=prelVis().length;return t+(t===1?' laudo':' laudos')+(prelFiltroAtivo()?' de '+PRL.itens.length:'')};
-function prelFiltroMuda(){
+function prelFiltroMuda(espera=false){
+  clearTimeout(PRL.filtroTimer);
   const g=id=>document.getElementById(id)?.value||'';
   PRL.filtro={texto:g('prl_q'),de:g('prl_de'),ate:g('prl_ate'),so:g('prl_so')};PRL.dest=null;
   const l=document.getElementById('prl_lista');if(l){l.innerHTML=prelListaHtml();prelPares()}
@@ -5442,7 +5451,7 @@ function prelFiltroMuda(){
   const q=document.getElementById('prl_pend');if(q)q.textContent=prelFaltaTopo();
 }
 function prelPeriodoSet(n){PRL.filtro={...PRL.filtro,...prelPeriodo(n)};prelRepinta()}
-function prelLimpa(){PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest=null;prelRepinta()}
+function prelLimpa(){clearTimeout(PRL.filtroTimer);PRL.filtro={texto:'',de:'',ate:'',so:''};PRL.dest=null;prelRepinta()}
 function prelModoSet(m){PRL.modo=m==='exame'?'exame':'dia';try{localStorage.setItem('bcbr_prl_modo',PRL.modo)}catch(e){}prelRepinta()}
 function vPreliminares(){
   prelSoltaAltura();
@@ -5453,7 +5462,7 @@ function vPreliminares(){
   if(!PRL.itens)return `<div class="prl">${topo}${PRL.erro?`<p class="prl-erro" role="alert">${prelEsc(PRL.erro)}</p>`:`<p class="mut" role="status">Carregando o índice…</p>`}</div>`;
   return `<div class="prl">${topo}${PRL.erro?`<p class="prl-erro" role="alert">${prelEsc(PRL.erro)}</p>`:''}
    <div class="prl-filtros" role="search">
-    <label class="prl-busca">Buscar<input id="prl_q" type="search" value="${prelEsc(f.texto)}" placeholder="acesso, exame, chefe…" oninput="prelFiltroMuda()"></label>
+     <label class="prl-busca">Buscar<input id="prl_q" type="search" value="${prelEsc(f.texto)}" placeholder="exame, acesso, laudo ou &quot;frase exata&quot;" oninput="prelFiltroMuda(true)"></label>
     <label>De<input id="prl_de" type="date" value="${prelEsc(f.de)}" onchange="prelFiltroMuda()"></label>
     <label>Até<input id="prl_ate" type="date" value="${prelEsc(f.ate)}" onchange="prelFiltroMuda()"></label>
     <label>Mostrar<select id="prl_so" onchange="prelFiltroMuda()"><option value="">Todos</option><option value="mudou" ${f.so==='mudou'?'selected':''}>Só com correção</option><option value="naoconf" ${f.so==='naoconf'?'selected':''}>Só não conferidos</option><option value="naolidos" ${f.so==='naolidos'?'selected':''}>Só não lidos</option></select></label>
@@ -7350,10 +7359,20 @@ const fcTemParaHoje=c=>cfg.fcNovosPrimeiro?(c.n+c.d):(c.d+Math.min(c.n,Math.max(
 
 // ---- 1.63.0: Bloco diário de 100 ("Hoje: 100 cards") ----
 const fcHojeData=()=>fcDKey(Date.now());
+const fcFrenteChave=c=>norm(fcTxt(c?.f||'')).replace(/\s+/g,' ').trim();
+const fcHojeTema=c=>{
+  const m=fcMeta(c),p=fcChaveParts(m.chave);
+  return norm(p?(p.a+'|'+p.t):(m.tema||c.tg||'Sem tema')).replace(/\s+/g,' ').trim();
+};
 function fcHojeEstado(){
   const h=fcHojeData(),c=cfg.fcHoje;
-  if(c&&c.d===h&&Array.isArray(c.feitos))return {d:h,feitos:[...new Set(c.feitos)]};
-  return {d:h,feitos:[]};
+  const mapa=fcMapaFundidos(),feitos=new Set((c&&c.d===h&&Array.isArray(c.feitos)?c.feitos:[]).map(id=>mapa.get(id)||id));
+  // Reconstrói o contador se uma sincronização trouxe cfg incompleto, sem perder o histórico SRS.
+  Object.entries(fcs).forEach(([id,s])=>{if(s[5]&&fcDKey(s[5])===h&&s[2]<=1&&!s[4])feitos.add(mapa.get(id)||id)});
+  [...(cfg.fcBlocos||[]),...(fq?[fq]:[])].forEach(b=>Object.entries(b.resp||{}).forEach(([id,r])=>{
+    if(r&&r.t&&fcDKey(r.t)===h&&(r.p===null||r.p?.[2]===0))feitos.add(mapa.get(id)||id);
+  }));
+  return {d:h,feitos:[...feitos]};
 }
 function fcHojeUne(local,remota){
   const h=fcHojeData();
@@ -7366,10 +7385,9 @@ function fcHojeUne(local,remota){
 }
 function fcHojeRegistra(id,add){
   const h=fcHojeData();
-  if(!cfg.fcHoje||cfg.fcHoje.d!==h)cfg.fcHoje={d:h,feitos:[]};
-  const s=new Set(cfg.fcHoje.feitos||[]);
+  const s=new Set(fcHojeEstado().feitos);
   if(add)s.add(id);else s.delete(id);
-  cfg.fcHoje.feitos=[...s];
+  cfg.fcHoje={d:h,feitos:[...s]};
 }
 function fcIncidMapa(){
   const qs=typeof Q!=='undefined'&&Array.isArray(Q)?Q:[];
@@ -7412,37 +7430,79 @@ function fcHojeIncidencia(c){
   if(incBanco>0)return 100+incBanco*100+(Number(m.incid)||0)*1e-6;
   return Number(m.incid)||0;
 }
-function fcHojeNovos(){
-  const feitos=new Set(fcHojeEstado().feitos);
-  const novos=fcAtivos().filter(c=>(!fcs[c.id]||fcs[c.id][2]===0)&&!feitos.has(c.id))
+function fcNovosDisponiveis(bloco='',prioridade=[]){
+  const mapa=fcMapaFundidos(),porId=new Map(),ids=new Set(),frentes=new Set();
+  cards.forEach(c=>{if(!porId.has(c.id))porId.set(c.id,c)});
+  const resolve=id=>mapa.get(id)||id;
+  const marca=id=>{const k=resolve(id),f=fcFrenteChave(porId.get(k)||porId.get(id));ids.add(k);if(f)frentes.add(f)};
+  // reps=0 também ocorre após uma resposta errada no modo antigo: último>0 prova que já foi visto.
+  Object.entries(fcs).forEach(([id,s])=>{if(s[2]>0||s[5]>0)marca(id)});
+  (cfg.fcHoje?.feitos||[]).forEach(marca);
+  [...(cfg.fcBlocos||[]),...(fq?[fq]:[])].forEach(b=>{
+    Object.keys(b.resp||{}).forEach(marca);
+    if(b.id!==bloco&&!b.fim&&(!b.hoje||b.hoje===fcHojeData()))(b.ids||[]).forEach(marca);
+  });
+  return [...prioridade.map(id=>porId.get(resolve(id))),...cards].filter(c=>c&&!c.x&&!fst(c.id)[6]).filter(c=>{
+    const k=resolve(c.id),f=fcFrenteChave(c);
+    if(k!==c.id||ids.has(k)||(f&&frentes.has(f)))return false;
+    marca(k);return true;
+  });
+}
+function fcHojeNovos(bloco='',prioridade=[]){
+  const novos=fcNovosDisponiveis(bloco,prioridade)
     .map(c=>({c,img:fcTemImagem(c)?1:0,s:fcHojeIncidencia(c)}));   // pontua uma vez por card (não dentro do sort)
   novos.sort((a,b)=>(b.img-a.img)||(b.s-a.s)||String(a.c.id).localeCompare(String(b.c.id)));
   return novos.map(x=>x.c);
 }
+function fcHojeAleatorio(semente){
+  let s=2166136261;
+  for(const c of String(semente))s=Math.imul(s^c.charCodeAt(0),16777619)>>>0;
+  return ()=>{s=(s+0x6D2B79F5)>>>0;let t=Math.imul(s^(s>>>15),s|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296};
+}
+function fcHojeOrdem(ids,semente){
+  const rnd=fcHojeAleatorio(semente+':ordem'),grupos=new Map();
+  const lista=[...ids];
+  for(let i=lista.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[lista[i],lista[j]]=[lista[j],lista[i]]}
+  lista.forEach(id=>{const k=fcHojeTema(cardBy(id));if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(id)});
+  const out=[];let anterior=null;
+  while(out.length<lista.length){
+    let op=[...grupos].filter(([k,g])=>g.length&&k!==anterior);
+    if(!op.length)op=[...grupos].filter(([,g])=>g.length);
+    // Maior fila primeiro evita adjacências inclusive quando um tema ocupa metade do bloco.
+    const max=Math.max(...op.map(([,g])=>g.length));op=op.filter(([,g])=>g.length===max);
+    const [k,g]=op[Math.floor(rnd()*op.length)];out.push(g.pop());anterior=k;
+  }
+  return out;
+}
 function fcHojeFila(){
   const feitos=fcHojeEstado().feitos,faltam=Math.max(0,FC_HOJE_META-feitos.length);
   if(!faltam)return [];
-  return fcHojeNovos().slice(0,faltam).map(c=>c.id);
+  const h=fcHojeData(),rnd=fcHojeAleatorio(h+':selecao'),grupos=new Map(),conta=new Map(),teto=Math.ceil(FC_HOJE_META*.15);
+  feitos.forEach(id=>{const c=cardBy(id);if(c){const k=fcHojeTema(c);conta.set(k,(conta.get(k)||0)+1)}});
+  fcHojeNovos().forEach(c=>{
+    const k=fcHojeTema(c);if(!grupos.has(k))grupos.set(k,{k,com:[],sem:[],peso:0});
+    const g=grupos.get(k),s=Math.max(0,fcHojeIncidencia(c));g[fcTemImagem(c)?'com':'sem'].push(c.id);g.peso=Math.max(g.peso,s);
+  });
+  const gs=[...grupos.values()].sort((a,b)=>a.k.localeCompare(b.k)),ids=[];
+  while(ids.length<faltam){
+    const disponiveis=gs.filter(g=>g.com.length||g.sem.length);if(!disponiveis.length)break;
+    let op=disponiveis.filter(g=>(conta.get(g.k)||0)<teto);
+    if(!op.length)op=disponiveis; // Só ultrapassa o teto depois de esgotar os demais temas.
+    const imagem=op.some(g=>g.com.length),tipo=imagem?'com':'sem';op=op.filter(g=>g[tipo].length);
+    const total=op.reduce((s,g)=>s+g.peso,0);let alvo=rnd()*(total||op.length),g=op[op.length-1];
+    for(const x of op){alvo-=total?x.peso:1;if(alvo<0){g=x;break}}
+    const j=Math.floor(rnd()*g[tipo].length);ids.push(g[tipo].splice(j,1)[0]);conta.set(g.k,(conta.get(g.k)||0)+1);
+  }
+  return fcHojeOrdem(ids,h);
 }
 function fcHojeAtualiza(b){
   const h=fcHojeData();
   if(!b||b.hoje!==h)return false;
-  const ativos=new Set(fcAtivos().map(c=>c.id));
-  const novos=fcHojeNovos().map(c=>c.id);
+  const novos=fcHojeNovos(b.id,b.ids).map(c=>c.id);
   const novosSet=new Set(novos);
   const resp=b.resp||{};
-  const mantidos=(b.ids||[]).filter(id=>ativos.has(id)&&(resp[id]||novosSet.has(id)));
-  const ja=new Set(mantidos);
-  const feitos=fcHojeEstado().feitos;
-  const faltam=Math.max(0,FC_HOJE_META-feitos.length);
-  const pend=mantidos.filter(id=>!resp[id]).length;
-  let faltaPreencher=Math.max(0,faltam-pend);
-  const extras=[];
-  for(const id of novos){
-    if(faltaPreencher<=0)break;
-    if(!ja.has(id)){extras.push(id);ja.add(id);faltaPreencher--}
-  }
-  const proxIds=[...mantidos,...extras];
+  // O conjunto e a ordem são um retrato da abertura: retomar nunca seleciona ou acrescenta cards.
+  const proxIds=fcIdsAtivos((b.ids||[]).filter(id=>resp[id]||b.re?.[id]||novosSet.has(id)),resp);
   const mudou=proxIds.length!==(b.ids||[]).length||proxIds.some((id,idx)=>id!==b.ids[idx]);
   if(mudou){
     const curId=b.ids?.[b.i];
@@ -7528,7 +7588,20 @@ function fcAvCancela(){fcAvEdit=null;render()}
 const cTags=c=>{const t=String(c.tg||'').trim();return (/[;,]/.test(t)?t.split(/[;,]/):t.split(/\s+/)).map(x=>x.trim()).filter(Boolean)};
 const cTagOk=c=>!fcTags.size||cTags(c).some(t=>fcTags.has(norm(t)));
 function fcTog(k){fcTags.has(k)?fcTags.delete(k):fcTags.add(k);render()}
-const fcIdsAtivos=ids=>(ids||[]).filter(id=>{const c=cardBy(id);return c&&!c.x&&!fst(id)[6]});
+const fcIdsAtivos=(ids,resp={})=>{
+  const mapa=fcMapaFundidos(),vistos=new Set(),preferidas=new Map(),porId=new Map();
+  cards.forEach(c=>{if(!porId.has(c.id))porId.set(c.id,c)});
+  const lista=(ids||[]).map(id=>mapa.get(id)||id).filter(id=>{const c=porId.get(id);return c&&!c.x&&!fst(id)[6]});
+  lista.forEach(id=>{
+    const f=fcFrenteChave(porId.get(id)),anterior=preferidas.get(f);
+    if(f&&(!anterior||(!resp[anterior]&&resp[id])))preferidas.set(f,id);
+  });
+  return lista.filter(id=>{
+    const f=fcFrenteChave(porId.get(id));
+    if(vistos.has(id)||(f&&preferidas.get(f)!==id))return false;
+    vistos.add(id);return true;
+  });
+};
 // União de blocos entre aparelhos: preserva respostas de ambos por carimbo mais recente; reinício (t0 mais novo) vence o bloco antigo.
 // Descarte deixa tombstone {id:u}; o bloco só some se não teve atividade (u ou resposta) depois do descarte — atividade posterior em outro aparelho o mantém (mais seguro: não perde resposta).
 const fcBlocoUlt=b=>Math.max(b.u||0,...Object.values(b.resp||{}).map(r=>r&&r.t||0));
@@ -7537,12 +7610,13 @@ function fcBlocosPreserva(local,remota,mortos){
   const L=Array.isArray(local)?local:[],R=Array.isArray(remota)?remota:[],m=new Map();
   const une=(a,b)=>{
     if(!a)return b;if(!b)return a;
-    if((b.t0||0)>(a.t0||0))return b;
-    if((a.t0||0)>(b.t0||0))return a;
+    const diario=a.hoje&&a.hoje===b.hoje;
+    if(!diario&&(b.t0||0)>(a.t0||0))return b;
+    if(!diario&&(a.t0||0)>(b.t0||0))return a;
     const resp={...(a.resp||{})};
     Object.entries(b.resp||{}).forEach(([k,v])=>{if(!resp[k]||(v.t||0)>(resp[k].t||0))resp[k]=v});
     const bMais=(b.u||0)>(a.u||0);
-    return {...(bMais?b:a),ids:[...new Set([...(bMais?b.ids:a.ids)||[],...(bMais?a.ids:b.ids)||[]])],resp,i:bMais?b.i:a.i,fim:bMais?!!b.fim:!!a.fim,u:Math.max(a.u||0,b.u||0)};
+    return {...(bMais?b:a),ids:[...new Set([...(bMais?b.ids:a.ids)||[],...(bMais?a.ids:b.ids)||[]])],resp,i:bMais?b.i:a.i,fim:diario?!!(a.fim||b.fim):(bMais?!!b.fim:!!a.fim),t0:bMais?b.t0:a.t0,u:Math.max(a.u||0,b.u||0)};
   };
   R.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,b)});
   L.forEach(b=>{if(b&&b.id&&Array.isArray(b.ids))m.set(b.id,une(m.get(b.id),b))});
@@ -7552,11 +7626,12 @@ function fcBlocosAbertos(){
   const h=fcHojeData();
   return (cfg.fcBlocos||[]).filter(b=>!b.fim&&(!b.hoje||b.hoje===h)).map(b=>{
     if(b.hoje===h)fcHojeAtualiza(b);
-    const ids=fcIdsAtivos(b.ids),feitas=ids.filter(id=>b.resp?.[id]).length;
+    const ids=fcIdsAtivos(b.ids,b.resp),feitas=ids.filter(id=>b.resp?.[id]).length;
     return ids.length?{...b,ids,feitas,n:ids.length}:null;
   }).filter(Boolean).sort((a,b)=>(b.u||0)-(a.u||0));
 }
 function fcBlocoSalvaNovo(b){
+  b.ids=fcIdsAtivos(b.ids,b.resp);
   const h=fcHojeData();
   const list=(cfg.fcBlocos||[]).filter(x=>x.id!==b.id&&!(b.rs&&x.rs===b.rs)&&(!x.hoje||x.hoje===h)&&(x.rs||x.hoje||!x.fim));
   const semRs=list.filter(x=>!x.rs&&!x.hoje).sort((a,b)=>(b.u||0)-(a.u||0)).slice(0,4);
@@ -7574,8 +7649,9 @@ function fcBlocoSync(){
 function fcBlocoSalva(wk){fcBlocoSync();persist(wk||'_est')}
 function fcBlocoCarrega(b){
   if(b.hoje===fcHojeData())fcHojeAtualiza(b);
-  const ids=fcIdsAtivos(b.ids);if(!ids.length)return false;
-  const i=Math.max(0,Math.min(+b.i||0,ids.length-1)),resp=JSON.parse(JSON.stringify(b.resp||{}));
+  const ids=fcIdsAtivos(b.ids,b.resp);if(!ids.length)return false;
+  const atual=fcMapaFundidos().get(b.ids?.[b.i])||b.ids?.[b.i],k=ids.indexOf(atual);
+  const i=k>=0?k:Math.max(0,Math.min(+b.i||0,ids.length-1)),resp=JSON.parse(JSON.stringify(b.resp||{}));
   fq={id:b.id,rs:b.rs||'',hoje:b.hoje||'',titulo:b.titulo||'',ids,i,resp,re:b.re?{...b.re}:{},shown:!!resp[ids[i]],fim:!!b.fim,t0:b.t0||Date.now(),u:b.u||Date.now(),hist:[]};
   fcAvEdit=null;cfg.fcAtivo=b.id;return true;
 }
@@ -7583,7 +7659,7 @@ function fcAbre(){
   const h=fcHojeData();
   if(fq&&!fq.fim&&(!fq.hoje||fq.hoje===h)){
     if(fq.hoje===h)fcHojeAtualiza(fq);
-    fq.ids=fcIdsAtivos(fq.ids);
+    fq.ids=fcIdsAtivos(fq.ids,fq.resp);
     if(fq.ids.length){fq.i=Math.min(fq.i,fq.ids.length-1);tela='fcstudy';sub=null;render();scrollTo(0,0);return true}
     fq=null;
   }
@@ -7614,7 +7690,7 @@ function fcStart(){
   fcTagsPoda();
   const now=Date.now(),c=fcContagem(),A=fcAtivos().filter(fcFiltroOk);
   const rev=A.filter(x=>{const s=fcs[x.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).slice(0,cfg.fcMax).map(x=>x.id);
-  const novAll=A.filter(x=>!fcs[x.id]||fcs[x.id][2]===0).map(x=>x.id);
+  const novAll=fcNovosDisponiveis().filter(fcFiltroOk).map(x=>x.id);
   const ids=cfg.fcNovosPrimeiro?(novAll.length?novAll:rev):[...rev,...novAll.slice(0,Math.max(0,cfg.fcNovos-c.nh))];
   if(!ids.length){toast('Nada para estudar agora.');return}
   const tgNomes=fcTags.size?[...new Set(A.flatMap(cTags).filter(t=>fcTags.has(norm(t))))].slice(0,3).join(', '):'';
@@ -7627,9 +7703,10 @@ function fcStart(){
 function fcResumoCards(rsId,modo='hoje'){
   const r=(window.RESUMOS_IDX||[]).find(x=>x.pagina===rsId);if(!r)return [];
   const tag=norm('Resumo: '+r.titulo),A=fcAtivos().filter(c=>cTags(c).some(t=>norm(t)===tag));
-  if(modo==='tudo')return A.map(c=>c.id);
+  if(modo==='tudo')return fcIdsAtivos(A.map(c=>c.id));
   if(modo==='errados'){const b=(fq&&fq.rs===rsId?fq:null)||(cfg.fcBlocos||[]).find(x=>x.rs===rsId);return fcIdsAtivos((b?.ids||[]).filter(id=>b.resp?.[id]&&!b.resp[id].ok))}
-  const now=Date.now(),nov=A.filter(c=>!fcs[c.id]||fcs[c.id][2]===0).map(c=>c.id);
+  const novos=new Set(fcNovosDisponiveis('rs:'+rsId).map(c=>c.id));
+  const now=Date.now(),nov=A.filter(c=>novos.has(c.id)).map(c=>c.id);
   const rev=A.filter(c=>{const s=fcs[c.id];return s&&s[2]>0&&s[3]<=now}).sort((a,b)=>fcs[a.id][3]-fcs[b.id][3]).map(c=>c.id);
   return cfg.fcNovosPrimeiro?(nov.length?nov:rev):[...rev,...nov];
 }
@@ -7852,7 +7929,7 @@ function vFcStudy(){
   if(!fq)return vFc();
   if(fq.hoje&&fq.hoje!==fcHojeData()){fq=null;return vFc()}
   if(!fq.fim&&fq.hoje===fcHojeData())fcHojeAtualiza(fq);
-  fq.ids=fcIdsAtivos(fq.ids);
+  fq.ids=fcIdsAtivos(fq.ids,fq.resp);
   if(!fq.ids.length){fq=null;return vFc()}
   if(fq.i>=fq.ids.length)fq.i=fq.ids.length-1;
   const ids=fq.ids,n=ids.length,rs=fq.resp||{},feitas=ids.filter(i=>rs[i]).length,ok=ids.filter(i=>rs[i]?.ok).length,er=feitas-ok;

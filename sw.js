@@ -1,7 +1,12 @@
 // Service worker do Banco CBR: guarda o app para abrir sem internet e serve as imagens (./img/<arquivo>)
 // lendo do repositório privado com a chave do aparelho. Imagem vista uma vez fica no aparelho.
-const VERSAO = "bcbr-1.67.0";
-const APP = ["./", "./index.html", "./shim.js", "./app.js", "./vendor/tiptap.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png"];
+const VERSAO = "bcbr-1.68.0";
+const APP = ["./", "./index.html", "./shim.js", "./app.js", "./vendor/tiptap.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png",
+  "./laudos/config.js", "./laudos/laudos-app.js", "./laudos/ui/visor.js",
+  "./laudos/lib/aprendizado.js", "./laudos/lib/aproximada.js", "./laudos/lib/classificacoes.js", "./laudos/lib/db.js",
+  "./laudos/lib/destaque.js", "./laudos/lib/drive.js", "./laudos/lib/filtros.js", "./laudos/lib/indice.js",
+  "./laudos/lib/laudo2notion.js", "./laudos/lib/nomes.js", "./laudos/lib/nuvem.js", "./laudos/lib/ponte.js",
+  "./laudos/lib/prefs.js", "./laudos/lib/regras.js", "./laudos/lib/secoes.js"];
 const REPO = "arturaragao/banco-cbr-app";
 let pausaAte = 0;
 const encPath = (nome) => String(nome || "").replace(/^\/+/, "").split("/").filter(Boolean).map(encodeURIComponent).join("/");

@@ -2,7 +2,7 @@
 Uso: python build/montar.py  -> gera index.html e app.js na raiz. Não editar index.html/app.js à mão: editar aqui ou em fonte/."""
 import os, re
 R = os.path.join(os.path.dirname(__file__), "..")
-VERSAO = "1.67.0"
+VERSAO = "1.68.0"
 # 1.65.0: sincronização durável em IndexedDB (Notas, Progresso, Semana), reenvio automático 30s/online/aba/abertura com backoff 403/429, merge 409 no progresso, aviso claro / faixa fixa >10 min ou erro de chave / detalhes / exportar pendências / beforeunload, e migração de flashcards fundidos (v:2 + resumos/fundidos.json)
 # 1.64.0: Preliminares fechados por padrão (lembra abertos); botão offline clean com check verde nítido e anel/barra %; aviso sem texto; flashcards HTML sanitizado/formatado + painel <= 90 px + imagens (caminhos/acentos/cache); 403/429 com espera e mensagem sem "sem conexão"
 # 1.63.0: Flashcards — atalhos (Espaço vira/volta, Enter próximo, G abre/fecha imagem), filtros/grupos por tema e com/sem imagem, flashcards/questoes.json, bloco diário de 100 ("Hoje: 100 cards"); Notas: cursor no fim do texto colado
@@ -178,7 +178,7 @@ troca("base.forEach(k=>{if(!o.includes(k))o.push(k)});return o.map", "for(const 
 # 1.50.1: "Chave dos laudos" na aba Config > Geral (campo, salvar, testar, remover)
 troca("function cfgGeral(){", "function cfgGeral(){return cfgGeralOrig()+prelCfgHtml()} function cfgGeralOrig(){")
 troca("quiz:vQuiz,", "quiz:vQuizQ,questoes:vQuestoes,")
-troca("function go(t,s){tela=t;", "function go(t,s){if(tela==='notas'&&typeof ntAntes==='function')ntAntes();if(t==='preliminares'){ntPrelAbre();return}if(t==='questoes'&&qAbre())return;if(t==='fc'&&!s&&fcAbre())return;if(t==='tarefas')smkIni();tela=t;")
+troca("function go(t,s){tela=t;", "function go(t,s){if(tela==='notas'&&typeof ntAntes==='function')ntAntes();if(tela==='notas'&&t!=='notas'&&typeof ntLaudosDesmonta==='function')ntLaudosDesmonta();if(t==='preliminares'){ntPrelAbre();return}if(t==='banco-laudos'){ntLaudosAbre();return}if(t==='questoes'&&qAbre())return;if(t==='fc'&&!s&&fcAbre())return;if(t==='tarefas')smkIni();tela=t;")
 troca("const ativa=tela==='quiz'||tela==='fim'?'':", "const ativa=tela==='quiz'?'questoes':tela==='fim'?'':")
 troca("$('#app').innerHTML=f();", "qPinta(f());")
 # atalhos do zoom configuráveis (Config > Atalhos)
@@ -193,7 +193,7 @@ js = open(f"{R}/build/sync-fila.js", encoding="utf8").read() + "\n\n" + open(f"{
 
 open(f"{R}/app.js", "w", encoding="utf8").write(f"// Banco CBR app {VERSAO} — gerado por build/montar.py a partir do artefato (não editar à mão)\n" + js)
 
-css = open(f"{R}/build/extra.css", encoding="utf8").read() + open(f"{R}/build/semana.css", encoding="utf8").read() + open(f"{R}/build/questoes.css", encoding="utf8").read() + open(f"{R}/build/layout.css", encoding="utf8").read() + open(f"{R}/build/notas.css", encoding="utf8").read() + open(f"{R}/build/preliminares.css", encoding="utf8").read()
+css = open(f"{R}/build/extra.css", encoding="utf8").read() + open(f"{R}/build/semana.css", encoding="utf8").read() + open(f"{R}/build/questoes.css", encoding="utf8").read() + open(f"{R}/build/layout.css", encoding="utf8").read() + open(f"{R}/build/notas.css", encoding="utf8").read() + open(f"{R}/build/preliminares.css", encoding="utf8").read() + open(f"{R}/build/laudos.css", encoding="utf8").read()
 pwa = ('<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png">'
        '<meta name="theme-color" content="#2f2923" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#4a3320" media="(prefers-color-scheme: light)"><meta name="apple-mobile-web-app-capable" content="yes">')
 head = head.replace("<style>", pwa + "<style>", 1).replace("</style>", css + "</style>", 1)

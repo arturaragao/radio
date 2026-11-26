@@ -118,8 +118,8 @@ test('Radio 1.65.0: Notas — Enter divide bloco no meio, com seleção, no fim 
     assert.equal(docsSel[0].content[0].content.map(x=>x.text||'').join(''),'ab');
     assert.equal(docsSel[1].content[0].content.map(x=>x.text||'').join(''),'ef');
 
-    // No fim: entra no conteúdo do toggle (como já é)
-    await reset(tg('abcdef'));
+    // No fim: entra no conteúdo do toggle (como já é quando tem conteúdo)
+    await reset(tg('abcdef', par('conteudo')));
     await ev("NT.ed.chain().focus().setTextSelection(8).run();0");
     await especial('Enter');
     await espera(80);

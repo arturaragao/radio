@@ -1,6 +1,6 @@
 // Service worker do Banco CBR: guarda o app para abrir sem internet e serve as imagens (./img/<arquivo>)
 // lendo do repositório privado com a chave do aparelho. Imagem vista uma vez fica no aparelho.
-const VERSAO = "bcbr-1.66.0";
+const VERSAO = "bcbr-1.67.0";
 const APP = ["./", "./index.html", "./shim.js", "./app.js", "./vendor/tiptap.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png"];
 const REPO = "arturaragao/banco-cbr-app";
 let pausaAte = 0;

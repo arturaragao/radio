@@ -1,4 +1,4 @@
-// Banco CBR app 1.66.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.67.0 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // Radio 1.65.0: fila durável unificada em IndexedDB (Notas, Progresso, Semana), reenvio automático,
 // backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
 (function (root) {
@@ -3098,7 +3098,9 @@ async function ntInsereImagem(arquivo,pos,c=NT){
   catch(e){tira();toast(e?.chave?'A chave do GitHub foi recusada (401).':e?.status?`Não consegui enviar a imagem (GitHub ${e.status}).`:'Não consegui enviar a imagem (precisa de conexão).');return}
   const p=ntPhPos(ed.state,id);if(p==null){toast('A imagem subiu, mas o lugar dela foi apagado.');return}
   const tr=ed.state.tr.setMeta(NT_PH(),{remove:id}),no=ed.state.schema.nodes.image.create({src:'./img/'+nome}),antes=tr.doc.resolve(p).nodeBefore;
-  if(antes?.type.name==='paragraph'&&!antes.content.size)tr.replaceWith(p-antes.nodeSize,p,no);else tr.insert(p,no);
+  let posNo=p;
+  if(antes?.type.name==='paragraph'&&!antes.content.size){posNo=p-antes.nodeSize;tr.replaceWith(posNo,p,no)}else tr.insert(p,no);
+  try{tr.setSelection(TT.pm.state.NodeSelection.create(tr.doc,posNo))}catch(x){}   // 1.67: a imagem recém-anexada fica selecionada
   ed.view.dispatch(tr.scrollIntoView());toast('Imagem anexada.');
 }
 function ntEscolheImagem(c=NT){
@@ -3257,7 +3259,23 @@ function ntDivideToggle(ed){
   if(document.querySelector('.nt-slash'))return false;
   const {state,view}=ed,s=state.selection,$=s.$from;
   if($.parent.type.name!=='detailsSummary'||!$.sameParent(s.$to))return false;
-  if(s.empty&&$.parentOffset===$.parent.content.size)return false;
+  if(s.empty&&$.parentOffset===$.parent.content.size){
+    // 1.67: Enter no FIM do título: toggle sem conteúdo (ou fechado) gera outro toggle logo abaixo, como lista gera outro item; título vazio num toggle vazio sai dele.
+    // Toggle aberto com conteúdo mantém o comportamento de ir para dentro dele.
+    const det=$.node($.depth-1),cont=det.lastChild,N=state.schema.nodes,ini=$.before($.depth-1);
+    const vazio=cont.childCount===1&&cont.firstChild.type.name==='paragraph'&&!cont.firstChild.content.size;
+    const dom=view.nodeDOM(ini),aberto=!(dom instanceof Element)||dom.classList.contains('is-open');
+    if(!vazio&&aberto)return false;
+    const tr=state.tr,fim=ini+det.nodeSize;
+    if(vazio&&!$.parent.content.size){
+      if($.node($.depth-2).canReplaceWith($.index($.depth-2),$.index($.depth-2)+1,N.paragraph)){tr.replaceWith(ini,fim,N.paragraph.create());tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ini+1));view.dispatch(tr.scrollIntoView());return true}
+      return false;
+    }
+    const novo=N.details.create({...det.attrs,id:null},[N.detailsSummary.create(null),N.detailsContent.create(null,[N.paragraph.create()])]);
+    tr.insert(fim,novo);
+    try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,fim+2))}catch(x){}
+    view.dispatch(tr.scrollIntoView());return true;
+  }
   const tr=state.tr;
   if(!s.empty)tr.delete(s.from,s.to);
   const pos=tr.selection.from,$p=tr.doc.resolve(pos),sum=$p.parent,det=$p.node($p.depth-1);
@@ -3517,6 +3535,12 @@ function ntEditor(c,blocos,aoMudar){
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
     editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina&&c.pagina!=='notas'?'Página':'Notas',spellcheck:'true'},
       transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\b(?:data-nt-)?src="\.\/img\/)[^>]*>/gi,''),
+      // 1.67: quebra de linha/parágrafo vazio no FIM do que foi copiado (PACS, Word, navegador) não vira linha nova: o cursor fica no fim da frase colada.
+      transformPasted:s=>{
+        let c=s.content;const {Slice}=TT.pm.model;
+        while(c.childCount>1&&c.lastChild.type.name==='paragraph'&&!c.lastChild.content.size)c=c.cut(0,c.size-c.lastChild.nodeSize);
+        return c===s.content?s:new Slice(c,s.openStart,c.lastChild.isTextblock?1:0);
+      },
       handlePaste:(v,e)=>{
         const cd=e.clipboardData;if(!cd)return false;
         if(/data-nt-src="\.\/img\//.test(cd.getData('text/html')||''))return false;   // 1.56: cópia das próprias Notas (com imagens): o HTML recria os blocos de imagem
@@ -3859,7 +3883,7 @@ function ntPaginaMenu(id,x,y){
   if(!pgAchar(id))return;
   ntPgMenuFecha?.();
   const m=document.createElement('div');m.id='nt_pg_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Página');
-  m.innerHTML='<button type="button" role="menuitem" data-versoes>Versões</button><button type="button" role="menuitem" data-hist>Histórico</button><button type="button" role="menuitem" data-atalhos>Atalhos</button><button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
+  m.innerHTML='<button type="button" role="menuitem" data-versoes>Versões</button><button type="button" role="menuitem" data-hist>Histórico</button><button type="button" role="menuitem" data-atalhos>Atalhos</button><button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-padroniza title="Frases do achado viram lista e a conclusão fica dentro do item">Padronizar achado + conclusão</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
   document.body.appendChild(m);
   const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);document.removeEventListener('keydown',tecla,true);ntPgMenuFecha=null};ntPgMenuFecha=fecha;
   const fora=e=>{if(!m.contains(e.target))fecha()},tecla=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fecha()}};
@@ -3870,6 +3894,7 @@ function ntPaginaMenu(id,x,y){
     if(e.target.closest('[data-hist]')){fecha();ntHistAbre(NT);return}
     if(e.target.closest('[data-atalhos]')){fecha();ntAtalhosAbre();return}
     if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);ntPainelAbre(id);return}
+    if(e.target.closest('[data-padroniza]')){fecha();ntPadroniza(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();
@@ -4635,6 +4660,81 @@ async function ntZipLer(bytes,estado={n:0,total:0},prefixo='',nivel=0,cancelado=
   }
   return out;
 }
+// 1.67: ZIP GRANDE (exportação pesada do Notion, acima de NT_ZIP_MEM). Lê do disco em pedaços (File.slice): só o índice, as páginas HTML e uma imagem por vez
+// ficam na memória; vídeos, PDFs e outros anexos nunca são lidos. Aceita ZIP64 e ExportBlock.zip com Part-N.zip dentro. Mesmas defesas do leitor acima
+// (caminhos, nomes UTF-8, sem senha, métodos 0/8, CRC, expansão limitada durante o deflate, tamanho declarado conferido).
+let NT_ZIP_MEM=200*1024*1024;
+const NT_ZIP_HTML_MAX=100*1024*1024,NT_ZIP_HTML_TOTAL=400*1024*1024,NT_ZIP_ARQS_GRANDE=200000,NT_ZIP_ANINHADO_MAX=3*1024*1024*1024;
+const ntCrcTab=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function ntCrcRapido(b){let c=0xffffffff;for(let i=0;i<b.length;i++)c=ntCrcTab[(c^b[i])&255]^(c>>>8);return (c^0xffffffff)>>>0}
+async function ntZipEntradaLe(a,cancelado,limite,comoBlob=false){
+  const erro=()=>Error('ZIP corrompido ou incompleto.'),blob=a.blob;
+  if(a.tamanho>limite)throw erro();
+  const dv=new DataView(await blob.slice(a.offset,a.offset+30).arrayBuffer());
+  if(dv.byteLength<30||dv.getUint32(0,true)!==0x04034b50||dv.getUint16(6,true)!==a.flags||dv.getUint16(8,true)!==a.metodo)throw erro();
+  const inicio=a.offset+30+dv.getUint16(26,true)+dv.getUint16(28,true);
+  if(inicio+a.comp>blob.size)throw erro();
+  const fatia=blob.slice(inicio,inicio+a.comp);
+  if(a.metodo===0){if(a.comp!==a.tamanho)throw erro();if(comoBlob)return fatia}
+  const partes=[];let l=0;
+  if(a.metodo===0)partes.push(new Uint8Array(await fatia.arrayBuffer()));
+  else{
+    let leitor;try{leitor=fatia.stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader()}catch(e){throw Error('Este navegador não suporta descompactação deflate-raw.')}
+    try{while(true){const r=await leitor.read();if(r.done)break;if(cancelado())throw Error('Importação cancelada.');l+=r.value.length;if(l>a.tamanho)throw erro();partes.push(r.value)}}
+    catch(e){await leitor.cancel().catch(()=>{});throw Error(cancelado()?'Importação cancelada.':'ZIP corrompido durante a descompactação.')}
+  }
+  if(a.metodo===0)l=partes[0].length;
+  if(l!==a.tamanho)throw erro();
+  if(comoBlob)return new Blob(partes);
+  const raw=new Uint8Array(l);let off=0;for(const x of partes){raw.set(x,off);off+=x.length}
+  if(ntCrcRapido(raw)!==a.crc)throw erro();
+  return raw;
+}
+async function ntZipAbre(blob,prefixo='',nivel=0,cancelado=()=>false,estado={n:0},entradas=new Map()){
+  if(nivel>5)throw Error('ZIP com muitos níveis de arquivos compactados.');
+  const erro=()=>Error('ZIP corrompido ou incompleto.');
+  const ler=async(a,b)=>{if(a<0||b>blob.size||a>b)throw erro();return new Uint8Array(await blob.slice(a,b).arrayBuffer())};
+  const cauda=await ler(Math.max(0,blob.size-65557),blob.size),d0=new DataView(cauda.buffer);let e=-1;
+  for(let p=cauda.length-22;p>=0;p--)if(d0.getUint32(p,true)===0x06054b50&&p+22+d0.getUint16(p+20,true)===cauda.length){e=p;break}
+  if(e<0)throw erro();
+  if(d0.getUint16(e+4,true)||d0.getUint16(e+6,true))throw Error('ZIP dividido em volumes não é suportado.');
+  let n=d0.getUint16(e+10,true),tam=d0.getUint32(e+12,true),ini=d0.getUint32(e+16,true);const eocd=blob.size-cauda.length+e;
+  if(n===0xffff||tam===0xffffffff||ini===0xffffffff){
+    const dl=new DataView((await ler(eocd-20,eocd)).buffer);if(dl.getUint32(0,true)!==0x07064b50)throw erro();
+    const p64=Number(dl.getBigUint64(8,true)),dr=new DataView((await ler(p64,p64+56)).buffer);if(dr.getUint32(0,true)!==0x06064b50)throw erro();
+    n=Number(dr.getBigUint64(32,true));tam=Number(dr.getBigUint64(40,true));ini=Number(dr.getBigUint64(48,true));
+    if(!Number.isSafeInteger(n+tam+ini)||ini+tam!==p64)throw erro();
+  }else if(ini+tam!==eocd)throw erro();
+  if((estado.n+=n)>NT_ZIP_ARQS_GRANDE)throw Error('O ZIP tem arquivos demais (máximo 200.000).');
+  const cd=await ler(ini,ini+tam),d=new DataView(cd.buffer),nomes=new Set(),aninhados=[];let p=0;
+  for(let i=0;i<n;i++){
+    if(p+46>cd.length||d.getUint32(p,true)!==0x02014b50)throw erro();
+    const flags=d.getUint16(p+8,true),metodo=d.getUint16(p+10,true),crc=d.getUint32(p+16,true),nl=d.getUint16(p+28,true),xl=d.getUint16(p+30,true),cl=d.getUint16(p+32,true),fim=p+46+nl+xl+cl;
+    let comp=d.getUint32(p+20,true),tamanho=d.getUint32(p+24,true),offset=d.getUint32(p+42,true);
+    if(fim>cd.length||d.getUint16(p+34,true))throw erro();
+    if(flags&0x2041)throw Error('ZIP cifrado não é suportado. Exporte sem senha.');
+    if(![0,8].includes(metodo))throw Error('Método de compactação do ZIP não suportado (use 0 ou 8).');
+    for(let x=p+46+nl;x<p+46+nl+xl;){
+      if(x+4>p+46+nl+xl)throw erro();const tag=d.getUint16(x,true),len=d.getUint16(x+2,true);
+      if(tag===1){let q=x+4;if(tamanho===0xffffffff){tamanho=Number(d.getBigUint64(q,true));q+=8}if(comp===0xffffffff){comp=Number(d.getBigUint64(q,true));q+=8}if(offset===0xffffffff){offset=Number(d.getBigUint64(q,true));q+=8}}
+      x+=4+len;if(x>p+46+nl+xl)throw erro();
+    }
+    let nome;try{nome=new TextDecoder('utf-8',{fatal:true}).decode(cd.subarray(p+46,p+46+nl))}catch(x){throw Error('Nome de arquivo do ZIP não está em UTF-8.')}
+    const caminho=ntZipCaminho(nome);if(!caminho||nomes.has(caminho))throw Error('ZIP contém caminhos vazios ou repetidos.');nomes.add(caminho);
+    if(!nome.endsWith('/')){
+      if(![comp,tamanho,offset].every(Number.isSafeInteger))throw erro();
+      const a={blob,metodo,crc,comp,tamanho,offset,flags};
+      if(/\.zip$/i.test(caminho))aninhados.push([caminho,a]);else{if(entradas.has(prefixo+caminho))throw erro();entradas.set(prefixo+caminho,a)}
+    }
+    p=fim;
+  }
+  if(p!==cd.length)throw erro();
+  for(const [caminho,a] of aninhados){
+    if(cancelado())throw Error('Importação cancelada.');
+    await ntZipAbre(await ntZipEntradaLe(a,cancelado,NT_ZIP_ANINHADO_MAX,true),prefixo+caminho.replace(/\.zip$/i,'')+'/',nivel+1,cancelado,estado,entradas);
+  }
+  return entradas;
+}
 function ntNotionRef(base,ref){
   if(!ref||/^[a-z][\w+.-]*:|^[\\/]/i.test(ref))return '';
   try{return ntZipCaminho(base.slice(0,base.lastIndexOf('/')+1)+decodeURIComponent(ref.split(/[?#]/)[0]))}catch(e){return ''}
@@ -4850,8 +4950,24 @@ async function ntNotionImporta(arquivo,alvo=''){
   try{
     if(alvo){if(!pgAchar(alvo)?.doc){try{const p=await SyncNotas.abrirPagina(alvo);if(NT.pagina===alvo&&!NT.sujo)NT.paginaDados=p}catch(e){}}if(!pgAchar(alvo))throw Error('Página não encontrada.')}
     if(alvo&&!/\.zip$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip para atualizar.');
-    if(arquivo.size>NT_ZIP_MAX)throw Error('O arquivo deve ter no máximo 200 MB.');
-    const zip=/\.zip$/i.test(arquivo.name),arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
+    const zip=/\.zip$/i.test(arquivo.name);
+    if(!zip&&arquivo.size>NT_ZIP_HTML_MAX)throw Error('O arquivo .html deve ter no máximo 100 MB. Exporte o ZIP do Notion.');
+    // 1.67: ZIP acima de NT_ZIP_MEM (200 MB) é lido do disco em pedaços; só as páginas HTML e uma imagem por vez entram na memória.
+    const grande=zip&&arquivo.size>NT_ZIP_MEM;let indiceGrande=null,arqs;
+    if(grande){
+      status.textContent='Lendo o índice do ZIP grande…';
+      indiceGrande=await ntZipAbre(arquivo,'',0,()=>cancelado);arqs=new Map();let totalHtml=0;
+      for(const [k,a] of indiceGrande){
+        if(!/\.html?$/i.test(k))continue;
+        checa();if((totalHtml+=a.tamanho)>NT_ZIP_HTML_TOTAL||a.tamanho>NT_ZIP_HTML_MAX)throw Error('As páginas HTML do ZIP somam mais de 400 MB. Exporte uma página menor.');
+        arqs.set(k,await ntZipEntradaLe(a,()=>cancelado,NT_ZIP_HTML_MAX));
+      }
+    }else arqs=zip?await ntZipLer(new Uint8Array(await arquivo.arrayBuffer()),undefined,'',0,()=>cancelado):new Map([[arquivo.name,new Uint8Array(await arquivo.arrayBuffer())]]);
+    const lerImg=async c=>{
+      if(!grande)return arqs.get(c);
+      const a=indiceGrande.get(c);if(!a||a.tamanho>NT_IMG_LIM)return null;   // imagem ausente ou acima de 25 MB: não importada (conta como falha), o resto segue
+      try{return await ntZipEntradaLe(a,()=>cancelado,NT_IMG_LIM)}catch(e){checa();return null}
+    };
     if(!zip&&!/\.html?$/i.test(arquivo.name))throw Error('Escolha um arquivo .zip ou .html.');
     const htmls=[...arqs].filter(([k])=>/\.html?$/i.test(k)).sort(([a],[b])=>a.split('/').length-b.split('/').length||a.localeCompare(b));
     if(!htmls.length)throw Error('Nenhuma página HTML encontrada no arquivo.');
@@ -4877,7 +4993,7 @@ async function ntNotionImporta(arquivo,alvo=''){
       const entrada=htmls.find(([k])=>k===escolhida.caminho);
       pags=[{...ntNotionConverte(new TextDecoder().decode(entrada[1]),entrada[0],ids),id:alvo}];
     }
-    for(const p of pags)for(const img of p.imagens){const b=arqs.get(img.caminho);if(b?.length>NT_IMG_LIM)throw Error('Cada imagem deve ter no máximo 25 MB.')}
+    if(!grande)for(const p of pags)for(const img of p.imagens){const b=arqs.get(img.caminho);if(b?.length>NT_IMG_LIM)throw Error('Cada imagem deve ter no máximo 25 MB.')}
     let soTexto=false;
     if((navigator.onLine===false||BCBR.semRede)&&pags.some(p=>p.imagens.length)){
       status.textContent='As imagens precisam de conexão. Deseja importar só o texto?';
@@ -4889,7 +5005,7 @@ async function ntNotionImporta(arquivo,alvo=''){
       p.hashes={};
       for(let j=0;j<p.imagens.length;j++){
         checa();status.textContent=`Importando… página ${i+1}/${pags.length}, imagem ${j+1}/${p.imagens.length}`;
-        const img=p.imagens[j],raw=arqs.get(img.caminho);
+        const img=p.imagens[j],raw=await lerImg(img.caminho);checa();
         if(!raw){falhas++;continue}
         try{
           const hash=await ntNotionHash(raw);checa();let src=cache.get(hash);
@@ -4918,6 +5034,63 @@ async function ntNotionImporta(arquivo,alvo=''){
     return {paginas:novas.length,enviadas,falhas,simplificados};
   }catch(e){if(ov.isConnected){status.textContent=(cancelado?'Importação cancelada. Nenhuma página criada.':e.message||'Não consegui importar este arquivo.')+(enviadas?` ${enviadas} imagens já foram enviadas.`:'');acoes.replaceChildren();const b=document.createElement('button');b.type='button';b.textContent='Fechar';b.onclick=()=>ntModalFecha(ov);acoes.appendChild(b)}return null}
   finally{NT.importando=false}
+}
+
+// ===== 1.67: padronizar "achado + conclusão" (estilo Notas USG/TC) =====
+// Em cada toggle de descrição (ex.: Esteatose), as frases soltas viram lista de marcadores e a conclusão (parágrafo com recuo) vira
+// sub-marcador DENTRO do item do achado. Só mexe em seções que já têm esse padrão (achado + conclusão recuada), nunca em laudos
+// padrão, pareceres, exames, acompanhamentos ou estudos. Idempotente: o que já é lista não é tocado.
+const NT_PAD_FORA=/^\s*(laudos?\s+padr|parecer|exames?\b|acompanhar|casos\b|estudos?\b|n[aãAÃ]o\s+conformidades|procedimento|marca[cç][aãAÃ]o)/i;
+const ntPadTexto=n=>n?.text||(n?.content||[]).map(ntPadTexto).join('');
+function ntPadParagrafos(filhos){
+  const out=[];let run=[],conv=0;
+  const fecha=()=>{
+    if(!run.some(p=>ntPadTexto(p).trim())){out.push(...run);run=[];return}   // só parágrafos vazios: deixa como está
+    const raiz=[],pilha=[];
+    for(const p of run){
+      if(!ntPadTexto(p).trim())continue;
+      const lv=Math.min(Math.max(0,+p.attrs?.indent||0),pilha.length),item={type:'listItem',content:[{type:'paragraph',content:p.content}]};
+      if(lv===0)raiz.push(item);
+      else{const pai=pilha[lv-1];let sub=pai.content[pai.content.length-1];if(sub.type!=='bulletList'){sub={type:'bulletList',content:[]};pai.content.push(sub)}sub.content.push(item)}
+      pilha.length=lv;pilha[lv]=item;conv++;
+    }
+    out.push({type:'bulletList',content:raiz});run=[];
+  };
+  for(const k of filhos){if(k.type==='paragraph')run.push(k);else{fecha();out.push(k)}}
+  fecha();return {filhos:out,conv};
+}
+function ntPadVisita(n){
+  let conv=0;
+  const r=x=>{
+    if(!x||!Array.isArray(x.content))return x;
+    if(x.type==='detailsContent'){const q=ntPadParagrafos(x.content);conv+=q.conv;x={...x,content:q.filhos}}
+    return {...x,content:x.content.map(r)};
+  };
+  const novo=r(n);return {novo,conv};
+}
+const ntPadTemConclusao=n=>{let ok=false;(function v(x,dentro){if(ok||!x)return;if(x.type==='paragraph'&&dentro&&(+x.attrs?.indent||0)>=1&&ntPadTexto(x).trim()){ok=true;return}for(const f of x.content||[])v(f,dentro||x.type==='detailsContent')})(n,false);return ok};
+function ntPadronizaBlocos(blocos,agora=ntAgora()){
+  let convertidos=0,secoes=0;
+  const out=blocos.map(b=>{
+    const n=b.conteudo;
+    if(n?.type!=='details'||NT_PAD_FORA.test(ntPadTexto(n.content?.[0]))||!ntPadTemConclusao(n))return b;
+    const {novo,conv}=ntPadVisita(n);if(!conv)return b;
+    convertidos+=conv;secoes++;return {...b,atualizado:agora,conteudo:novo};
+  });
+  return {blocos:out,convertidos,secoes};
+}
+function ntPadroniza(id){
+  if(NT.pagina===id&&NT.sujo)ntSalvaDoc();
+  const p=pgAchar(id);if(!p?.doc?.blocos?.length){toast('Abra a página antes de padronizar.');return null}
+  if(NT.pagina===id&&NT.sujo){toast('Não consegui salvar a edição atual. Nada foi alterado.');return null}
+  const r=ntPadronizaBlocos(p.doc.blocos);
+  if(!r.convertidos){toast('Nada para padronizar: os achados já estão em lista.');return r}
+  const schema=ntSchema();if(!schema){toast('Abra as Notas antes de padronizar.');return null}
+  try{for(const b of r.blocos)schema.nodeFromJSON(b.conteudo).check()}catch(e){toast('A padronização geraria um documento inválido. Nada foi alterado.');return null}
+  const agora=ntAgora();
+  if(!pgMuda(l=>{const x=l.find(q=>q.id===id);x.doc={v:1,blocos:r.blocos};x.atualizado=agora})){toast('Sem espaço para salvar a padronização neste aparelho.');return null}
+  if(NT.pagina===id&&NT.ed){ntAplicaNoEditor(NT,r.blocos,true);NT.shown=r.blocos;NT.sujo=false;clearTimeout(NT.timer)}
+  toast(`Padronizado: ${r.convertidos} frases em ${r.secoes} seções. Ctrl+Z desfaz; Versões guarda a anterior.`);return r;
 }
 
 // ===== Quick Switcher de páginas (Ctrl+Shift+K): salto rápido estilo Notion =====

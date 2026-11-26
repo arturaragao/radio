@@ -369,7 +369,9 @@ async function ntInsereImagem(arquivo,pos,c=NT){
   catch(e){tira();toast(e?.chave?'A chave do GitHub foi recusada (401).':e?.status?`Não consegui enviar a imagem (GitHub ${e.status}).`:'Não consegui enviar a imagem (precisa de conexão).');return}
   const p=ntPhPos(ed.state,id);if(p==null){toast('A imagem subiu, mas o lugar dela foi apagado.');return}
   const tr=ed.state.tr.setMeta(NT_PH(),{remove:id}),no=ed.state.schema.nodes.image.create({src:'./img/'+nome}),antes=tr.doc.resolve(p).nodeBefore;
-  if(antes?.type.name==='paragraph'&&!antes.content.size)tr.replaceWith(p-antes.nodeSize,p,no);else tr.insert(p,no);
+  let posNo=p;
+  if(antes?.type.name==='paragraph'&&!antes.content.size){posNo=p-antes.nodeSize;tr.replaceWith(posNo,p,no)}else tr.insert(p,no);
+  try{tr.setSelection(TT.pm.state.NodeSelection.create(tr.doc,posNo))}catch(x){}   // 1.67: a imagem recém-anexada fica selecionada
   ed.view.dispatch(tr.scrollIntoView());toast('Imagem anexada.');
 }
 function ntEscolheImagem(c=NT){
@@ -528,7 +530,23 @@ function ntDivideToggle(ed){
   if(document.querySelector('.nt-slash'))return false;
   const {state,view}=ed,s=state.selection,$=s.$from;
   if($.parent.type.name!=='detailsSummary'||!$.sameParent(s.$to))return false;
-  if(s.empty&&$.parentOffset===$.parent.content.size)return false;
+  if(s.empty&&$.parentOffset===$.parent.content.size){
+    // 1.67: Enter no FIM do título: toggle sem conteúdo (ou fechado) gera outro toggle logo abaixo, como lista gera outro item; título vazio num toggle vazio sai dele.
+    // Toggle aberto com conteúdo mantém o comportamento de ir para dentro dele.
+    const det=$.node($.depth-1),cont=det.lastChild,N=state.schema.nodes,ini=$.before($.depth-1);
+    const vazio=cont.childCount===1&&cont.firstChild.type.name==='paragraph'&&!cont.firstChild.content.size;
+    const dom=view.nodeDOM(ini),aberto=!(dom instanceof Element)||dom.classList.contains('is-open');
+    if(!vazio&&aberto)return false;
+    const tr=state.tr,fim=ini+det.nodeSize;
+    if(vazio&&!$.parent.content.size){
+      if($.node($.depth-2).canReplaceWith($.index($.depth-2),$.index($.depth-2)+1,N.paragraph)){tr.replaceWith(ini,fim,N.paragraph.create());tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ini+1));view.dispatch(tr.scrollIntoView());return true}
+      return false;
+    }
+    const novo=N.details.create({...det.attrs,id:null},[N.detailsSummary.create(null),N.detailsContent.create(null,[N.paragraph.create()])]);
+    tr.insert(fim,novo);
+    try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,fim+2))}catch(x){}
+    view.dispatch(tr.scrollIntoView());return true;
+  }
   const tr=state.tr;
   if(!s.empty)tr.delete(s.from,s.to);
   const pos=tr.selection.from,$p=tr.doc.resolve(pos),sum=$p.parent,det=$p.node($p.depth-1);
@@ -788,6 +806,12 @@ function ntEditor(c,blocos,aoMudar){
   c.ed=new TT.Editor({element:c.el,extensions:ntExtensoes(c),content:ntDocumento(blocos),
     editorProps:{attributes:{class:'nt-pm','aria-label':c.pagina&&c.pagina!=='notas'?'Página':'Notas',spellcheck:'true'},
       transformPastedHTML:h=>h.replace(/<img\b(?![^>]*\b(?:data-nt-)?src="\.\/img\/)[^>]*>/gi,''),
+      // 1.67: quebra de linha/parágrafo vazio no FIM do que foi copiado (PACS, Word, navegador) não vira linha nova: o cursor fica no fim da frase colada.
+      transformPasted:s=>{
+        let c=s.content;const {Slice}=TT.pm.model;
+        while(c.childCount>1&&c.lastChild.type.name==='paragraph'&&!c.lastChild.content.size)c=c.cut(0,c.size-c.lastChild.nodeSize);
+        return c===s.content?s:new Slice(c,s.openStart,c.lastChild.isTextblock?1:0);
+      },
       handlePaste:(v,e)=>{
         const cd=e.clipboardData;if(!cd)return false;
         if(/data-nt-src="\.\/img\//.test(cd.getData('text/html')||''))return false;   // 1.56: cópia das próprias Notas (com imagens): o HTML recria os blocos de imagem
@@ -1130,7 +1154,7 @@ function ntPaginaMenu(id,x,y){
   if(!pgAchar(id))return;
   ntPgMenuFecha?.();
   const m=document.createElement('div');m.id='nt_pg_menu';m.className='nt-menu-bloco nt-pg-menu';m.setAttribute('role','menu');m.setAttribute('aria-label','Página');
-  m.innerHTML='<button type="button" role="menuitem" data-versoes>Versões</button><button type="button" role="menuitem" data-hist>Histórico</button><button type="button" role="menuitem" data-atalhos>Atalhos</button><button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
+  m.innerHTML='<button type="button" role="menuitem" data-versoes>Versões</button><button type="button" role="menuitem" data-hist>Histórico</button><button type="button" role="menuitem" data-atalhos>Atalhos</button><button type="button" role="menuitem" data-notion>Atualizar do Notion (.zip)</button><button type="button" role="menuitem" data-padroniza title="Frases do achado viram lista e a conclusão fica dentro do item">Padronizar achado + conclusão</button><button type="button" role="menuitem" data-excluir>Excluir</button>';
   document.body.appendChild(m);
   const fecha=()=>{m.remove();document.removeEventListener('pointerdown',fora,true);document.removeEventListener('keydown',tecla,true);ntPgMenuFecha=null};ntPgMenuFecha=fecha;
   const fora=e=>{if(!m.contains(e.target))fecha()},tecla=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fecha()}};
@@ -1141,6 +1165,7 @@ function ntPaginaMenu(id,x,y){
     if(e.target.closest('[data-hist]')){fecha();ntHistAbre(NT);return}
     if(e.target.closest('[data-atalhos]')){fecha();ntAtalhosAbre();return}
     if(e.target.closest('[data-notion]')){fecha();ntNotionEscolhe(id);ntPainelAbre(id);return}
+    if(e.target.closest('[data-padroniza]')){fecha();ntPadroniza(id);return}
     if(e.target.closest('[data-excluir]')){m.innerHTML='<span>Excluir esta página?</span><button type="button" data-sim>Excluir</button><button type="button" data-nao>Cancelar</button>';posiciona();m.querySelector('[data-nao]').focus()}
     else if(e.target.closest('[data-sim]')){fecha();ntPaginaExclui(id)}
     else if(e.target.closest('[data-nao]'))fecha();

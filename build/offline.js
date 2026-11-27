@@ -111,6 +111,7 @@ async function ofLigar(){
   OF.baixando=true;OF.prog='';OF.pct=0;ofPintaBtn();ofPinta();
   try{
     try{localStorage.setItem(OF_LS,'1')}catch(e){}
+    navigator.storage?.persist?.().catch(()=>{});
     if('serviceWorker' in navigator){
       let reg=await ofPrazo(navigator.serviceWorker.getRegistration(),2000);
       if(!reg)reg=await ofPrazo(navigator.serviceWorker.register('./sw.js'),4000);
@@ -165,5 +166,9 @@ setTimeout(()=>{
   ofPintaBtn();ofCalculaTamanho();
   const bt=document.getElementById('of_btn');
   if(bt){bt.addEventListener('mouseenter',()=>ofCalculaTamanho());bt.addEventListener('focus',()=>ofCalculaTamanho())}
-  if(ofAtivo())ofAtualizaFundo();
+  if(ofAtivo()){
+    navigator.storage?.persist?.().catch(()=>{});
+    if('serviceWorker' in navigator)navigator.serviceWorker.getRegistration().then(r=>{if(!r)navigator.serviceWorker.register('./sw.js').catch(()=>{})}).catch(()=>{});
+    ofAtualizaFundo();
+  }
 },1000);

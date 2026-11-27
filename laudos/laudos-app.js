@@ -100,7 +100,6 @@ function htmlEstrutura(comTopoBar = true) {
       <button type="button" class="bl-pilula" data-periodo="12m" title="Últimos 12 meses">12m</button>
       <button type="button" class="bl-pilula" id="bl_pFav" title="Só favoritos">★</button>
       <button type="button" class="bl-pilula" id="bl_pImg" title="Só com imagem-chave">🖼</button>
-      <button type="button" class="bl-pilula" id="bl_pNota" title="Só com anotação pessoal">📝</button>
       <span id="bl_facetas"></span>
       <select id="bl_ordem" title="Ordenar">
         <option value="recente">Mais recentes</option>
@@ -219,7 +218,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
   drive.configurar(lerLocal("app.clienteId", "") || CONFIG.clienteId);
   drive.prepararLogin();
 
-  let F = { ...PADRAO, ...lerLocal("banco.f", {}) };
+  let F = { ...PADRAO, ...lerLocal("banco.f", {}), comNota: false };
   let vista = "laudos";
   let modoLista = lerLocal("app.modoLista2", "exame"); // exame (por modalidade) | cartoes
   let estudo = lerLocal("app.estudo", false);
@@ -292,7 +291,6 @@ export async function montarBancoLaudos(raiz, host = {}) {
     );
     $("pFav").classList.toggle("on", !!F.fav);
     $("pImg").classList.toggle("on", !!F.img);
-    $("pNota").classList.toggle("on", !!F.comNota);
     $("bModo").textContent = modoLista === "exame" ? "Por modalidade" : "Cartões";
     $("bModo").classList.toggle("on", modoLista === "exame");
   }
@@ -853,6 +851,10 @@ export async function montarBancoLaudos(raiz, host = {}) {
         if (x.trazidos) partes.push(`${x.trazidos} da extensão`);
         if (x.levados || x.apagadosLa) partes.push(`${x.levados + x.apagadosLa} para a extensão`);
       }
+      if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
+        await drive.renovarSilencioso();
+        estadoNuvem();
+      }
       if (!drive.conectado() && manual && drive.configurado()) await drive.conectar();
       if (drive.conectado()) {
         const n = await sincronizar(drive.adaptador, msg);
@@ -1032,7 +1034,6 @@ export async function montarBancoLaudos(raiz, host = {}) {
   raiz.querySelectorAll("[data-periodo]").forEach((b) => b.addEventListener("click", () => { F.periodo = b.dataset.periodo; F.de = F.ate = ""; buscar(); }, opt));
   $("pFav").addEventListener("click", () => { F.fav = !F.fav; buscar(); }, opt);
   $("pImg").addEventListener("click", () => { F.img = !F.img; buscar(); }, opt);
-  $("pNota").addEventListener("click", () => { F.comNota = !F.comNota; buscar(); }, opt);
   $("bModo").addEventListener("click", () => { modoLista = modoLista === "cartoes" ? "exame" : "cartoes"; gravarLocal("app.modoLista2", modoLista); buscar(); }, opt);
   $("faixa").addEventListener("click", async (e) => {
     const a = e.target.dataset.faixa;
@@ -1175,6 +1176,10 @@ export async function montarBancoLaudos(raiz, host = {}) {
   await esvaziarVencidos();
   await buscar();
   await refazerResumos(false);
+  if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
+    await drive.renovarSilencioso();
+    estadoNuvem();
+  }
   sincronizarTudo();
   intervaloSync = setInterval(() => { if (document.visibilityState === "visible") sincronizarTudo(); }, 5 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sincronizarTudo(); }, opt);

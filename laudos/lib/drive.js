@@ -16,10 +16,28 @@ const gravar = (k, v) => { try { v == null ? localStorage.removeItem(k) : localS
 
 let clientId = "";
 let token = ler("drive.token");
+let email = ler("drive.email") || "";
+let timerRenova = null;
+let renovacaoEmCurso = null;
 export function configurar(id) { clientId = String(id || "").trim(); }
 export const configurado = () => !!clientId;
 export const conectado = () => !!token && Date.now() < token.expira - 60e3;
 export const jaUsou = () => !!ler("drive.usou");
+
+function agendarRenovacao() {
+  clearTimeout(timerRenova);
+  if (!token || !clientId) return;
+  const ms = Math.max(60e3, token.expira - Date.now() - 5 * 60e3);
+  timerRenova = setTimeout(() => { renovarSilencioso().catch(() => {}); }, ms);
+}
+async function guardarEmail() {
+  if (email || !token?.valor) return;
+  try {
+    const r = await fetch(`${API}/about?fields=user(emailAddress)`, { headers: { Authorization: `Bearer ${token.valor}` } });
+    if (r.ok) { const j = await r.json(); if (j?.user?.emailAddress) { email = j.user.emailAddress; gravar("drive.email", email); } }
+  } catch {}
+}
+if (conectado()) agendarRenovacao();
 
 let gis = null;
 function carregarGis() {
@@ -40,12 +58,14 @@ export async function conectar() {
   await carregarGis();
   return new Promise((ok, falha) => {
     const c = google.accounts.oauth2.initTokenClient({
-      client_id: clientId, scope: ESCOPO,
+      client_id: clientId, scope: ESCOPO, ...(email ? { hint: email } : {}),
       callback: (r) => {
         if (r.error) return falha(new Error(r.error_description || r.error));
         token = { valor: r.access_token, expira: Date.now() + (+r.expires_in || 3600) * 1000 };
         gravar("drive.token", token);
         gravar("drive.usou", true);
+        agendarRenovacao();
+        guardarEmail();
         ok();
       },
       error_callback: (e) => falha(new Error(e?.type === "popup_closed" ? "a janela do Google foi fechada" : e?.message || e?.type || "login cancelado")),
@@ -54,10 +74,43 @@ export async function conectar() {
   });
 }
 
+export async function renovarSilencioso() {
+  if (conectado()) return true;
+  if (!clientId || !jaUsou() || navigator.onLine === false) return false;
+  if (renovacaoEmCurso) return renovacaoEmCurso;
+  renovacaoEmCurso = (async () => {
+    try {
+      await carregarGis();
+      return await new Promise((ok) => {
+        let fim = false;
+        const t = setTimeout(() => { if (!fim) { fim = true; ok(false); } }, 10000);
+        const c = google.accounts.oauth2.initTokenClient({
+          client_id: clientId, scope: ESCOPO, ...(email ? { hint: email } : {}),
+          callback: (r) => {
+            if (fim) return;
+            fim = true; clearTimeout(t);
+            if (r.error || !r.access_token) return ok(false);
+            token = { valor: r.access_token, expira: Date.now() + (+r.expires_in || 3600) * 1000 };
+            gravar("drive.token", token);
+            gravar("drive.usou", true);
+            agendarRenovacao();
+            guardarEmail();
+            ok(true);
+          },
+          error_callback: () => { if (!fim) { fim = true; clearTimeout(t); ok(false); } },
+        });
+        c.requestAccessToken({ prompt: "none" });
+      });
+    } catch { return false; }
+  })().finally(() => { renovacaoEmCurso = null; });
+  return renovacaoEmCurso;
+}
+
 export function desconectar() {
+  clearTimeout(timerRenova);
   try { if (token) google?.accounts?.oauth2?.revoke(token.valor, () => {}); } catch {}
-  token = null;
-  gravar("drive.token", null); gravar("drive.usou", null); gravar("drive.pastas", null);
+  token = null; email = "";
+  gravar("drive.token", null); gravar("drive.usou", null); gravar("drive.email", null); gravar("drive.pastas", null);
 }
 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -496,8 +496,27 @@ function ntLinhaViraToggle({tr,dispatch,state}){
   }
   tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,pos+2+$.parentOffset));return true;
 }
+function ntToggleViraLista({tr,dispatch,state}){
+  const $=tr.selection.$from,sum=$.parent,N=state.schema.nodes;
+  if(sum.type.name!=='detailsSummary')return false;
+  const d=$.depth-1,det=$.node(d),pai=$.node(d-1),idx=$.index(d-1);
+  if(!pai.canReplaceWith(idx,idx+1,N.bulletList))return false;
+  if(!dispatch)return true;
+  const ini=$.before(d),cont=det.lastChild,itemFilhos=[N.paragraph.create(null,sum.content)],extras=[];
+  const vazio=cont.childCount===1&&cont.firstChild.type.name==='paragraph'&&!cont.firstChild.content.size;
+  if(!vazio)cont.forEach(n=>{
+    if(['paragraph','bulletList','orderedList','taskList','blockquote'].includes(n.type.name))itemFilhos.push(n);else extras.push(n);
+  });
+  const lista=N.bulletList.create(null,[N.listItem.create(null,itemFilhos)]);
+  tr.replaceWith(ini,ini+det.nodeSize,[lista,...extras]);
+  try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ini+3+$.parentOffset))}catch(e){}
+  return true;
+}
 function ntRegraToggle(){
-  return TT.Extension.create({name:'regraToggle',addInputRules(){return [new TT.InputRule({find:/^\s*>\s$/,handler:({range,chain})=>{chain().deleteRange(range).command(ntLinhaViraToggle).run()}})]}});
+  return TT.Extension.create({name:'regraToggle',addInputRules(){return [
+    new TT.InputRule({find:/^\s*>\s$/,handler:({range,chain})=>{chain().deleteRange(range).command(ntLinhaViraToggle).run()}}),
+    new TT.InputRule({find:/^\s*-\s$/,handler:({state,range,chain})=>{if(state.selection.$from.parent.type.name!=='detailsSummary')return null;chain().deleteRange(range).command(ntToggleViraLista).run()}})
+  ]}});
 }
 function ntAtalhos(c){
   return TT.Extension.create({name:'atalhosNotas',priority:1000,addKeyboardShortcuts(){return {
@@ -509,9 +528,21 @@ function ntAtalhos(c){
       return false;
     },
     'Backspace':()=>ntApagaToggleVazio(this.editor),
+    'Delete':()=>ntToggleParaParagrafo(this.editor),
     'Enter':()=>ntDivideToggle(this.editor),
     'Mod-Alt-t':()=>ntTodosNo(c),'Mod-Enter':()=>ntToggleCursor(c),
     'Tab':()=>ntTab(this.editor,false),'Shift-Tab':()=>ntTab(this.editor,true)}}});
+}
+function ntToggleParaParagrafo(ed){
+  const {state,view}=ed,s=state.selection,$=s.$from;
+  if(!s.empty||$.parent.type.name!=='detailsSummary'||$.parentOffset!==0||$.parent.content.size)return false;
+  const det=$.node($.depth-1),ini=$.before($.depth-1),cont=det.lastChild,N=state.schema.nodes;
+  let vazio=true;cont.forEach(n=>{if(n.type.name!=='paragraph'||n.content.size)vazio=false});
+  const tr=state.tr,nos=[N.paragraph.create()];
+  if(!vazio)cont.forEach(n=>nos.push(n));
+  tr.replaceWith(ini,ini+det.nodeSize,nos);
+  try{tr.setSelection(TT.pm.state.TextSelection.create(tr.doc,ini+1))}catch(e){}
+  view.dispatch(tr.scrollIntoView());return true;
 }
 // Backspace no início do título de um toggle VAZIO (sem título e só parágrafos vazios dentro) apaga o toggle numa transação (Ctrl+Z traz de volta) e põe o
 // cursor no fim do bloco anterior. Com conteúdo, vale o comportamento do Tiptap: o título vira parágrafo e o conteúdo sobe (também um passo só no Ctrl+Z).
@@ -645,11 +676,12 @@ const ntSlash=c=>ntSugestao(c,{nome:'slashNotas',char:'/',
 // Os botões não roubam o foco: mousedown é cancelado (só o campo do link recebe foco). Sem bolha ao selecionar texto (1.41).
 const NT_BARRA=[
   ['bold','<b>B</b>','Negrito (Ctrl+B)'],['italic','<i>I</i>','Itálico (Ctrl+I)'],['underline','<u>U</u>','Sublinhado (Ctrl+U)'],['strike','<s>S</s>','Tachado (Ctrl+Shift+S)'],
-  ['cor','A▾','Cor do texto e realce (Ctrl+Shift+H aplica a cor padrão)'],null,
+  ['cor','A▾','Cor do texto e realce (Ctrl+Shift+H aplica a cor padrão)'],
+  ['toggle','▸','Toggle (> )'],['ul','•≡','Lista com marcadores (- )'],['ol','1≡','Lista numerada (1. )'],null,
   ['frase','✚<span class="nt-bt-t"> Frase</span>','Salvar o texto selecionado como frase-padrão (insira com /Frase)'],['frases','📋','Gerenciar frases-padrão'],['hist','🕘<span class="nt-bt-t"> Histórico</span>','Histórico de versões das notas'],null,
   ['atalhos','⌨<span class="nt-bt-t"> Atalhos</span>','Atalhos e funções (Ctrl+/)']];
 const NT_BARRA_OCULTA=['frase','frases','hist','atalhos'];   // 1.49/1.50: escondidos da barra (Histórico e Atalhos foram para o menu ⋯)
-const NT_BARRA_ATIVO={bold:'bold',italic:'italic',underline:'underline',strike:'strike'};   // (1.43: títulos, link, listas, checklist e toggle saíram da barra; ficam os atalhos, o menu "/" e o painel de Atalhos)
+const NT_BARRA_ATIVO={bold:'bold',italic:'italic',underline:'underline',strike:'strike',toggle:'details',ul:'bulletList',ol:'orderedList'};
 // Paleta: cada cor é uma linha com amostra grande na cor de verdade (A para texto, quadrado cheio para fundo), o nome e a estrela que a faz padrão do Ctrl+Shift+H.
 // (As variáveis --ntc-/--ntb- valem também em .nt-barra no CSS: a paleta fica fora do .nt-ed.)
 const ntPaletaHtml=tipo=>NT_CORES.map(([k,n])=>`<div class="nt-cor"><button type="button" class="nt-sw" data-cor="${tipo}:${k}" title="${n}" aria-label="${tipo==='texto'?'Texto':'Fundo'} ${n}"><span class="nt-amo ${tipo}" style="${tipo==='texto'?`color:var(--ntc-${k})`:`background:var(--ntb-${k})`}">${tipo==='texto'?'A':''}</span><span class="nt-nome">${n}</span></button><button type="button" class="nt-star" data-padrao="${tipo}:${k}" title="Definir como cor padrão do Ctrl+Shift+H" aria-label="Definir ${tipo==='texto'?'texto':'fundo'} ${n} como padrão do Ctrl+Shift+H" aria-pressed="false">☆</button></div>`).join('');
@@ -678,6 +710,9 @@ function ntBarra(c){
     if(bt.dataset.cor){if(bt.dataset.cor==='nenhuma')ntSemCor(c.ed);else{const[t,k]=bt.dataset.cor.split(':');ntAplicaCor(c.ed,t,k)}pal.hidden=true;ntBarraPinta(c);return}
     if(!m)return;
     if(m==='bold')ch().toggleBold().run();else if(m==='italic')ch().toggleItalic().run();else if(m==='underline')ch().toggleUnderline().run();else if(m==='strike')ch().toggleStrike().run();
+    else if(m==='toggle'){if(c.ed.isActive('details'))ch().unsetDetails().run();else ch().command(ntLinhaViraToggle).run()}
+    else if(m==='ul'){if(c.ed.state.selection.$from.parent.type.name==='detailsSummary')ch().command(ntToggleViraLista).run();else ch().toggleBulletList().run()}
+    else if(m==='ol')ch().toggleOrderedList().run();
     else if(m==='cor'){if(pal.hidden){pop.hidden=true;ntPaletaPinta(c);ntPopPos(pal,bt)}else pal.hidden=true;return}
     else if(m==='atalhos'){ntAtalhosAbre();return}
     else if(m==='frase'){ntFraseSalvaSel(c);return}

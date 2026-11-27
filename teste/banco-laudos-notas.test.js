@@ -43,13 +43,13 @@ test("build do Radio 1.68.0 inclui Banco de Laudos em Notas, CSS escopado e cach
   const swJs = fs.readFileSync(path.join(R, "sw.js"), "utf8");
   const versao = fs.readFileSync(path.join(R, "versao.txt"), "utf8").trim();
 
-  assert.equal(versao, "1.71.0");
+  assert.equal(versao, "1.72.0");
   assert.match(appJs, /NT_LAUDOS='banco-laudos'/);
   assert.match(appJs, /function ntLaudosAbre\(/);
   assert.match(appJs, /Banco de Laudos/);
   assert.match(appJs, /c\.buscaAbertos/);
   assert.match(indexHtml, /\.bl-root\{/);
-  assert.match(swJs, /bcbr-1\.71\.0/);
+  assert.match(swJs, /bcbr-1\.72\.0/);
   assert.match(swJs, /\.\/laudos\/laudos-app\.js/);
 });
 

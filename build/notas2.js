@@ -51,10 +51,14 @@ function ntBuscaPinta(c){
 // Abre os toggles fechados em volta da ocorrência atual (só estado de tela) e rola até ela.
 function ntBuscaMostra(c){
   const e=ntBuscaEstado(c),m=e?.ms[e.sel];if(!m)return;
+  if(!c.buscaAbertos)c.buscaAbertos=new Set();
   const $=c.ed.state.doc.resolve(m.from);
   for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'){
     const dom=c.ed.view.nodeDOM($.before(d));
-    if(dom instanceof Element&&!dom.classList.contains('is-open')){ntPoeAberto(dom,true);ntAbertoSalva($.node(d).attrs.id,true)}
+    if(dom instanceof Element&&!dom.classList.contains('is-open')){
+      ntPoeAberto(dom,true);
+      const id=$.node(d).attrs.id;if(id)c.buscaAbertos.add(id);
+    }
   }
   const el=c.el.querySelector('.nt-busca-hit.atual');if(el)el.scrollIntoView({block:'center',inline:'nearest'});
 }
@@ -66,7 +70,7 @@ function ntBuscaAbre(c){
   if(!c?.ed)return;
   if(!c.buscaEl){
     const b=document.createElement('div');b.className='nt-busca';b.setAttribute('role','search');
-    b.innerHTML=`<div class="nt-busca-c"><input type="text" class="nt-busca-in" placeholder="Buscar na página" aria-label="Buscar nas notas" autocomplete="off" spellcheck="false"><span class="nt-busca-n" aria-live="polite"></span><button type="button" data-b="-1" title="Anterior (Shift+Enter)" aria-label="Ocorrência anterior">↑</button><button type="button" data-b="1" title="Próxima (Enter)" aria-label="Próxima ocorrência">↓</button><button type="button" data-b="x" title="Fechar (Esc)" aria-label="Fechar busca">✕</button></div>`;
+    b.innerHTML=`<div class="nt-busca-c"><span class="nt-busca-ico" aria-hidden="true">🔍</span><input type="text" class="nt-busca-in" placeholder="Buscar na página" aria-label="Buscar nas notas" autocomplete="off" spellcheck="false"><span class="nt-busca-n" aria-live="polite"></span><span class="nt-busca-sep" aria-hidden="true"></span><button type="button" data-b="-1" title="Anterior (Shift+Enter)" aria-label="Ocorrência anterior">↑</button><button type="button" data-b="1" title="Próxima (Enter)" aria-label="Próxima ocorrência">↓</button><button type="button" data-b="x" title="Fechar (Esc)" aria-label="Fechar busca">✕</button></div>`;
     const i=b.querySelector('input');
     i.addEventListener('input',()=>{ntBuscaSet(c,i.value,0);ntBuscaPinta(c);ntBuscaMostra(c)});
     i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();ntBuscaVai(c,e.shiftKey?-1:1)}});
@@ -80,7 +84,22 @@ function ntBuscaAbre(c){
 function ntBuscaFecha(c){
   if(!c?.buscaEl)return;
   const b=c.buscaEl;c.buscaEl=null;b.remove();
-  if(c.ed){try{ntBuscaSet(c,'',0);c.ed.commands.focus(null,{scrollIntoView:false})}catch(e){}}
+  if(c.ed){
+    try{
+      if(c.buscaAbertos?.size){
+        const manter=new Set();
+        const $=c.ed.state.selection.$from;
+        for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'&&$.node(d).attrs.id)manter.add($.node(d).attrs.id);
+        c.el?.querySelectorAll('[data-type="details"]:hover').forEach(dom=>{if(dom.dataset.id)manter.add(dom.dataset.id)});
+        for(const id of manter)if(c.buscaAbertos.has(id))ntAbertoSalva(id,true);
+        c.el?.querySelectorAll('[data-type="details"]').forEach(dom=>{
+          const id=dom.dataset.id;if(id&&c.buscaAbertos.has(id)&&!manter.has(id))ntPoeAberto(dom,false);
+        });
+        c.buscaAbertos.clear();
+      }
+      ntBuscaSet(c,'',0);c.ed.commands.focus(null,{scrollIntoView:false});
+    }catch(e){}
+  }
 }
 document.addEventListener('keydown',e=>{
   if(!((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&String(e.key).toLowerCase()==='f'))return;

@@ -372,7 +372,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
       <div class="bl-esconde"><button type="button" data-acao="revelar">Mostrar conclusão</button></div>
       <ol class="bl-conc" hidden>${conc.map((c) => `<li>${c}</li>`).join("")}</ol>`;
     return `<div class="bl-item ${r.normal ? "normal" : ""}" data-acc="${esc(r.acc)}">
-      <div class="bl-cab" title="Abrir o laudo completo"><div class="bl-cabtxt"><span class="bl-acc">${esc(r.accOriginal || r.acc)}</span><span class="bl-origem">${esc(ix.origem)}</span><span class="bl-data">${dataBr(r.data)}</span><span class="bl-titulo">${esc(ix.exame)}</span></div><div class="bl-cabbtn">
+      <div class="bl-cab" title="Abrir o laudo completo"><div class="bl-cabtxt"><span class="bl-acc">${esc(r.accOriginal || r.acc)}</span>${r.pid ? `<span class="bl-pid" title="ID do paciente">ID ${esc(r.pid)}</span>` : ""}<span class="bl-origem">${esc(ix.origem)}</span><span class="bl-data">${dataBr(r.data)}</span><span class="bl-titulo">${esc(ix.exame)}</span></div><div class="bl-cabbtn">
         ${lixeira ? "" : `<button type="button" class="bl-icone fav ${r.fav ? "on" : ""}" data-acao="fav" title="Favorito (f)">${r.fav ? "★" : "☆"}</button>`}
         <button type="button" class="bl-icone" data-acao="${lixeira ? "apagarDeVez" : "lixeira"}" title="${lixeira ? "Apagar de vez" : "Mover para a lixeira"}">🗑</button></div></div>
       <div class="bl-sub">${[esc(ix.medico), esc([r.sexo, r.idade != null ? r.idade + " anos" : ""].filter(Boolean).join(", ")),

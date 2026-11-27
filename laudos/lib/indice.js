@@ -49,7 +49,7 @@ export function indexar(r) {
   if (c && c.chave === chave) { c.ix.r = r; return c.ix; }
   const div = dividirLaudo(r.pars || []);
   const sec = (ks) => ks.flatMap((k) => div.secoes[k] || []).map(textoDoParagrafo).join("\n");
-  const tudo = [r.texto || (r.pars || []).map(textoDoParagrafo).join("\n"), r.nota || ""].join("\n");
+  const tudo = [r.texto || (r.pars || []).map(textoDoParagrafo).join("\n"), r.nota || "", r.pid || "", r.accOriginal || r.acc || ""].join("\n");
   const conclusao = sec(SECOES.conclusao) || r.conclusao || "";
   const classes = classificacoes(tudo);
   // achados da conclusão (para a relevância): só itens com alteração
@@ -103,7 +103,10 @@ function passaBase(ix, f, consulta) {
   if (f.img && !ix.temImg) return false;
   if (f.comNota && !String(r.nota || "").trim()) return false;
   if (consulta) {
-    if (/^\d{5,}$/.test(consulta.trim())) return r.acc === consulta.trim();
+    if (/^\d{5,}$/.test(consulta.trim())) {
+      const q = consulta.trim();
+      return r.acc === q || r.accOriginal === q || r.pid === q;
+    }
     const alvo = f.onde && f.onde !== "tudo" ? ix[f.onde] : ix.tudo;
     if (!confere(consulta, alvo || "", { ignorarNegados: true, sinonimos: true })) return false;
   }

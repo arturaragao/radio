@@ -212,14 +212,18 @@ body.nt-aba-pg>main{display:none}
 .nt-aba-fim a{color:var(--pri-tx)}
 
 /* 1.42: busca na página, seleção de blocos, lembretes, janelas (histórico, frases, busca global) */
-.nt-busca{position:sticky;top:calc(var(--nt-top,56px) + 54px);z-index:7;height:0;display:flex;justify-content:flex-end;pointer-events:none}
+.nt-busca{position:sticky;top:calc(var(--nt-top,56px) + 56px);z-index:8;height:0;display:flex;justify-content:flex-end;pointer-events:none}
 .nt-pan .nt-busca{top:8px}
-.nt-busca-c{pointer-events:auto;display:flex;gap:4px;align-items:center;margin-top:4px;padding:4px 6px;background:var(--card);border:1px solid var(--bd);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.3)}
-.nt-busca-in{width:min(220px,46vw);padding:5px 8px;font-size:.88rem}
-.nt-busca-n{min-width:3.2em;text-align:center;color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums}
-.nt-busca-c button{border:0;background:none;color:var(--tx);min-width:30px;min-height:30px;border-radius:6px;cursor:pointer;font:inherit}
-.nt-busca-c button:hover{background:var(--card2)}
-.nt-busca-hit{background:color-mix(in srgb,var(--pri) 38%,transparent);border-radius:2px}
+.nt-busca-c{pointer-events:auto;display:flex;gap:4px;align-items:center;margin-top:6px;padding:4px 8px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.22)}
+.nt-busca-c:focus-within{border-color:var(--pri);box-shadow:0 8px 24px rgba(0,0,0,.28),0 0 0 2px color-mix(in srgb,var(--pri) 22%,transparent)}
+.nt-busca-ico{font-size:.82rem;opacity:.7;user-select:none;margin-right:2px}
+.nt-busca-in{width:min(220px,44vw);padding:5px 4px;font-size:.88rem;border:0!important;background:transparent!important;outline:none!important;color:var(--tx)}
+.nt-busca-n{min-width:2.8em;padding:2px 7px;border-radius:99px;background:var(--card2);text-align:center;color:var(--mut);font-size:.76rem;font-weight:600;font-variant-numeric:tabular-nums}
+.nt-busca-n:empty{display:none}
+.nt-busca-sep{width:1px;height:18px;background:var(--bd);margin:0 2px}
+.nt-busca-c button{border:0;background:none;color:var(--tx);min-width:28px;min-height:28px;border-radius:7px;cursor:pointer;font:inherit;font-size:.85rem;display:inline-flex;align-items:center;justify-content:center}
+.nt-busca-c button:hover{background:var(--card2);color:var(--pri-tx)}
+.nt-busca-hit{background:color-mix(in srgb,var(--pri) 34%,transparent);border-radius:3px}
 .nt-busca-hit.atual{background:var(--pri);color:var(--on-pri)}
 /* 1.57: recuo de bloco (Tab): decoração nt-rec + --rec = nível (1 nível = 28px) */
 .nt-pm .nt-rec{margin-left:calc(var(--rec,0)*28px)!important}

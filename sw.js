@@ -1,6 +1,6 @@
 // Service worker do Banco CBR: guarda o app para abrir sem internet e serve as imagens (./img/<arquivo>)
 // lendo do repositório privado com a chave do aparelho. Imagem vista uma vez fica no aparelho.
-const VERSAO = "bcbr-1.69.0";
+const VERSAO = "bcbr-1.70.0";
 const APP = ["./", "./index.html", "./shim.js", "./app.js", "./vendor/tiptap.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png",
   "./laudos/config.js", "./laudos/laudos-app.js", "./laudos/ui/visor.js",
   "./laudos/lib/aprendizado.js", "./laudos/lib/aproximada.js", "./laudos/lib/classificacoes.js", "./laudos/lib/db.js",

@@ -868,10 +868,6 @@ export async function montarBancoLaudos(raiz, host = {}) {
         if (x.trazidos) partes.push(`${x.trazidos} da extensão`);
         if (x.levados || x.apagadosLa) partes.push(`${x.levados + x.apagadosLa} para a extensão`);
       }
-      if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
-        await drive.renovarSilencioso();
-        estadoNuvem();
-      }
       if (!drive.conectado() && manual && drive.configurado()) await drive.conectar();
       if (drive.conectado()) {
         const n = await sincronizar(drive.adaptador, msg);
@@ -1203,13 +1199,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
   await esvaziarVencidos();
   await buscar();
   setTimeout(() => { refazerResumos(false).catch(() => {}); }, 80);
-  (async () => {
-    if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
-      await drive.renovarSilencioso();
-      estadoNuvem();
-    }
-    sincronizarTudo();
-  })();
+  sincronizarTudo();
   intervaloSync = setInterval(() => { if (document.visibilityState === "visible") sincronizarTudo(); }, 5 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sincronizarTudo(); }, opt);
 }

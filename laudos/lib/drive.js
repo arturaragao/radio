@@ -83,7 +83,7 @@ export async function renovarSilencioso() {
       await carregarGis();
       return await new Promise((ok) => {
         let fim = false;
-        const t = setTimeout(() => { if (!fim) { fim = true; ok(false); } }, 10000);
+        const t = setTimeout(() => { if (!fim) { fim = true; ok(false); } }, 4000);
         const c = google.accounts.oauth2.initTokenClient({
           client_id: clientId, scope: ESCOPO, ...(email ? { hint: email } : {}),
           callback: (r) => {

@@ -225,6 +225,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
   let MOSTRAR_RESUMO = lerLocal("app.mostrarResumo", false);
   let todos = [];
   let achados = [];
+  let gruposExame = new Map();
   let mostrando = 0;
   let termos = [];
   let consultaUsada = "";
@@ -423,6 +424,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
   }
 
   function desenharAgrupadoPorExame() {
+    gruposExame = new Map();
     const mods = new Map();
     for (const ix of achados) {
       const mod = modalidadeDe(ix);
@@ -434,19 +436,21 @@ export async function montarBancoLaudos(raiz, host = {}) {
       gm.exames.get(exNome).push(ix);
     }
     const modsOrd = [...mods].sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0], "pt-BR"));
+    let seq = 0;
     $("lista").innerHTML = modsOrd.map(([mod, gm]) => {
       const exOrd = [...gm.exames].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "pt-BR"));
       return `<details class="bl-grupo-mod">
         <summary><span>${esc(mod)}</span><small>${exOrd.length} exame(s) · ${gm.total} laudo(s)</small></summary>
-        <div class="bl-grupo-mod-itens">${exOrd.map(([nome, itens]) =>
-          `<details class="bl-grupo-exame">
+        <div class="bl-grupo-mod-itens">${exOrd.map(([nome, itens]) => {
+          const k = `g${++seq}`;
+          gruposExame.set(k, itens);
+          return `<details class="bl-grupo-exame" data-exkey="${k}">
             <summary><span>${esc(nome)}</span><small>${itens.length} laudo(s)</small></summary>
-            <div class="bl-grupo-itens">${itens.map(cartao).join("")}</div>
-          </details>`
-        ).join("")}</div>
+            <div class="bl-grupo-itens"></div>
+          </details>`;
+        }).join("")}</div>
       </details>`;
     }).join("");
-    ativarLazyEstudo();
   }
 
   function mostrarMais() {
@@ -580,6 +584,19 @@ export async function montarBancoLaudos(raiz, host = {}) {
     F = { ...PADRAO, q: acc, ordem: F.ordem };
     vista = "laudos";
     await buscar();
+    if (modoLista === "exame") {
+      const detMod = $("lista").querySelector(".bl-grupo-mod");
+      const detEx = $("lista").querySelector(".bl-grupo-exame");
+      if (detMod) detMod.open = true;
+      if (detEx) {
+        detEx.open = true;
+        const itens = gruposExame.get(detEx.dataset.exkey);
+        if (itens && !detEx.dataset.renderizado) {
+          detEx.dataset.renderizado = "1";
+          detEx.querySelector(".bl-grupo-itens").innerHTML = itens.map(cartao).join("");
+        }
+      }
+    }
     const item = $("lista").querySelector(".bl-item");
     if (item) { abrir(item); selecionar(item, true); }
   }
@@ -1171,16 +1188,28 @@ export async function montarBancoLaudos(raiz, host = {}) {
 
   aoChegarNovos(() => { sincronizarTudo(); });
 
+  $("lista").addEventListener("toggle", (e) => {
+    const det = e.target;
+    if (!(det instanceof HTMLDetailsElement) || !det.open || !det.matches(".bl-grupo-exame") || det.dataset.renderizado) return;
+    const itens = gruposExame.get(det.dataset.exkey);
+    if (!itens) return;
+    det.dataset.renderizado = "1";
+    det.querySelector(".bl-grupo-itens").innerHTML = itens.map(cartao).join("");
+    ativarLazyEstudo();
+  }, { ...opt, capture: true });
+
   estadoNuvem();
   await carregar();
   await esvaziarVencidos();
   await buscar();
-  await refazerResumos(false);
-  if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
-    await drive.renovarSilencioso();
-    estadoNuvem();
-  }
-  sincronizarTudo();
+  setTimeout(() => { refazerResumos(false).catch(() => {}); }, 80);
+  (async () => {
+    if (!drive.conectado() && drive.configurado() && drive.jaUsou()) {
+      await drive.renovarSilencioso();
+      estadoNuvem();
+    }
+    sincronizarTudo();
+  })();
   intervaloSync = setInterval(() => { if (document.visibilityState === "visible") sincronizarTudo(); }, 5 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sincronizarTudo(); }, opt);
 }

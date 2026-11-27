@@ -1,6 +1,6 @@
 // Service worker do Banco CBR: guarda o app para abrir sem internet e serve as imagens (./img/<arquivo>)
 // lendo do repositório privado com a chave do aparelho. Imagem vista uma vez fica no aparelho.
-const VERSAO = "bcbr-1.72.0";
+const VERSAO = "bcbr-1.72.1";
 const APP = ["./", "./index.html", "./shim.js", "./app.js", "./vendor/tiptap.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./icon-mask.png", "./apple-touch-icon.png",
   "./laudos/config.js", "./laudos/laudos-app.js", "./laudos/ui/visor.js",
   "./laudos/lib/aprendizado.js", "./laudos/lib/aproximada.js", "./laudos/lib/classificacoes.js", "./laudos/lib/db.js",
@@ -69,7 +69,7 @@ self.addEventListener("fetch", (e) => {
   e.respondWith((async () => {
     const vReq = u.searchParams.get("v"), vIgual = !vReq || VERSAO === "bcbr-" + vReq;
     const cache = await caches.open(VERSAO), hit = await cache.match(e.request) || (vIgual ? await cache.match(e.request, { ignoreSearch: true }) : null) || (e.request.mode === "navigate" ? await cache.match("./index.html", { ignoreSearch: true }) : null);   // ./?pagina=<id> e ?v= (mesma versão) abrem com a cópia do app
-    const rede = fetch(e.request.url, { cache: "no-cache" }).then(async (r) => {
+    const rede = fetch(e.request.url, { cache: "no-cache", ...(hit || !AbortSignal.timeout ? {} : { signal: AbortSignal.timeout(10000) }) }).then(async (r) => {
       if (r.ok) {
         const pagina = e.request.mode === "navigate";
         if (pagina && hit) {

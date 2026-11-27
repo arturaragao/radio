@@ -1085,7 +1085,7 @@ async function ntLaudosMonta(){
   const raiz=document.getElementById('nt_raiz');if(!raiz||!NT.laudos||NT._laudosRaiz===raiz)return;
   NT._laudosRaiz=raiz;
   try{
-    const mod=NT._laudosMod||(NT._laudosMod=await import('./laudos/laudos-app.js'));
+    const mod=NT._laudosMod||(NT._laudosMod=await import('./laudos/laudos-app.js?v='+encodeURIComponent(window.BCBR_VERSAO||'1')));
     if(!NT.laudos||!raiz.isConnected)return;
     await mod.montarBancoLaudos(raiz,{
       listarPaginasNotas:()=>ntPaginasMeta().map(p=>({id:p.id,titulo:p.titulo||'Sem título'})),

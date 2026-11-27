@@ -5,7 +5,7 @@ import CONFIG from "./config.js";
 import * as db from "./lib/db.js";
 import * as prefs from "./lib/prefs.js";
 import { sincronizar, imagemDe } from "./lib/nuvem.js";
-import * as drive from "./lib/drive.js";
+import * as drive from "./lib/drive.js?v=1.72.3";
 import { comExtensao, procurarExtensao, extensao, aoChegarNovos } from "./lib/ponte.js";
 import { camposDaEdicao, recalculo } from "./lib/regras.js";
 import { indexar, padronizar, filtrar, ordenar, termosPositivos, marcar, parecidos, estatisticas } from "./lib/indice.js";

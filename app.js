@@ -1,4 +1,4 @@
-// Banco CBR app 1.72.2 — gerado por build/montar.py a partir do artefato (não editar à mão)
+// Banco CBR app 1.72.3 — gerado por build/montar.py a partir do artefato (não editar à mão)
 // Radio 1.65.0: fila durável unificada em IndexedDB (Notas, Progresso, Semana), reenvio automático,
 // backoff de rate limit/chave, faixa fixa >10 min/erro, detalhes, exportação JSON e beforeunload.
 (function (root) {
@@ -3814,7 +3814,7 @@ async function ntLaudosMonta(){
   const raiz=document.getElementById('nt_raiz');if(!raiz||!NT.laudos||NT._laudosRaiz===raiz)return;
   NT._laudosRaiz=raiz;
   try{
-    const mod=NT._laudosMod||(NT._laudosMod=await import('./laudos/laudos-app.js'));
+    const mod=NT._laudosMod||(NT._laudosMod=await import('./laudos/laudos-app.js?v='+encodeURIComponent(window.BCBR_VERSAO||'1')));
     if(!NT.laudos||!raiz.isConnected)return;
     await mod.montarBancoLaudos(raiz,{
       listarPaginasNotas:()=>ntPaginasMeta().map(p=>({id:p.id,titulo:p.titulo||'Sem título'})),

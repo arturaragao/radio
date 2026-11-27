@@ -17,11 +17,16 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     await ev("window.__ev=null;window.addEventListener('keydown',e=>{if(e.ctrlKey&&String(e.key).toLowerCase()==='f')window.__ev=e},true)");
     await ctrl('f');await espera(100);
     assert.equal(await ev("document.activeElement.className"),'nt-busca-in');
+    assert.ok(await ev("document.querySelector('.nt-busca-c').getBoundingClientRect().height")>=36,'painel Ctrl+F com altura normal (nao esmagado)');
     assert.equal(await ev("window.__ev.defaultPrevented"),true,'na aba Notas a busca é a do app (o navegador não abre a dele)');
     await digita('BÉTA'.replace('É','E'));await espera(200);   // sem acento e sem maiúsculas
     assert.equal(await ev("document.querySelector('.nt-busca-n').textContent"),'1/3');
     assert.equal(await ev("document.querySelectorAll('.nt-busca-hit').length"),3,'todas as ocorrências destacadas por decoration inline');
     assert.deepEqual(await abertos(),[true,false,false],'a 1ª ocorrência está dentro de um toggle fechado: ele abriu');
+    await especial('ArrowDown');await espera(120);
+    assert.equal(await ev("document.querySelector('.nt-busca-n').textContent"),'2/3','seta para baixo avança');
+    await especial('ArrowUp');await espera(120);
+    assert.equal(await ev("document.querySelector('.nt-busca-n').textContent"),'1/3','seta para cima volta');
     await especial('Enter');await espera(120);
     assert.equal(await ev("document.querySelector('.nt-busca-n').textContent"),'2/3');
     assert.deepEqual(await abertos(),[true,true,false],'a 2ª está no toggle aninhado: abriu também (o "Dois" continua fechado)');
@@ -34,6 +39,13 @@ test('Notas/Radio 1.42 no Chrome',{timeout:420000},async t=>{
     assert.equal(await ev("JSON.stringify(NT.ed.getJSON()).includes('is-open')"),false);
     await especial('Escape');await espera(100);
     assert.equal(await ev("!document.querySelector('.nt-busca')&&document.querySelectorAll('.nt-busca-hit').length"),0,'Esc fecha e tira o destaque');
+    assert.deepEqual(await abertos(),[false,false,false],'toggles abertos pelo Ctrl+F fecham ao sair da busca');
+    // se o cursor estiver dentro de um toggle aberto pelo Ctrl+F, ele permanece aberto ao fechar
+    await ctrl('f');await espera(100);await digita('gama');await espera(200);
+    assert.deepEqual(await abertos(),[true,true,false]);
+    await ev("(()=>{const e=NT.buscaPK.getState(NT.ed.state);NT.ed.commands.setTextSelection(e.ms[0].from)})()");
+    await especial('Escape');await espera(100);
+    assert.deepEqual(await abertos(),[true,true,false],'toggle com cursor dentro permanece aberto ao fechar Ctrl+F');
     await ev("go('tarefas')");await espera(300);await ev("window.__ev=null");
     await ctrl('f');await espera(100);
     assert.equal(await ev("window.__ev.defaultPrevented"),false,'fora da aba Notas o Ctrl+F continua do navegador');

@@ -4077,21 +4077,45 @@ function ntModal(classe,html){
 }
 function ntModalFecha(ov){if(!ov||!ov.isConnected)return;ov.remove();ov.aoFechar?.();try{ov._ant?.focus?.()}catch(e){}}
 
-// ===== Ctrl+F nas Notas: busca própria. Destaque por Decoration.inline, contador n/total, Enter/Shift+Enter, ocorrência em toggle fechado o abre =====
+// ===== Ctrl+F nas Notas: busca própria. Destaque por Decoration.inline, contador n/total, Enter/Shift+Enter/↑/↓, ocorrência em toggle fechado o abre =====
 const NT_BUSCA_PK=()=>NT.buscaPK||(NT.buscaPK=new TT.pm.state.PluginKey('ntBusca'));
 // Sem acento e minúsculas, sempre com o MESMO comprimento do texto (cada caractere vira um só): os índices valem no original.
-const ntNorma=s=>String(s).split('').map(ch=>{const r=ch.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();return r.length===1?r:ch.toLowerCase().length===1?ch.toLowerCase():ch}).join('');
-// Ocorrências de q no documento: [{from,to}] (posições do ProseMirror), por bloco de texto; átomos inline contam como 1 caractere.
-function ntAchaTexto(doc,q){
-  const nq=ntNorma(q),out=[];if(!nq)return out;
+const NT_NORMA_MAP=new Map();
+const ntNorma=s=>{
+  const str=String(s);
+  if(!/[^\x00-\x7f]/.test(str))return str.toLowerCase();
+  return str.replace(/[^\x00-\x7f]/g,ch=>{
+    let v=NT_NORMA_MAP.get(ch);
+    if(v!==undefined)return v;
+    const r=ch.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    v=r.length===1?r:ch.toLowerCase().length===1?ch.toLowerCase():ch;
+    NT_NORMA_MAP.set(ch,v);return v;
+  }).toLowerCase();
+};
+const NT_BUSCA_IDX=new WeakMap();
+function ntBuscaIndice(doc){
+  let idx=NT_BUSCA_IDX.get(doc);
+  if(idx)return idx;
+  idx=[];
   doc.descendants((n,pos)=>{
     if(!n.isTextblock)return;
     let txt='';const mapa=[];
-    n.forEach((ch,off)=>{const base=pos+1+off;if(ch.isText){for(let i=0;i<ch.text.length;i++)mapa.push(base+i);txt+=ch.text}else{mapa.push(base);txt+='￼'}});
-    const h=ntNorma(txt);let i=h.indexOf(nq);
-    while(i>=0){out.push({from:mapa[i],to:mapa[i+nq.length-1]+1});i=h.indexOf(nq,i+nq.length)}
+    n.forEach((ch,off)=>{const base=pos+1+off;if(ch.isText){for(let i=0;i<ch.text.length;i++)mapa.push(base+i);txt+=ch.text}else{mapa.push(base);txt+='\ufffc'}});
+    if(txt)idx.push({h:ntNorma(txt),mapa});
     return false;
   });
+  NT_BUSCA_IDX.set(doc,idx);
+  return idx;
+}
+// Ocorrências de q no documento: [{from,to}] (posições do ProseMirror), por bloco de texto; átomos inline contam como 1 caractere.
+function ntAchaTexto(doc,q){
+  const nq=ntNorma(q),out=[];if(!nq)return out;
+  const idx=ntBuscaIndice(doc);
+  for(let k=0;k<idx.length;k++){
+    const {h,mapa}=idx[k];
+    let i=h.indexOf(nq);
+    while(i>=0){out.push({from:mapa[i],to:mapa[i+nq.length-1]+1});i=h.indexOf(nq,i+nq.length)}
+  }
   return out;
 }
 function ntBuscaExt(){
@@ -4102,8 +4126,13 @@ function ntBuscaExt(){
         const m=tr.getMeta(K);if(!m&&!tr.docChanged)return v;
         const q=m&&m.q!=null?m.q:v.q;let sel=m&&m.sel!=null?m.sel:v.sel;
         if(!q)return v.q?{q:'',sel:0,ms:[],deco:DecorationSet.empty}:v;
-        const ms=ntAchaTexto(nw.doc,q);if(sel>=ms.length||sel<0)sel=0;
-        return {q,sel,ms,deco:DecorationSet.create(nw.doc,ms.map((x,i)=>Decoration.inline(x.from,x.to,{class:i===sel?'nt-busca-hit atual':'nt-busca-hit'})))};
+        const ms=(!tr.docChanged&&q===v.q)?v.ms:ntAchaTexto(nw.doc,q);
+        if(sel>=ms.length||sel<0)sel=0;
+        let ini=0,fim=ms.length;
+        if(ms.length>500){ini=Math.max(0,sel-250);fim=Math.min(ms.length,ini+500);if(fim-ini<500)ini=Math.max(0,fim-500);}
+        const decos=[];
+        for(let i=ini;i<fim;i++){const x=ms[i];decos.push(Decoration.inline(x.from,x.to,{class:i===sel?'nt-busca-hit atual':'nt-busca-hit'}))}
+        return {q,sel,ms,deco:DecorationSet.create(nw.doc,decos)};
       }},
       props:{decorations:s=>K.getState(s).deco}})];
   }});
@@ -4113,20 +4142,27 @@ function ntBuscaSet(c,q,sel){c.ed.view.dispatch(c.ed.state.tr.setMeta(NT_BUSCA_P
 function ntBuscaPinta(c){
   const e=ntBuscaEstado(c),n=c.buscaEl?.querySelector('.nt-busca-n');if(!e||!n)return;
   n.textContent=e.q?(e.ms.length?`${e.sel+1}/${e.ms.length}`:'0/0'):'';
+  n.dataset.vazio=e.q&&!e.ms.length?'1':'0';
 }
 // Abre os toggles fechados em volta da ocorrência atual (só estado de tela) e rola até ela.
 function ntBuscaMostra(c){
   const e=ntBuscaEstado(c),m=e?.ms[e.sel];if(!m)return;
   if(!c.buscaAbertos)c.buscaAbertos=new Set();
+  if(!c.buscaAbertosDom)c.buscaAbertosDom=new Set();
   const $=c.ed.state.doc.resolve(m.from);
   for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'){
     const dom=c.ed.view.nodeDOM($.before(d));
     if(dom instanceof Element&&!dom.classList.contains('is-open')){
       ntPoeAberto(dom,true);
-      const id=$.node(d).attrs.id;if(id)c.buscaAbertos.add(id);
+      const id=$.node(d).attrs.id;if(id)c.buscaAbertos.add(id);else c.buscaAbertosDom.add(dom);
     }
   }
   const el=c.el.querySelector('.nt-busca-hit.atual');if(el)el.scrollIntoView({block:'center',inline:'nearest'});
+}
+function ntBuscaFlush(c){
+  if(c.buscaTimer){clearTimeout(c.buscaTimer);c.buscaTimer=null;}
+  const i=c.buscaEl?.querySelector('input');if(!i)return;
+  if(i.value!==(ntBuscaEstado(c)?.q||'')){ntBuscaSet(c,i.value,0);ntBuscaPinta(c);ntBuscaMostra(c);}
 }
 function ntBuscaVai(c,dir){
   const e=ntBuscaEstado(c);if(!e||!e.ms.length)return;
@@ -4136,11 +4172,20 @@ function ntBuscaAbre(c){
   if(!c?.ed)return;
   if(!c.buscaEl){
     const b=document.createElement('div');b.className='nt-busca';b.setAttribute('role','search');
-    b.innerHTML=`<div class="nt-busca-c"><span class="nt-busca-ico" aria-hidden="true">🔍</span><input type="text" class="nt-busca-in" placeholder="Buscar na página" aria-label="Buscar nas notas" autocomplete="off" spellcheck="false"><span class="nt-busca-n" aria-live="polite"></span><span class="nt-busca-sep" aria-hidden="true"></span><button type="button" data-b="-1" title="Anterior (Shift+Enter)" aria-label="Ocorrência anterior">↑</button><button type="button" data-b="1" title="Próxima (Enter)" aria-label="Próxima ocorrência">↓</button><button type="button" data-b="x" title="Fechar (Esc)" aria-label="Fechar busca">✕</button></div>`;
+    b.innerHTML=`<div class="nt-busca-c"><span class="nt-busca-ico" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span><input type="text" class="nt-busca-in" placeholder="Buscar na página" aria-label="Buscar nas notas" autocomplete="off" spellcheck="false"><span class="nt-busca-n" aria-live="polite"></span><span class="nt-busca-sep" aria-hidden="true"></span><button type="button" data-b="-1" title="Anterior (↑ ou Shift+Enter)" aria-label="Ocorrência anterior"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-b="1" title="Próxima (↓ ou Enter)" aria-label="Próxima ocorrência"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-b="x" title="Fechar (Esc)" aria-label="Fechar busca"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>`;
     const i=b.querySelector('input');
-    i.addEventListener('input',()=>{ntBuscaSet(c,i.value,0);ntBuscaPinta(c);ntBuscaMostra(c)});
-    i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();ntBuscaVai(c,e.shiftKey?-1:1)}});
-    b.addEventListener('click',e=>{const bt=e.target.closest('[data-b]');if(!bt)return;if(bt.dataset.b==='x')ntBuscaFecha(c);else ntBuscaVai(c,+bt.dataset.b);if(bt.dataset.b!=='x')i.focus()});
+    i.addEventListener('input',()=>{
+      if(c.buscaTimer){clearTimeout(c.buscaTimer);c.buscaTimer=null;}
+      const val=i.value;
+      if(!val){ntBuscaSet(c,'',0);ntBuscaPinta(c);return;}
+      c.buscaTimer=setTimeout(()=>{c.buscaTimer=null;ntBuscaSet(c,val,0);ntBuscaPinta(c);ntBuscaMostra(c);},100);
+    });
+    i.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();ntBuscaFlush(c);ntBuscaVai(c,e.shiftKey?-1:1);}
+      else if(e.key==='ArrowDown'){e.preventDefault();ntBuscaFlush(c);ntBuscaVai(c,1);}
+      else if(e.key==='ArrowUp'){e.preventDefault();ntBuscaFlush(c);ntBuscaVai(c,-1);}
+    });
+    b.addEventListener('click',e=>{const bt=e.target.closest('[data-b]');if(!bt)return;if(bt.dataset.b==='x')ntBuscaFecha(c);else{ntBuscaFlush(c);ntBuscaVai(c,+bt.dataset.b);i.focus();}});
     c.el.insertBefore(b,c.el.firstChild);c.buscaEl=b;
   }
   const i=c.buscaEl.querySelector('input'),s=c.ed.state.selection;
@@ -4149,19 +4194,27 @@ function ntBuscaAbre(c){
 }
 function ntBuscaFecha(c){
   if(!c?.buscaEl)return;
+  if(c.buscaTimer){clearTimeout(c.buscaTimer);c.buscaTimer=null;}
   const b=c.buscaEl;c.buscaEl=null;b.remove();
   if(c.ed){
     try{
-      if(c.buscaAbertos?.size){
-        const manter=new Set();
+      if(c.buscaAbertos?.size||c.buscaAbertosDom?.size){
+        const manter=new Set(),manterDom=new Set();
         const $=c.ed.state.selection.$from;
-        for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'&&$.node(d).attrs.id)manter.add($.node(d).attrs.id);
-        c.el?.querySelectorAll('[data-type="details"]:hover').forEach(dom=>{if(dom.dataset.id)manter.add(dom.dataset.id)});
-        for(const id of manter)if(c.buscaAbertos.has(id))ntAbertoSalva(id,true);
-        c.el?.querySelectorAll('[data-type="details"]').forEach(dom=>{
-          const id=dom.dataset.id;if(id&&c.buscaAbertos.has(id)&&!manter.has(id))ntPoeAberto(dom,false);
+        for(let d=$.depth;d>=1;d--)if($.node(d).type.name==='details'){
+          if($.node(d).attrs.id)manter.add($.node(d).attrs.id);
+          const dom=c.ed.view.nodeDOM($.before(d));if(dom instanceof Element)manterDom.add(dom);
+        }
+        c.el?.querySelectorAll('[data-type="details"]:hover').forEach(dom=>{
+          manterDom.add(dom);if(dom.dataset.id)manter.add(dom.dataset.id);
         });
-        c.buscaAbertos.clear();
+        for(const id of manter)if(c.buscaAbertos?.has(id))ntAbertoSalva(id,true);
+        c.el?.querySelectorAll('[data-type="details"]').forEach(dom=>{
+          const id=dom.dataset.id;
+          const foiAberto=(id&&c.buscaAbertos?.has(id))||c.buscaAbertosDom?.has(dom);
+          if(foiAberto&&!manterDom.has(dom)&&!(id&&manter.has(id)))ntPoeAberto(dom,false);
+        });
+        c.buscaAbertos?.clear();c.buscaAbertosDom?.clear();
       }
       ntBuscaSet(c,'',0);c.ed.commands.focus(null,{scrollIntoView:false});
     }catch(e){}

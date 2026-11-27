@@ -1217,8 +1217,11 @@ function ntPaginaMenu(id,x,y){
   };
   posiciona();m.querySelector('button').focus();
 }
-document.addEventListener('contextmenu',e=>{const it=e.target.closest?.('#nt_lat .nt-pg-it');if(!it)return;e.preventDefault();ntPaginaMenu(it.dataset.pg,e.clientX,e.clientY)});
-document.addEventListener('click',e=>{const al=e.target.closest?.('.nt-pg-it .nt-pg-alca');if(!al||ntEngole)return;e.preventDefault();const r=al.getBoundingClientRect();ntPaginaMenu(al.closest('.nt-pg-it').dataset.pg,r.left,r.bottom)});
+const NT_ORDEM_ESP='bcbr_nt_ordem_esp';
+function ntOrdemEspLer(){try{return JSON.parse(localStorage.getItem(NT_ORDEM_ESP)||'{}')||{}}catch(e){return {}}}
+function ntOrdemEspSalva(pasta,ids){try{const m=ntOrdemEspLer();m[pasta||'']=ids;localStorage.setItem(NT_ORDEM_ESP,JSON.stringify(m))}catch(e){}}
+document.addEventListener('contextmenu',e=>{const it=e.target.closest?.('#nt_lat .nt-pg-it');if(!it||it.dataset.esp==='1')return;e.preventDefault();ntPaginaMenu(it.dataset.pg,e.clientX,e.clientY)});
+document.addEventListener('click',e=>{const al=e.target.closest?.('.nt-pg-it .nt-pg-alca');if(!al||ntEngole)return;const it=al.closest('.nt-pg-it');if(it?.dataset.esp==='1')return;e.preventDefault();const r=al.getBoundingClientRect();ntPaginaMenu(it.dataset.pg,r.left,r.bottom)});
 document.addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key)||!e.target.matches?.('.nt-pg-it .nt-pg-alca'))return;e.preventDefault();e.target.click()});
 function ntLateralHtml(){
   const l=ntPaginasMeta().filter(p=>p.id!=='notas').sort(ntPgOrdem),fix=l.filter(p=>p.fixada),res=l.filter(p=>!p.fixada);
@@ -1231,11 +1234,24 @@ function ntLateralHtml(){
   const fechadas=ntLsLista(NT_PT_FECHADAS)||[];
   const norm=t=>String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').trim().toLowerCase();
   const pastaLaudos=ntPastas().find(p=>norm(p.titulo)==='laudos');
-  const prel=`<div class="nt-pg-prel${NT.prel?' on':''}"><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
-  const laudosPg=`<div class="nt-pg-prel${NT.laudos?' on':''}"><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_LAUDOS))}" draggable="false" title="Banco de laudos (Google Drive)" onclick="return ntLaudosClique(event)">Banco de Laudos</a></div>`;
-  const itensDe=(xs,comPrel)=>{const h=xs.map(item);if(comPrel){const i=xs.findIndex(x=>norm(x.titulo)==='notas usg');h.splice(i<0?h.length:i+1,0,prel,laudosPg)}return h.join('')};
-  const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${itensDe(res.filter(x=>ntPastaDa(x)===p.id),p===pastaLaudos)||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
-  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">+ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos)}</div><div class="nt-pastas">${pastas}</div>`;
+  const prel=`<div class="nt-pg-it nt-pg-prel${NT.prel?' on':''}" data-pg="${NT_PREL}" data-esp="1"><span class="nt-pg-alca" role="button" tabindex="0" title="Arrastar para mudar a ordem" aria-label="Reordenar Preliminares">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_PREL))}" draggable="false" title="Somente leitura (repositório privado de laudos)" onclick="return ntPrelClique(event)">Preliminares</a></div>`;
+  const laudosPg=`<div class="nt-pg-it nt-pg-prel${NT.laudos?' on':''}" data-pg="${NT_LAUDOS}" data-esp="1"><span class="nt-pg-alca" role="button" tabindex="0" title="Arrastar para mudar a ordem" aria-label="Reordenar Banco de Laudos">⋮⋮</span><a class="nt-pg-nome" href="${esc(ntAbaUrl(NT_LAUDOS))}" draggable="false" title="Banco de laudos (Google Drive)" onclick="return ntLaudosClique(event)">Banco de Laudos</a></div>`;
+  const ordEsp=ntOrdemEspLer();
+  const itensDe=(xs,comPrel,pastaId)=>{
+    const arr=xs.map(x=>({id:x.id,html:item(x)}));
+    if(comPrel){
+      const i=xs.findIndex(x=>norm(x.titulo)==='notas usg');
+      arr.splice(i<0?arr.length:i+1,0,{id:NT_PREL,html:prel},{id:NT_LAUDOS,html:laudosPg});
+      const ord=ordEsp[pastaId||''];
+      if(Array.isArray(ord)&&ord.length){
+        const idx=id=>{const k=ord.indexOf(id);return k<0?1e6:k};
+        arr.sort((a,b)=>idx(a.id)-idx(b.id));
+      }
+    }
+    return arr.map(x=>x.html).join('');
+  };
+  const pastas=[...ntPastas()].sort(ntPgOrdem).map(p=>`<section class="nt-pt" data-pasta="${esc(p.id)}"><div class="nt-pt-cab"><span class="nt-pg-alca" title="Arrastar pasta">⋮⋮</span><button type="button" class="nt-pt-nome" aria-expanded="${!fechadas.includes(p.id)}" onclick="ntPastaAlterna('${esc(p.id)}')">${fechadas.includes(p.id)?'▶':'▼'} ${esc(p.titulo)}</button><button type="button" title="Renomear pasta" onclick="ntPastaForm('${esc(p.id)}','renomear')">✎</button><button type="button" title="Excluir pasta" onclick="ntPastaForm('${esc(p.id)}','excluir')">🗑</button></div>${form(p.id)}<div class="nt-pg-lista" data-sec="pg" data-pasta="${esc(p.id)}"${fechadas.includes(p.id)?' hidden':''}>${itensDe(res.filter(x=>ntPastaDa(x)===p.id),p===pastaLaudos,p.id)||'<p class="mut nt-pg-vazio">Pasta vazia</p>'}</div></section>`).join('');
+  return `<div class="nt-lat-acoes"><button type="button" onclick="ntAbre()" title="Nova nota">+ Nota</button><button type="button" class="nt-pg-novo" onclick="ntPaginaNova()" title="Nova página">Página</button><button type="button" class="nt-pg-novo" onclick="ntPastaForm('','criar')" title="Nova pasta">Pasta</button><button type="button" class="nt-pg-novo" onclick="ntQuickSwitcher()" title="Ir para página (Alt+K)">Ir para…</button><button type="button" class="nt-pg-novo" onclick="ntNotionEscolhe()" title="Importar do Notion" aria-label="Importar do Notion">Notion</button></div>${form('')}${fix.length?`<div class="nt-lat-s">Fixadas</div><div class="nt-pg-lista" data-sec="fix">${fix.map(item).join('')}</div>`:''}<div class="nt-lat-s">Páginas</div><div class="nt-pg-lista" data-sec="pg" data-pasta="">${itensDe(res.filter(p=>!ntPastaDa(p)),!pastaLaudos,'')}</div><div class="nt-pastas">${pastas}</div>`;
 }
 function ntLateralPinta(){
   if(NTD)return;const el=document.getElementById('nt_lat');if(!el)return;
@@ -1249,10 +1265,13 @@ let NTD=null,ntEngole=false;
 function ntArrastoMarca(){
   const d=NTD;if(!d)return null;
   document.querySelectorAll('#nt_lat .alvo-antes,#nt_lat .alvo-depois,#nt_lat .alvo-pasta').forEach(x=>x.classList.remove('alvo-antes','alvo-depois','alvo-pasta'));
-  if(!d.pasta){
+  const ehEsp=d.id===NT_PREL||d.id===NT_LAUDOS;
+  if(!d.pasta&&!ehEsp){
     const el=document.elementFromPoint(d.x,d.y),cab=el?.closest('.nt-pt-cab'),lista=el?.closest('.nt-pg-lista');
     if(cab){const pasta=cab.parentElement.dataset.pasta;cab.classList.add('alvo-pasta');return {pasta}}
     if(lista&&lista.dataset.sec===d.lista.dataset.sec)d.destino=lista;else d.destino=d.lista;
+  }else if(ehEsp){
+    d.destino=d.lista;
   }
   const dest=d.pasta?d.lista:d.destino||d.lista,outros=[...dest.children].filter(x=>x!==d.it&&x.matches(d.pasta?'.nt-pt':'.nt-pg-it'));
   if(!outros.length){dest.classList.add('alvo-pasta');return d.pasta?null:{pasta:dest.dataset.pasta}}
@@ -1262,7 +1281,23 @@ function ntArrastoMarca(){
 function ntArrastoFim(aplica){
   const d=NTD;if(!d)return;NTD=null;
   d.it.classList.remove('arrastando');document.querySelectorAll('#nt_lat .alvo-antes,#nt_lat .alvo-depois,#nt_lat .alvo-pasta').forEach(x=>x.classList.remove('alvo-antes','alvo-depois','alvo-pasta'));
-  if(d.ativo){ntEngole=true;setTimeout(()=>{ntEngole=false},100);if(aplica&&d.alvo){if(d.pasta)ntPastaMove(d.id,d.alvo.ref,d.alvo.depois);else ntPaginaMove(d.id,d.alvo.ref,d.alvo.depois,d.alvo.pasta)}else ntLateralPinta()}
+  if(d.ativo){ntEngole=true;setTimeout(()=>{ntEngole=false},100);if(aplica&&d.alvo){
+    if(d.pasta)ntPastaMove(d.id,d.alvo.ref,d.alvo.depois);
+    else{
+      const dest=d.destino||d.lista,ehEsp=d.id===NT_PREL||d.id===NT_LAUDOS;
+      if(ehEsp||dest.querySelector('[data-esp="1"]')){
+        const ids=[...dest.querySelectorAll(':scope > .nt-pg-it')].map(el=>el.dataset.pg).filter(x=>x&&x!==d.id);
+        let idx=d.alvo.ref?ids.indexOf(d.alvo.ref):ids.length;if(idx<0)idx=ids.length;else if(d.alvo.depois)idx++;
+        ids.splice(idx,0,d.id);ntOrdemEspSalva(dest.dataset.pasta||'',ids);
+        if(ehEsp)ntLateralPinta();
+        else{
+          const normIds=ids.filter(x=>x!==NT_PREL&&x!==NT_LAUDOS),pos=normIds.indexOf(d.id);
+          const refN=pos>0?normIds[pos-1]:normIds[pos+1]||null;
+          ntPaginaMove(d.id,refN,pos>0,d.alvo.pasta);
+        }
+      }else ntPaginaMove(d.id,d.alvo.ref,d.alvo.depois,d.alvo.pasta);
+    }
+  }else ntLateralPinta()}
 }
 document.addEventListener('pointerdown',e=>{
   const it=e.target.closest?.('.nt-pg-it,.nt-pt-cab');if(!it||(e.pointerType==='mouse'&&e.button!==0)||e.target.closest('button,input,select'))return;

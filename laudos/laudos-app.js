@@ -63,17 +63,23 @@ export function desmontarBancoLaudos() {
   if (observador) { observador.disconnect(); observador = null; }
   aoChegarNovos(null);
   for (const u of urlsAtivas.splice(0)) URL.revokeObjectURL(u);
+  const barra = document.getElementById("nt_barra");
+  if (barra?.querySelector(".bl-topo-bar")) barra.innerHTML = "";
 }
 
-function htmlEstrutura() {
+function htmlTopoBar() {
+  return `<div class="bl-topo-bar">
+    <h2>Banco de Laudos <small id="bl_contagem">carregando…</small></h2>
+    <button type="button" id="bl_bModo" title="Alternar entre Por modalidade e Cartões">Por modalidade</button>
+    <button type="button" id="bl_bSync" title="Sincronizar (Google Drive e extensão)">⇅ Sincronizar</button>
+    <button type="button" class="bl-icone" id="bl_bMenu" title="Mais opções" aria-label="Mais opções">⋯</button>
+  </div>`;
+}
+
+function htmlEstrutura(comTopoBar = true) {
   return `<div class="bl-root">
   <header class="bl-topo">
-    <div class="bl-l1">
-      <h2>🩻 Banco de Laudos <small id="bl_contagem">carregando…</small></h2>
-      <button type="button" id="bl_bModo" title="Alternar entre Cartões e Agrupado por Exame">Cartões</button>
-      <button type="button" id="bl_bSync" title="Sincronizar (Google Drive e extensão)">⇅ Sincronizar</button>
-      <button type="button" class="bl-icone" id="bl_bMenu" title="Mais opções" aria-label="Mais opções">⋯</button>
-    </div>
+    ${comTopoBar ? htmlTopoBar() : ""}
     <div class="bl-l2">
       <input id="bl_q" type="search" list="bl_historico" autocomplete="off" placeholder="Buscar: nodulo pulmonar; esteatose -leve; &quot;lesao expansiva&quot;; nº do acesso">
       <datalist id="bl_historico"></datalist>
@@ -191,9 +197,12 @@ export async function montarBancoLaudos(raiz, host = {}) {
   acAtual = new AbortController();
   const { signal } = acAtual;
 
-  raiz.innerHTML = htmlEstrutura();
+  const barraTopo = document.getElementById("nt_barra");
+  const usaBarraTopo = !!barraTopo;
+  raiz.innerHTML = htmlEstrutura(!usaBarraTopo);
+  if (usaBarraTopo) barraTopo.innerHTML = htmlTopoBar();
   const rootEl = raiz.querySelector(".bl-root");
-  const $ = (id) => raiz.querySelector(`#bl_${id}`);
+  const $ = (id) => raiz.querySelector(`#bl_${id}`) || document.getElementById(`bl_${id}`);
 
   const sincronizarTema = () => {
     const dt = document.documentElement.dataset.theme;
@@ -212,7 +221,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
 
   let F = { ...PADRAO, ...lerLocal("banco.f", {}) };
   let vista = "laudos";
-  let modoLista = lerLocal("app.modoLista", "cartoes"); // cartoes | exame
+  let modoLista = lerLocal("app.modoLista2", "exame"); // exame (por modalidade) | cartoes
   let estudo = lerLocal("app.estudo", false);
   let MOSTRAR_RESUMO = lerLocal("app.mostrarResumo", false);
   let todos = [];
@@ -284,7 +293,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
     $("pFav").classList.toggle("on", !!F.fav);
     $("pImg").classList.toggle("on", !!F.img);
     $("pNota").classList.toggle("on", !!F.comNota);
-    $("bModo").textContent = modoLista === "exame" ? "Por exame" : "Cartões";
+    $("bModo").textContent = modoLista === "exame" ? "Por modalidade" : "Cartões";
     $("bModo").classList.toggle("on", modoLista === "exame");
   }
 
@@ -401,20 +410,44 @@ export async function montarBancoLaudos(raiz, host = {}) {
     $("lista").querySelectorAll('.bl-imgs[data-lazy="1"]').forEach((el) => { el.dataset.lazy = "2"; observador.observe(el); });
   }
 
+  const MODALIDADE_NOME = { CT: "TC", MR: "RM", US: "US", DX: "RX", CR: "RX", MG: "MMG", BMD: "DMO", NM: "Medicina Nuclear", PT: "PET", XA: "Angiografia", RF: "Fluoroscopia" };
+  function modalidadeDe(ix) {
+    const m = String(ix.mod || "").trim().toUpperCase();
+    if (MODALIDADE_NOME[m]) return MODALIDADE_NOME[m];
+    const ex = String(ix.exame || "").trim().toUpperCase();
+    if (/^(TC|ANGIOTC)\b/.test(ex)) return "TC";
+    if (/^(RM|ANGIORM|COLANGIORM)\b/.test(ex)) return "RM";
+    if (/^(US|USG|ECO|DOPPLER)\b/.test(ex)) return "US";
+    if (/^(RX|RADIOGRAFIA)\b/.test(ex)) return "RX";
+    if (/^(MMG|MAMOGRAFIA)\b/.test(ex)) return "MMG";
+    if (/^(DMO|DENSITOMETRIA)\b/.test(ex)) return "DMO";
+    return m || "Outros";
+  }
+
   function desenharAgrupadoPorExame() {
-    const grupos = new Map();
+    const mods = new Map();
     for (const ix of achados) {
-      const nome = ix.exame || "Outros";
-      if (!grupos.has(nome)) grupos.set(nome, []);
-      grupos.get(nome).push(ix);
+      const mod = modalidadeDe(ix);
+      const exNome = ix.exame || "Outros";
+      if (!mods.has(mod)) mods.set(mod, { total: 0, exames: new Map() });
+      const gm = mods.get(mod);
+      gm.total++;
+      if (!gm.exames.has(exNome)) gm.exames.set(exNome, []);
+      gm.exames.get(exNome).push(ix);
     }
-    const ordenado = [...grupos].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "pt-BR"));
-    $("lista").innerHTML = ordenado.map(([nome, itens], idx) =>
-      `<details class="bl-grupo-exame" ${idx < 3 ? "open" : ""}>
-        <summary><span>${esc(nome)}</span><small>${itens.length} laudo(s)</small></summary>
-        <div class="bl-grupo-itens">${itens.map(cartao).join("")}</div>
-      </details>`
-    ).join("");
+    const modsOrd = [...mods].sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0], "pt-BR"));
+    $("lista").innerHTML = modsOrd.map(([mod, gm]) => {
+      const exOrd = [...gm.exames].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "pt-BR"));
+      return `<details class="bl-grupo-mod">
+        <summary><span>${esc(mod)}</span><small>${exOrd.length} exame(s) · ${gm.total} laudo(s)</small></summary>
+        <div class="bl-grupo-mod-itens">${exOrd.map(([nome, itens]) =>
+          `<details class="bl-grupo-exame">
+            <summary><span>${esc(nome)}</span><small>${itens.length} laudo(s)</small></summary>
+            <div class="bl-grupo-itens">${itens.map(cartao).join("")}</div>
+          </details>`
+        ).join("")}</div>
+      </details>`;
+    }).join("");
     ativarLazyEstudo();
   }
 
@@ -797,10 +830,15 @@ export async function montarBancoLaudos(raiz, host = {}) {
   }
 
   function estadoNuvem() {
-    if (!$("bSync")) return;
-    const precisa = drive.configurado() && !drive.conectado();
-    $("bSync").classList.toggle("alerta", precisa);
-    $("bSync").innerHTML = precisa ? "☁ Conectar<span class=longo> e sincronizar</span>" : "⇅<span class=longo> Sincronizar</span>";
+    const b = $("bSync");
+    if (!b) return;
+    const conectado = drive.conectado();
+    const precisa = drive.configurado() && !conectado;
+    b.classList.toggle("alerta", precisa);
+    b.classList.toggle("ok", conectado);
+    if (conectado) b.innerHTML = sincronizando ? "☁ Sincronizando…" : "☁ Sincronizado";
+    else if (precisa) b.innerHTML = "☁ Conectar<span class=longo> e sincronizar</span>";
+    else b.innerHTML = "⇅<span class=longo> Sincronizar</span>";
   }
 
   async function sincronizarTudo({ manual = false } = {}) {
@@ -995,7 +1033,7 @@ export async function montarBancoLaudos(raiz, host = {}) {
   $("pFav").addEventListener("click", () => { F.fav = !F.fav; buscar(); }, opt);
   $("pImg").addEventListener("click", () => { F.img = !F.img; buscar(); }, opt);
   $("pNota").addEventListener("click", () => { F.comNota = !F.comNota; buscar(); }, opt);
-  $("bModo").addEventListener("click", () => { modoLista = modoLista === "cartoes" ? "exame" : "cartoes"; gravarLocal("app.modoLista", modoLista); buscar(); }, opt);
+  $("bModo").addEventListener("click", () => { modoLista = modoLista === "cartoes" ? "exame" : "cartoes"; gravarLocal("app.modoLista2", modoLista); buscar(); }, opt);
   $("faixa").addEventListener("click", async (e) => {
     const a = e.target.dataset.faixa;
     if (a === "sairLixeira") { vista = "laudos"; buscar(); }

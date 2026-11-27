@@ -1045,8 +1045,20 @@ body.nt-aba-pg>main{display:none}
 .prl-cp{margin-left:auto;font:inherit;font-size:.78rem;font-weight:400;background:none;border:0;color:var(--mut);text-decoration:underline dotted;text-underline-offset:3px;cursor:copy;padding:2px 4px;min-height:24px}.prl-cp:hover{color:var(--tx)}
 .prl-chave .prl-loc{flex-direction:row;align-items:center;gap:8px;margin:8px 0}.prl-chave .prl-loc input{width:18px;height:18px;min-height:0;padding:0}
 /* Banco de Laudos embutido na aba Notas do Radio — paleta Sépia unificada com o Radio */
+main:has(.nt.laudos){max-width:none}
 .nt.laudos .nt-conteudo{padding:0;max-width:none;width:100%}
+.nt.laudos .nt-conteudo #nt_raiz{max-width:none;margin:0;width:100%}
+.nt.laudos .nt-pg-opcoes{display:none}
 .nt-laudos-raiz{width:100%}
+.bl-topo-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;min-width:0}
+.bl-topo-bar h2{margin:0;font-family:var(--fd);font-size:1.05rem;font-weight:700;flex:1;display:flex;gap:8px;align-items:baseline;min-width:0;color:var(--tx)}
+.bl-topo-bar h2 small{font-family:var(--fb);font-weight:500;font-size:.78rem;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bl-topo-bar button{border:1px solid var(--bd);background:var(--card2);color:var(--tx);border-radius:9px;padding:5px 11px;font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit}
+.bl-topo-bar button:hover{border-color:var(--pri)}
+.bl-topo-bar #bl_bModo.on{background:var(--pri);color:var(--on-pri);border-color:var(--pri)}
+.bl-topo-bar #bl_bSync.alerta{background:var(--pbg,#fbefc9);color:var(--ptx,#4a3b00);border-color:var(--pri)}
+.bl-topo-bar #bl_bSync.ok{background:var(--okbg,#dcefe2);color:var(--ok,#17683f);border-color:color-mix(in srgb,var(--ok,#17683f) 35%,var(--bd))}
+.bl-topo-bar .bl-icone{border:none;background:none;padding:4px 6px;font-size:16px;line-height:1}
 .bl-root{
   --fundo:transparent;--cartao:var(--card,#fffaf2);--campo:var(--card2,#f1e7d8);--borda:var(--bd,#e3d6c3);--borda2:var(--bd,#e3d6c3);
   --texto:var(--tx,#2b2520);--suave:var(--mut,#6b5d4f);--fraco:var(--mut,#6b5d4f);
@@ -1073,7 +1085,8 @@ body.nt-aba-pg>main{display:none}
 .bl-root .bl-topo .bl-icone,.bl-root #bl_bModo,.bl-root #bl_bSync{background:var(--campo);color:var(--texto);border:1px solid var(--borda);font-size:.82rem;font-weight:600;padding:5px 11px}
 .bl-root #bl_bModo.on{background:var(--chip-on);color:var(--chip-on-texto);border-color:var(--chip-on)}
 .bl-root #bl_bSync.alerta{background:var(--pbg,#fbefc9);color:var(--ptx,#4a3b00);border-color:var(--acento)}
-.bl-root .bl-l2{display:flex;gap:8px;margin-top:10px}
+.bl-root .bl-l2{display:flex;gap:8px}
+.bl-root .bl-topo:has(.bl-topo-bar) .bl-l2{margin-top:10px}
 .bl-root .bl-l2 input{background:var(--topo-campo);color:var(--topo-campo-texto);border:1px solid var(--borda);font-size:.94rem}
 .bl-root .bl-l2 select{width:auto;max-width:135px;background:var(--topo-campo);color:var(--topo-campo-texto);border:1px solid var(--borda)}
 .bl-root .bl-l3{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
@@ -1147,8 +1160,12 @@ body.nt-aba-pg>main{display:none}
 .bl-root .bl-parecidos b{font-size:.74rem;color:var(--suave);text-transform:uppercase;letter-spacing:.04em}
 .bl-root .bl-parecidos a{display:block;color:var(--acento-texto);text-decoration:none;padding:3px 0;cursor:pointer}
 .bl-root .bl-mostrar-mais{display:block;margin:12px auto}
-.bl-root .bl-grupo-exame{background:var(--cartao);border:1px solid var(--borda);border-radius:12px;margin-bottom:10px;overflow:hidden}
-.bl-root .bl-grupo-exame>summary{padding:10px 14px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--campo)}
+.bl-root .bl-grupo-mod{background:var(--cartao);border:1px solid var(--borda);border-radius:12px;margin-bottom:10px;overflow:hidden;box-shadow:var(--sombra)}
+.bl-root .bl-grupo-mod>summary{padding:11px 15px;font-family:var(--fd);font-weight:700;font-size:.98rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--campo)}
+.bl-root .bl-grupo-mod>summary small{font-family:var(--fb);color:var(--suave);font-weight:500;font-size:.8rem}
+.bl-root .bl-grupo-mod-itens{padding:10px 10px 2px}
+.bl-root .bl-grupo-exame{background:var(--cartao);border:1px solid var(--borda);border-radius:10px;margin-bottom:8px;overflow:hidden}
+.bl-root .bl-grupo-exame>summary{padding:9px 13px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--campo)}
 .bl-root .bl-grupo-exame>summary small{color:var(--suave);font-weight:400}
 .bl-root .bl-grupo-itens{padding:10px}
 
@@ -1420,7 +1437,7 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 .marcos{display:flex;flex-wrap:wrap;gap:8px}.marco{font:600 .82rem var(--fb);border:1px dashed var(--bd);border-radius:99px;padding:5px 12px;color:var(--mut)}.marco.on{border:1px solid color-mix(in srgb,var(--warn) 60%,var(--bd));color:var(--tx);background:color-mix(in srgb,var(--warn) 14%,var(--card))}.marco.on{}
 .pnw{border:1px dashed color-mix(in srgb,var(--pri) 45%,var(--bd));border-radius:16px;padding:8px;margin-bottom:14px}.pnw .card{margin-bottom:0}.pnbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 8px}.pnbar span{display:flex;gap:6px}.pnbar button{padding:5px 12px;font-size:.82rem}.pnc{pointer-events:none;opacity:.85;max-height:150px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 55%,transparent);mask-image:linear-gradient(#000 55%,transparent)}
 </style>
-<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.70.0</small></div>
+<header><div class="hb"><div class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7 13l3-4 3 5 2-3 2 2"/></svg>Radio<small class="versao">v1.71.0</small></div>
 <div class="hr"><button type="button" id="rd_sync" onclick="rdSyncAbre()" aria-live="polite">Aguardando</button><span id="sync" class="local" onclick="rdSyncAbre()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();rdSyncAbre()}" role="button" tabindex="0"><i></i><span>Local</span></span><button type="button" id="of_btn" class="tg of-btn" onclick="ofAlterna()" title="Baixar offline · calculando…" aria-label="Baixar offline" aria-pressed="false" data-estado="off"></button><button class="tg" id="tg" onclick="ciclaTema()"></button></div></div>
 <div class="rd-topo"><button type="button" id="rd_aviso" class="rd-erro" onclick="rdPerdasAbre()" hidden></button></div><nav id="nav"></nav><div id="rd_faixa" class="rd-faixa" role="alert" hidden></div></header>
 <main id="app"></main>
@@ -1428,5 +1445,5 @@ kbd{background:rgba(255,255,255,.2);border-radius:5px;padding:0 6px;font:600 .72
 <script src="vendor/tiptap.js"></script>
 <div id="zoom" hidden><div id="zbar"><button onclick="zStep(-1)" aria-label="Imagem anterior">‹</button><span id="zinfo"></span><button onclick="zStep(1)" aria-label="Próxima imagem">›</button><button onclick="zScale(1/1.4)" aria-label="Diminuir">−</button><button onclick="zScale(1.4)" aria-label="Aumentar">+</button><button onclick="zFit()">Ajustar</button><button onclick="zClose()">Fechar</button></div><div id="zst"><img id="zimg" alt="" draggable="false"></div></div>
 
-<script>window.BCBR_VERSAO="1.70.0"</script><script src="shim.js?v=1.70.0"></script>
+<script>window.BCBR_VERSAO="1.71.0"</script><script src="shim.js?v=1.71.0"></script>
 </body></html>
